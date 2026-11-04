@@ -288,8 +288,67 @@ export const SWIM = {
   coralbeauty: { mode: 'labriform', maxBL: 3.0, burstBL: 7, gait: 2.0, rmin: 0.25, hoverTurn: 2.0 },
 };
 
+// Turning and posture (merged into sp.swim). Turns speed up and slow down gradually; at low speed a
+// fish turns almost on the spot by sculling its pectorals (hoverTurn), at speed it is limited by how
+// tight a circle it can swim (rmin, widened by `wide` for routine turns) and by the sideways force its
+// fins and body produce (omega <= aLat / U). Bending into a turn adds drag, so fish slow in tight turns.
+//  aLat / aLatBurst: lateral (centripetal) acceleration, routine / escape turns, in g
+//  wide:        routine turning radius as a multiple of rmin (escapes use rmin itself)
+//  turnDrag:    extra drag at the tightest turn, as a fraction of straight-line drag
+//  pitchCruise: steepest climb or dive while swimming (deg)
+//  pitchSlow:   steepest pitch when nearly stopped - grazing, probing, hovering (deg)
+//  climb:       fraction of the angle to the goal a fish climbs at (they gain depth gradually)
+//  pitchRate:   max pitch rate, routine / escape (deg/s)
+//  bank:        max lean into turns (deg); reef fish stay nearly upright
+// Deep, compressed bodies (tangs, idol, angels) turn tightly but lean and pitch little; pickers that
+// work crevices nose-first (copperband, longnose, trigger, lionfish stalking) pitch steeply when slow.
+export const MOTION = {
+  clownfish: { aLat: 0.08, aLatBurst: 0.5, wide: 2, turnDrag: 0.6, pitchCruise: 20, pitchSlow: 46, climb: 0.6, pitchRate: [50, 140], bank: 10 },
+  bluetang: { aLat: 0.08, aLatBurst: 0.5, wide: 2, turnDrag: 0.5, pitchCruise: 18, pitchSlow: 50, climb: 0.6, pitchRate: [45, 130], bank: 8 },
+  yellowtang: { aLat: 0.08, aLatBurst: 0.5, wide: 2, turnDrag: 0.5, pitchCruise: 18, pitchSlow: 50, climb: 0.6, pitchRate: [45, 130], bank: 8 },
+  moorishidol: { aLat: 0.06, aLatBurst: 0.4, wide: 2.2, turnDrag: 0.6, pitchCruise: 15, pitchSlow: 40, climb: 0.5, pitchRate: [35, 110], bank: 6 },
+  lionfish: { aLat: 0.04, aLatBurst: 0.3, wide: 2.5, turnDrag: 0.8, pitchCruise: 15, pitchSlow: 55, climb: 0.5, pitchRate: [25, 90], bank: 5 },
+  copperband: { aLat: 0.07, aLatBurst: 0.45, wide: 2, turnDrag: 0.6, pitchCruise: 18, pitchSlow: 60, climb: 0.6, pitchRate: [45, 120], bank: 6 },
+  royalgramma: { aLat: 0.1, aLatBurst: 0.8, wide: 1.8, turnDrag: 0.5, pitchCruise: 25, pitchSlow: 50, climb: 0.7, pitchRate: [60, 170], bank: 12 },
+  clowntrigger: { aLat: 0.06, aLatBurst: 0.4, wide: 2.2, turnDrag: 0.7, pitchCruise: 18, pitchSlow: 60, climb: 0.6, pitchRate: [40, 120], bank: 6 },
+  emperorangel: { aLat: 0.06, aLatBurst: 0.4, wide: 2.2, turnDrag: 0.6, pitchCruise: 15, pitchSlow: 45, climb: 0.5, pitchRate: [35, 110], bank: 7 },
+  longnose: { aLat: 0.07, aLatBurst: 0.45, wide: 2, turnDrag: 0.6, pitchCruise: 18, pitchSlow: 60, climb: 0.6, pitchRate: [45, 120], bank: 7 },
+  chromis: { aLat: 0.12, aLatBurst: 0.7, wide: 1.8, turnDrag: 0.4, pitchCruise: 25, pitchSlow: 40, climb: 0.7, pitchRate: [60, 170], bank: 12 },
+  coralbeauty: { aLat: 0.09, aLatBurst: 0.6, wide: 1.8, turnDrag: 0.5, pitchCruise: 20, pitchSlow: 50, climb: 0.6, pitchRate: [55, 150], bank: 9 },
+};
+
+// Pace: the speed each behaviour asks for, as a fraction of the species' max sustained speed (maxBL).
+// Routine swimming in a tank is slow (15-40%); feeding dashes, chases and escapes use the rest.
+// Pairs are [far, near] (or [base, +activity] for cruise). Species list only what differs from PACE_BASE.
+export const PACE_BASE = {
+  cruise: [0.15, 0.2], school: 0.35, forage: [0.3, 0.15], peck: 0.05, feed: [0.8, 0.4], rest: [0.25, 0.06],
+  flee: 1.25, chase: 0.75, patrol: 0.25, inspect: [0.3, 0.03], host: [0.5, 0.15], hover: 0.25,
+};
+export const PACE = {
+  clownfish: { cruise: [0.12, 0.15], host: [0.55, 0.18] },          // stays close, wiggles in the tentacles
+  bluetang: { cruise: [0.2, 0.2], patrol: 0.3 },                    // restless open-water swimmers
+  yellowtang: { cruise: [0.2, 0.2], forage: [0.3, 0.12] },          // constant grazers
+  moorishidol: { cruise: [0.18, 0.15] },
+  lionfish: { cruise: [0.1, 0.15], forage: [0.2, 0.1], hover: 0.15, feed: [0.9, 0.3] },   // stalks, then lunges
+  copperband: { cruise: [0.12, 0.15], forage: [0.2, 0.1], peck: 0.03 },                   // slow, deliberate picker
+  royalgramma: { cruise: [0.1, 0.15], rest: [0.3, 0.04], flee: 1.4 },                     // stays by its ledge, darts
+  clowntrigger: { cruise: [0.18, 0.2], chase: 0.85 },
+  emperorangel: { cruise: [0.15, 0.15] },
+  longnose: { forage: [0.25, 0.12], peck: 0.03 },
+  chromis: { cruise: [0.2, 0.2], school: 0.4 },                    // active schooling planktivore
+  coralbeauty: { cruise: [0.12, 0.2], rest: [0.3, 0.06] },         // darts between rocks
+};
+
+const DEG = Math.PI / 180, G_UNITS = 9.81 / 0.125;   // g in world units/s^2
 for (const sp of SPECIES) {
-  sp.swim = SWIM[sp.id];
+  const m = MOTION[sp.id];
+  sp.swim = {
+    ...SWIM[sp.id],
+    aLat: m.aLat * G_UNITS, aLatBurst: m.aLatBurst * G_UNITS, wide: m.wide, turnDrag: m.turnDrag,
+    pitchCruise: m.pitchCruise * DEG, pitchSlow: m.pitchSlow * DEG, climb: m.climb,
+    pitchRate: m.pitchRate.map((d) => d * DEG), bank: m.bank * DEG,
+  };
+  sp.pace = { ...PACE_BASE, ...PACE[sp.id] };
   sp.brain.maxSpeed = sp.swim.maxBL * sp.size;   // world units/s, used by the brain as "100% effort"
 }
 

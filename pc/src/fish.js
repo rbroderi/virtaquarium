@@ -23,11 +23,8 @@ import { Brain } from './brain.js';
 import { buildFishModel, posePectoral } from './fishModel.js';
 import { clamp, lerp, range, wrapAngle } from './util.js';
 
+// Per-species turning and posture limits (aLat, wide, pitchCruise, bank, ...) are in species.js MOTION.
 const CF = 0.9;          // axial drag coefficient (folded constants)
-const A_LAT = 0.8 / 0.125;        // routine lateral acceleration in turns, ~0.08 g (units/s^2)
-const A_LAT_BURST = 5 / 0.125;    // escape turns, ~0.5 g
-const PITCH_CRUISE = 0.35;        // rad (~20 deg): steepest climb or dive while swimming
-const PITCH_SLOW = 0.8;           // rad (~46 deg): nose-down grazing / hovering when nearly stopped
 const LATERAL = 8;       // lateral velocity decay rate (1/s)
 const ST = 0.3;          // Strouhal number
 const TAIL_AMP = 0.2;    // tail-tip amplitude / L
@@ -82,8 +79,8 @@ export class Fish {
     // ---- heading: yaw and pitch, each limited in rate and in angular acceleration ----
     const U = Math.max(0, this.speed), burst = want > 1;
     const hover = sw.hoverTurn * clamp(1 - U / (sw.maxBL * L), 0.25, 1);   // pectoral sculling fades with speed
-    const rTurn = sw.rmin * L * (burst ? 1 : 2);
-    const aLat = burst ? A_LAT_BURST : A_LAT;
+    const rTurn = sw.rmin * L * (burst ? 1 : sw.wide);
+    const aLat = burst ? sw.aLatBurst : sw.aLat;
     const omegaMax = Math.max(hover, Math.min(U / rTurn, aLat / Math.max(U, 1e-3)));
     const alpha = sw.hoverTurn * (burst ? 30 : 5);   // rad/s^2
     let err = wrapAngle(Math.atan2(_d.z, _d.x) - this.yaw);
@@ -96,13 +93,13 @@ export class Fish {
     this.yawRate += clamp(wYaw - this.yawRate, -alpha * dt, alpha * dt);
     this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
 
-    const pMax = lerp(PITCH_SLOW, PITCH_CRUISE, clamp((U / L - 0.15) / 0.3, 0, 1));   // steep only when ~stopped
+    const pMax = lerp(sw.pitchSlow, sw.pitchCruise, clamp((U / L - 0.15) / 0.3, 0, 1));   // steep only when ~stopped
     // Fish gain depth gradually and mostly swim level: climb at a shallower angle than straight at the goal.
-    const pitchTarget = clamp(0.6 * Math.asin(clamp(_d.y, -1, 1)), -pMax, pMax);
-    const pitchRateMax = burst ? 2.5 : 0.9;
+    const pitchTarget = clamp(sw.climb * Math.asin(clamp(_d.y, -1, 1)), -pMax, pMax);
+    const pitchRateMax = sw.pitchRate[burst ? 1 : 0];
     const wPitch = clamp((pitchTarget - this.pitch) * 2.0, -pitchRateMax, pitchRateMax);
     this.pitchRate += clamp(wPitch - this.pitchRate, -alpha * 0.6 * dt, alpha * 0.6 * dt);
-    this.pitch = clamp(this.pitch + this.pitchRate * dt, -PITCH_SLOW, PITCH_SLOW);
+    this.pitch = clamp(this.pitch + this.pitchRate * dt, -sw.pitchSlow, sw.pitchSlow);
     const cp = Math.cos(this.pitch);
     this.dir.set(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
     this.turnRate = this.yawRate;
@@ -126,7 +123,7 @@ export class Fish {
     // ---- integrate (forward axis + decaying lateral slip) ----
     const vf = this.vel.dot(this.dir);
     _lat.copy(this.vel).addScaledVector(this.dir, -vf).multiplyScalar(Math.exp(-LATERAL * dt));
-    const turnDrag = 1 + 0.6 * Math.min(1, Math.abs(this.yawRate) / Math.max(omegaMax, 1e-3)) ** 2;   // bent body
+    const turnDrag = 1 + sw.turnDrag * Math.min(1, Math.abs(this.yawRate) / Math.max(omegaMax, 1e-3)) ** 2;   // bent body
     const af = (T - kf * turnDrag * vf * Math.abs(vf)) / m;
     const vfNew = vf + af * dt;
     this.vel.copy(this.dir).multiplyScalar(vfNew).add(_lat);
@@ -142,8 +139,9 @@ export class Fish {
 
     // ---- orientation: heading + bank into turns ----
     _up.set(0, 1, 0).addScaledVector(this.dir, -this.dir.y).normalize();
-    // Bank slightly with the centripetal acceleration; reef fish stay close to upright (< ~10 deg).
-    this.roll = lerp(this.roll, clamp((U * this.yawRate) / (A_LAT * 4), -0.18, 0.18), Math.min(1, dt * 3));
+    // Bank slightly with the centripetal acceleration; reef fish stay close to upright (sw.bank, ~5-12 deg).
+    const lean = clamp((U * this.yawRate) / (sw.aLat * 0.7), -1, 1) * sw.bank;
+    this.roll = lerp(this.roll, lean, Math.min(1, dt * 3));
     _up.applyAxisAngle(this.dir, this.roll);
     _side.crossVectors(this.dir, _up);
     _basis.makeBasis(this.dir, _up, _side);

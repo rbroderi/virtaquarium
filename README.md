@@ -39,9 +39,10 @@ The behaviour turns into a steering goal; the body then has to physically achiev
 World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish are real aquarium-specimen sizes.
 
 - **Swimming** (`fish.js`): mass ∝ L³ and quadratic drag. Thrust comes from a speed controller, capped at the species' sustained speed and its burst speed (body lengths/s).
-  - **Turning** has rotational inertia, so angular acceleration is limited by fin torque. Yaw rate is limited by pectoral sculling at low speed. At speed it is limited by the turning radius (`r ≥ r_min · L` for escapes, twice that for routine turns) and by lateral acceleration (`ω ≤ a_lat / U`, about 0.08 g routine and 0.5 g in escapes).
-  - **Posture**: pitch stays within 20° while swimming and reaches about 46° only when nearly stopped (grazing, hovering). Fish change depth gradually and bank under 10°. Bending into a turn adds drag. Strong lateral drag acts like a keel.
-  - **Speed**: routine swimming is 0.5–1.5 body lengths/s. Feeding dashes, chases and escapes use the rest of the range.
+  - **Turning** has rotational inertia, so angular acceleration is limited by fin torque. Yaw rate is limited by pectoral sculling at low speed. At speed it is limited by the turning radius (`r ≥ r_min · L` for escapes, about twice that for routine turns) and by lateral acceleration (`ω ≤ a_lat / U`, about 0.04–0.12 g routine and 0.3–0.8 g in escapes). A U-turn picks a direction once and commits to it.
+  - **Posture**: pitch stays within 15–25° while swimming and gets steeper (40–60°) only when nearly stopped (grazing, probing, hovering). Fish change depth gradually and bank 5–12°. Bending into a turn adds drag. Strong lateral drag acts like a keel.
+  - **Speed**: routine swimming asks for 10–40% of the species' sustained speed (about 0.5–1.5 body lengths/s). Feeding dashes, chases and escapes use the rest of the range.
+  - **Per species** (`species.js`): `SWIM` holds speeds, gait and turning radius; `MOTION` holds lateral acceleration, routine-turn widening, turn drag, pitch limits and rates, climb angle and bank; `PACE` holds the speed each behaviour asks for (defaults in `PACE_BASE`). Deep-bodied tangs, angels and the idol lean and pitch little; crevice pickers (copperband, longnose, trigger) and stalking lionfish pitch steeply when slow; chromis and the gramma turn hardest.
   - Tail-beat frequency follows the Strouhal relation `f = St·U/A` (St ≈ 0.3, A = 0.2 L), using the speed the current thrust would sustain.
   - Each species uses its real swimming mode:
     - Labriform (tangs, angels, butterflyfish, damsels) row with their pectoral fins and recruit the tail above a gait-transition speed.
