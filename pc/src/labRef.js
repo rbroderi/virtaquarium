@@ -100,13 +100,18 @@ export function installReference(lab) {
     refs.forEach((r, i) => s.add(new Option(r.file.split('/').pop(), i)));
   }
 
+  let selecting = 0;
   async function select(i) {
+    const n = ++selecting;
     cur = refs[i] || null; img = null; pix = null; edge = null;
     if (!cur) { say(`No reference photos for ${lab.species()}. Drop a side-on photo here, or add pc/ref/${lab.species()}/refs.json.`); redraw(); return; }
     $('refsel').value = i;
     const im = new Image();
+    // The load event, not decode(): decode() can stay pending while the page is in a background tab.
+    const loaded = new Promise((res, rej) => { im.onload = res; im.onerror = rej; });
     im.src = cur.url;
-    try { await im.decode(); } catch { say(`Could not load ${cur.url}`); return; }
+    try { await loaded; } catch { if (n === selecting) say(`Could not load ${cur.url}`); return; }
+    if (n !== selecting) return;   // a newer selection won the race
     img = im;
     const c = document.createElement('canvas');
     c.width = img.naturalWidth; c.height = img.naturalHeight;
@@ -236,6 +241,7 @@ export function installReference(lab) {
       const anat = pm ? { from: silhouette(pm, w, h), to: silhouette(mask, w, h) } : null;
       html += `\n\ncolour patches (CIEDE2000, target <= 5; render sampled by ${anat ? 'anatomical position' : 'screen position'})`;
       spots = [];
+      const rows = [];
       for (const p of cur.patches) {
         const a = meanLinear(pix, p.x, p.y, p.r);
         if (!a) { html += `\n${p.name.padEnd(10)} outside the photo`; continue; }
@@ -253,10 +259,20 @@ export function installReference(lab) {
         spots.push([u, v, r, p.name]);
         const b = meanLinear(shot, u * k, v * k, r * k);
         if (!b) { html += `\n${p.name.padEnd(10)} outside the render`; continue; }
+        rows.push({ p, a, b, moved });
+      }
+      // White reference: photo exposure and colour cast are arbitrary, so also compare each image after
+      // dividing by its own white band (von Kries), which leaves only relative colour.
+      const ref = rows.find((x) => x.p.name.startsWith('band') && colourKind(linearToLab(x.a)) === 'white');
+      const norm = (c, w) => c.map((x, i) => (0.9 * x) / Math.max(1e-4, w[i]));
+      if (ref) html += `\nwhite reference: ${ref.p.name} (wr = after dividing each image by it)`;
+      for (const { p, a, b, moved } of rows) {
         const de = ciede2000(linearToLab(a), linearToLab(b));
+        const wr = ref && ref.p !== p ? ciede2000(linearToLab(norm(a, ref.a)), linearToLab(norm(b, ref.b))) : null;
         const where = moved == null ? '' : moved === Infinity ? '  (no matching feature nearby)' : moved > 0.005 ? `  (feature ${(100 * moved).toFixed(1)}% of length away)` : '';
         html += `\n<span class="sw" style="background:${hex(a)}"></span><span class="sw" style="background:${hex(b)}"></span> ` +
-          `${p.name.padEnd(10)} photo ${hex(a)}  render ${hex(b)}  dE ${de.toFixed(1)}${de <= 5 ? '  PASS' : ''}${where}`;
+          `${p.name.padEnd(10)} photo ${hex(a)}  render ${hex(b)}  dE ${de.toFixed(1)}` +
+          (wr == null ? '' : `  wr ${wr.toFixed(1)}${wr <= 5 ? ' PASS' : ''}`) + where;
       }
     }
     out.innerHTML = html;
@@ -404,11 +420,14 @@ function silhouette(mask, w, h) {
   return { top, bot, x0, x1, len: x1 - x0 + 1 };
 }
 
-// Coarse colour class of a patch: pattern whites and black margins, or anything else.
+// Coarse colour class of a patch: pattern whites (bright and unsaturated, even if under-exposed), black
+// margins, saturated colour, or in between.
 function colourKind([L, a, b]) {
+  const C = Math.hypot(a, b);
   if (L < 30) return 'dark';
-  if (L > 70 && Math.hypot(a, b) < 18) return 'white';
-  return 'colour';
+  if (C < 18 && L > 50) return 'white';
+  if (C > 30) return 'colour';
+  return 'other';
 }
 
 // Nearest point (CSS px) to (cx, cy), within `reach`, where a disc of radius r/2 on the render frame is

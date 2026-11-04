@@ -41,6 +41,19 @@ export const gillU = (sp) => sp.eye.u + (0.09 / sp.body.len) + sp.eye.r * 0.6;
 
 const TW = 2048, TH = 1024;
 
+// Multiply the skin by the melanin shading layer, at 20% strength where the skin is white (bright and
+// unsaturated) and full strength elsewhere.
+function applyShade(g, sg) {
+  const img = g.getImageData(0, 0, TW, TH), sh = sg.getImageData(0, 0, TW, TH).data, d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lo = Math.min(d[i], d[i + 1], d[i + 2]) / 255;
+    const white = smooth01((lo - 0.62) / 0.25);
+    const k = 1 - 0.8 * white;
+    for (let c = 0; c < 3; c++) d[i + c] *= 1 - k * (1 - sh[i + c] / 255);
+  }
+  g.putImageData(img, 0, 0);
+}
+
 function paintSkin(sp, prof) {
   const c = makeCanvas(TW, TH), g = c.getContext('2d');
   const U = (u) => u * TW, V = (v) => ((v + 1) / 2) * TH;
@@ -139,24 +152,31 @@ function paintSkin(sp, prof) {
   const K = TW / 512;   // stroke widths below were tuned at 512 px
   const e = sp.eye, g0 = gillU(sp);
 
+  // Melanin shading (countershading, mottling, scale-margin pockets below) goes into its own multiply
+  // layer, applied after the scales. White pattern areas are leucophores and iridophores that stay bright,
+  // so they take only a fifth of it.
+  const shade = makeCanvas(TW, TH), sg = shade.getContext('2d');
+  sg.fillStyle = '#ffffff'; sg.fillRect(0, 0, TW, TH);
+  sg.globalCompositeOperation = 'multiply';
   // Countershading (darker back, paler belly, as on nearly every reef fish) and soft mottling.
+  let gr = sg.createLinearGradient(0, 0, 0, TH);
+  gr.addColorStop(0, '#d8d8d8'); gr.addColorStop(0.45, '#f4f4f4'); gr.addColorStop(1, '#ffffff');
+  sg.fillStyle = gr; sg.fillRect(0, 0, TW, TH);
   g.save();
-  g.globalCompositeOperation = 'multiply';
-  let gr = g.createLinearGradient(0, 0, 0, TH);
-  gr.addColorStop(0, '#c4c4c4'); gr.addColorStop(0.45, '#f2f2f2'); gr.addColorStop(1, '#ffffff');
-  g.fillStyle = gr; g.fillRect(0, 0, TW, TH);
   g.globalCompositeOperation = 'screen';
   gr = g.createLinearGradient(0, 0, 0, TH);
   gr.addColorStop(0.55, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(255,255,255,0.16)');
   g.fillStyle = gr; g.fillRect(0, 0, TW, TH);
   for (let i = 0; i < 70; i++) {
     const x = rng() * TW, y = rng() * TH, r = (20 + rng() * 60) * K, dark = rng() < 0.5;
-    g.globalCompositeOperation = dark ? 'multiply' : 'screen';
-    const m = g.createRadialGradient(x, y, 0, x, y, r);
+    const t = dark ? sg : g;
+    t.globalCompositeOperation = dark ? 'multiply' : 'screen';
+    const m = t.createRadialGradient(x, y, 0, x, y, r);
     m.addColorStop(0, dark ? 'rgba(200,200,200,0.35)' : 'rgba(255,255,255,0.05)'); m.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = m; g.fillRect(x - r, y - r, r * 2, r * 2);
+    t.fillStyle = m; t.fillRect(x - r, y - r, r * 2, r * 2);
   }
   g.restore();
+  sg.globalCompositeOperation = 'multiply';
 
   // Gill cover: shadowed rear edge with a lit lip, and the fainter pre-opercle groove ahead of it.
   const gillPath = (uu, span, bow) => {
@@ -232,7 +252,8 @@ function paintSkin(sp, prof) {
     }
   }
   const shadeC = makeCanvas(SW, SH); shadeC.getContext('2d').putImageData(shadeImg, 0, 0);
-  g.save(); g.globalCompositeOperation = 'multiply'; g.drawImage(shadeC, 0, 0, TW, TH); g.restore();
+  sg.drawImage(shadeC, 0, 0, TW, TH);
+  applyShade(g, sg);
   const irid = makeCanvas(SW, SH); irid.getContext('2d').putImageData(iridImg, 0, 0);
 
   // Tangent-space normal map from the height field (OpenGL convention; canvas rows run down = -v).
@@ -621,6 +642,10 @@ const TISSUE_GLSL = /* glsl */`
   vec3 Nn = normal;
   vec3 Tt = exp(-uTissueSigma * tissueThickMM);
   vec3 alb = material.diffuseColor;
+  // White pattern is a dense leucophore/iridophore layer that scatters light back before it reaches
+  // the red-transmitting muscle, so white skin gets only a fifth of the tissue glow.
+  float leu = 1.0 - 0.8 * smoothstep(0.55, 0.85, min(alb.r, min(alb.g, alb.b)));
+  Tt *= leu;
   #if NUM_DIR_LIGHTS > 0
   for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
     vec3 L = directionalLights[i].direction;
@@ -629,7 +654,7 @@ const TISSUE_GLSL = /* glsl */`
     float lobe = pow(saturate(dot(geometryViewDir, -L)), 6.0);
     reflectedLight.directDiffuse += alb * Tt * directionalLights[i].color * RECIPROCAL_PI * back * (1.0 + 2.5 * lobe);
     vec3 wrapped = saturate((vec3(ndl) + uWrap) / (1.0 + uWrap));
-    reflectedLight.directDiffuse += alb * directionalLights[i].color * RECIPROCAL_PI * max(wrapped - saturate(ndl), 0.0);
+    reflectedLight.directDiffuse += alb * directionalLights[i].color * RECIPROCAL_PI * max(wrapped - saturate(ndl), 0.0) * leu;
   }
   #endif
   vec3 backIrr = vec3(0.0);
@@ -845,11 +870,11 @@ function buildCustomModel(sp, model) {
   for (const p of model.parts) {
     const mats = (Array.isArray(p.mat) ? p.mat : [p.mat]).map((src) => {
       const mat = src.clone();
-      // Wet skin: a thin clear mucus layer over the scales.
-      if (mat.isMeshStandardMaterial && !mat.isMeshPhysicalMaterial) {
-        const phys = new THREE.MeshPhysicalMaterial();
-        THREE.MeshStandardMaterial.prototype.copy.call(phys, mat);
-        phys.clearcoat = 0.45; phys.clearcoatRoughness = 0.3;
+      // Submerged skin: in-water Fresnel (see IN_WATER_IOR), no clearcoat or sheen.
+      if (mat.isMeshStandardMaterial) {
+        const phys = mat.isMeshPhysicalMaterial ? mat : new THREE.MeshPhysicalMaterial();
+        if (phys !== mat) THREE.MeshStandardMaterial.prototype.copy.call(phys, mat);
+        phys.ior = IN_WATER_IOR; phys.clearcoat = 0; phys.sheen = 0;
         return makeSwimMaterial(phys, uniforms);
       }
       return makeSwimMaterial(mat, uniforms);
@@ -866,6 +891,11 @@ export async function loadFishModel(url, cfg = {}) {
   return normaliseModel((await new GLTFLoader().loadAsync(url)).scene, cfg);
 }
 
+// The fish is submerged: its mucus (n ~1.38) meets water (n ~1.33), a relative index of ~1.04, so the
+// surface reflects ~0.04% at normal incidence instead of the 4% three.js assumes for air. No clearcoat
+// or sheen either; the visible shine of a fish in water comes from the guanine iridophores (iridescence).
+const IN_WATER_IOR = 1.04;
+
 // opts.model: a model from loadFishModel; opts.procedural: ignore models.json for this species.
 export function buildFishModel(sp, opts = {}) {
   if (opts.model) return buildCustomModel(sp, opts.model);
@@ -876,18 +906,17 @@ export function buildFishModel(sp, opts = {}) {
   };
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
-    roughness: 0.42, metalness: 0.0, clearcoat: 0.5, clearcoatRoughness: 0.35,
+    roughness: 0.42, metalness: 0.0, ior: IN_WATER_IOR,
     iridescence: sp.iridescent ? 1.0 : 0.35, iridescenceIOR: 1.8, iridescenceThicknessRange: [180, 420],   // guanine platelet stacks
-    sheen: 0.3, sheenColor: new THREE.Color(0xffffff),
   }), uniforms, { kind: 'body', sizeMM: sp.size * 125 });
-  const finMat = makeSwimMaterial(new THREE.MeshStandardMaterial({
-    map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01,
+  const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+    map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01, ior: IN_WATER_IOR,
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport.
   const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 } };
-  const pectMat = makeSwimMaterial(new THREE.MeshStandardMaterial({
-    map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01,
+  const pectMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+    map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01, ior: IN_WATER_IOR,
   }), still, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
 
   const group = new THREE.Group();
@@ -911,9 +940,9 @@ export function buildFishModel(sp, opts = {}) {
     pects.push(pivot);
   }
 
-  // Cornea: a smooth wet clear layer (clearcoat) over the iris and lens.
+  // Cornea: smooth, but its index (~1.376) nearly matches water, so in the tank it barely reflects.
   const eyeMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
-    map: a.eyeTex, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.03, ior: 1.38,
+    map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR,
   }), uniforms);
   for (const geo of a.eyeGeos) group.add(new THREE.Mesh(geo, eyeMat));
 
