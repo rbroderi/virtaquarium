@@ -3,13 +3,13 @@
 export default {
   "bands": [],
   "body": {
-    "depth": 0.456,
-    "m": 0.295,
+    "depth": 0.447,
+    "m": 0.306,
     "headP": 0.49,
-    "tailP": 2.2,
-    "ped": 0.31,
-    "hump": 0.021,
-    "mouth": -0.338,
+    "tailP": 2.32,
+    "ped": 0.334,
+    "hump": 0.002,
+    "mouth": -0.392,
     "snout": 0.12,
     "snoutH": 0.05
   },
@@ -21,7 +21,7 @@ export default {
       "pts": [
         [
           0,
-          0.156
+          0.135
         ],
         [
           0.15,
@@ -42,17 +42,17 @@ export default {
       ]
     },
     {
-      "u0": 0.343,
+      "u0": 0.339,
       "u1": 1,
       "sweep": 0.64,
       "pts": [
         [
           0,
-          0.02
+          0.023
         ],
         [
           0.3,
-          0.08
+          0.075
         ],
         [
           0.7,
@@ -66,6 +66,6 @@ export default {
     }
   ],
   "caudal": {
-    "spread": 0.138
+    "spread": 0.133
   }
 };

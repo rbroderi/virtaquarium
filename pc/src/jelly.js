@@ -80,7 +80,8 @@ void main() {
     float ang = (float(k) + 0.5) * 1.5707963 + 0.15 * sin(uSeed + float(k));
     vec2 dir = vec2(cos(ang), sin(ang)), c = dir * 0.27, d = q - c;
     float rr = length(d), open = dot(normalize(d + 1e-5), dir);
-    g += (1.0 - smoothstep(0.02, 0.045, abs(rr - 0.12))) * (1.0 - smoothstep(0.35, 0.75, open));
+    // A thick, soft band (not a thin outline), fading towards its open ends.
+    g += (1.0 - smoothstep(0.015, 0.06, abs(rr - 0.11))) * (1.0 - smoothstep(0.2, 0.8, open)) * 0.75;
   }
   // Light from above and behind: the top of the bell is a little brighter.
   float top = 0.75 + 0.25 * N.y;
@@ -94,7 +95,7 @@ attribute float aAng, aS, aLen;
 varying float vS;
 void main() {
   vS = aS;
-  vec2 rim = bellShape(uR * 1.0, -uR * 0.02, 1.0);
+  vec2 rim = bellShape(uR * 1.0, -uR * 0.05, 1.0);
   float a = aAng * 6.2831853;
   vec3 dir = vec3(cos(a), 0.0, sin(a));
   float L = aLen * uR;
@@ -123,11 +124,12 @@ void main() {
   vS = s; vEdge = abs(x);
   float a = (aArm + 0.5) * 1.5707963 + 0.7854;
   vec3 out_ = vec3(cos(a), 0.0, sin(a)), side = vec3(-out_.z, 0.0, out_.x);
-  float L = uR * 1.05, w = uR * 0.16 * (1.0 - 0.6 * s);
-  // Ruffled edges: the frill folds in and out along the length.
-  float ruffle = sin(s * 26.0 + x * 2.0 + aArm * 1.7) * vEdge * vEdge;
-  vec3 p = vec3(0.0, -uR * 0.02, 0.0) + out_ * (uR * 0.06 + s * L * 0.18) + side * x * w
-         + vec3(0.0, -s * L, 0.0) + out_ * ruffle * w * 0.9
+  // Long, broad ribbons (about 1.3 bell radii; viatour.jpg), folded lengthwise into a V, with the
+  // edges gently waved rather than zig-zagged.
+  float L = uR * 1.3, w = uR * 0.24 * (1.0 - 0.55 * s) * (0.75 + 0.25 * smoothstep(0.0, 0.15, s));
+  float ruffle = sin(s * 11.0 + x * 1.5 + aArm * 1.7) * vEdge * vEdge;
+  vec3 p = vec3(0.0, -uR * 0.02, 0.0) + out_ * (uR * 0.06 + s * L * 0.15) + side * x * w
+         + vec3(0.0, -s * L, 0.0) + out_ * (ruffle * 0.45 + vEdge * 0.6) * w
          + vec3(sin(uTime * 0.5 + aArm * 2.1 + uSeed), 0.0, cos(uTime * 0.43 + aArm)) * 0.12 * L * s * s;
   p.y += uPulse * 0.06 * uR * (1.0 - s);
   p += uTrail * L * s * s;
@@ -140,8 +142,9 @@ const ARM_FRAG = COMMON + /* glsl */`
 uniform vec3 uTint;
 varying float vEdge, vS;
 void main() {
-  float frill = smoothstep(0.55, 1.0, vEdge);
-  gl_FragColor = vec4(waterFade(uTint * (0.04 + 0.22 * frill) * (1.0 - 0.6 * vS)) * uLight, 1.0);
+  // The crinkled edge catches the light; a fine flicker along it reads as the frill.
+  float frill = smoothstep(0.7, 1.0, vEdge) * (0.7 + 0.3 * sin(vS * 140.0));
+  gl_FragColor = vec4(waterFade(uTint * (0.05 + 0.26 * frill) * (1.0 - 0.6 * vS)) * uLight, 1.0);
 }`;
 
 const additive = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false };
@@ -149,11 +152,12 @@ const additive = { transparent: true, depthWrite: false, blending: THREE.Additiv
 let shared = null;
 function sharedGeometry() {
   if (shared) return shared;
-  // Bell: a shallow dome (height ~0.35 R) with the margin curling slightly under, unit radius.
+  // Bell: a dome about half as deep as it is wide in radius (resting bells in the photos, e.g.
+  // losada_finisterrae.jpg), round-shouldered, the margin curling slightly under, unit radius.
   const prof = [];
   for (let i = 0; i <= 24; i++) {
     const t = i / 24, r = Math.sin(t * Math.PI / 2) * 1.0;
-    prof.push(new THREE.Vector2(Math.max(1e-4, r + (t > 0.9 ? (t - 0.9) * 0.15 : 0)), 0.36 * Math.cos(t * Math.PI / 2) ** 1.4 - (t > 0.9 ? (t - 0.9) * 0.4 : 0)));
+    prof.push(new THREE.Vector2(Math.max(1e-4, r + (t > 0.9 ? (t - 0.9) * 0.15 : 0)), 0.5 * Math.cos(t * Math.PI / 2) ** 0.9 - (t > 0.9 ? (t - 0.9) * 0.5 : 0)));
   }
   const bell = new THREE.LatheGeometry(prof, 64);
   // Tentacles: line segments, a few points each.

@@ -186,6 +186,8 @@ The springs are dynamic, so most of this is PC only. What a bake could take:
 
 ## Log
 
+- 2026-11-04: look pass against the reference photos. Yellow tang: the snout is now a tube of even thickness (`snoutTip`, `snoutBlend` in `makeProfile`) and the forehead is narrower (`headW`); refit with `--start mouth=-0.5,snout=0.12,snoutH=0.03`. Its Roku sprites need a rebake. Cuttlefish, octopus (interbrachial web, standing posture, net-patterned skin), turtle (no head gap, scutes reach down the dome) and moon jelly (deeper bell, broad frilly oral arms) are PC only, so the bake skips them.
+
 - 2026-11-04: yellow tang reshaped (low mouth `body.mouth`, flattened snout `snoutW`, thinner lens section, near-opaque fins `thin`): its Roku sprites need a rebake. The cave roofs now carry `roof` data (no layout change).
 
 - 2026-11-04: secondary-motion uniforms (`uBendTail`, `uFold`, `uCup`, `uSpine`); their defaults keep the bake unchanged.

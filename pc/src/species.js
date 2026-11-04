@@ -71,8 +71,9 @@ export const SPECIES = [
     anatomy: { bodyDepthSL: [0.5, 0.6] },
     albedoGain: [0.917, 1.025, 0.978],   // lab patch comparison (chromaticity, 6 patches), half strength
     // Strongly compressed with a lens-shaped section (flank 1.7: thin, sharp-edged; the default for this
-    // width, ~1.2, shades like a ball up close); the snout is flattened side to side.
-    body: { len: 0.78, depth: 0.78, width: 0.2, flank: 1.7, m: 0.42, headP: 0.9, tailP: 1.6, ped: 0.22, snout: 0.06, snoutH: 0.05, snoutW: 0.55 },
+    // width, ~1.2, shades like a ball up close); the snout is a flattened cone filleted into the face, and
+    // the head narrows to a wedge at the front (headW), as seen head-on.
+    body: { len: 0.78, depth: 0.78, width: 0.2, flank: 1.7, m: 0.42, headP: 0.9, tailP: 1.6, ped: 0.22, snout: 0.06, snoutH: 0.05, snoutW: 0.55, snoutTip: 0.45, snoutBlend: 0.03, headW: 0.6 },
     eye: { u: 0.215, v: -0.55, r: 0.04, iris: '#2a2a20' },   // high under the steep forehead (viatour.jpg blend, with body.mouth)
     pattern: [
       { op: 'vgrad', stops: [[-1, '#ffe14a'], [0, '#ffd400'], [1, '#f2c000']] },
