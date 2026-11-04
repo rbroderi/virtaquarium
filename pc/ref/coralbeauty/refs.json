@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "zerpe_46982094864.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Two-spined_angelfish_(Centropyge_bispinosa)_(46982094864).jpg",
+      "author": "Rickard Zerpe",
+      "license": "CC BY 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, coral below"
+    },
+    {
+      "file": "delso_mauricio.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pomacéntrido_(Centropyge_bispinosa),_Mauricio,_2025-09-23,_DD_38.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef, washed-out background, slight colour cast"
+    },
+    {
+      "file": "zerpe_48272091136.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Two-spined_angelfish_(Centropyge_bispinosa)_(48272091136).jpg",
+      "author": "Rickard Zerpe",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "near side-on, busy rock background"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "gorbunova_leningrad.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Copperband_butterflyfish_in_the_Leningrad_zoo_(cropped).jpg",
+      "author": "Горбунова М.С.",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, dark aquarium"
+    },
+    {
+      "file": "esquilo.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chelmon_rostratus2.jpg",
+      "author": "Esquilo",
+      "license": "CC BY-SA 3.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium"
+    },
+    {
+      "file": "korecky_wien.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:2017-08-19_AT_Wien_13_Hietzing,_Tiergarten_Schönbrunn,_Chelmon_rostratus_(48112742578).jpg",
+      "author": "Paul Korecky",
+      "license": "CC BY-SA 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium"
+    }
+  ]
+}

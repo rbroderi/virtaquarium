@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "eldar_oniria07.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Oniria_-_Rascasse_volante_07.jpg",
+      "author": "Tylwyth Eldar",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, fins spread, aquarium; species from the Commons category (P. miles not ruled out)"
+    },
+    {
+      "file": "vanderwel.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Koraalduivel_(4039683514).jpg",
+      "author": "Sander van der Wel",
+      "license": "CC BY-SA 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, dark background"
+    },
+    {
+      "file": "eldar_oniria11.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Oniria_-_Rascasse_volante_11.jpg",
+      "author": "Tylwyth Eldar",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium; species from the Commons category (P. miles not ruled out)"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "szilas_nyiregyhaza.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Nyíregyháza_Zoo,_Aquarium,_Balistoides_conspicillum.jpg",
+      "author": "Szilas",
+      "license": "Public domain",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium"
+    },
+    {
+      "file": "hisgett.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Fish_2_(6246925421).jpg",
+      "author": "Tony Hisgett",
+      "license": "CC BY 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, dark aquarium background"
+    },
+    {
+      "file": "martin_inat.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Balistoides_conspicillum_296001630.jpg",
+      "author": "Storm Martin",
+      "license": "CC BY 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef, busy background"
+    }
+  ]
+}

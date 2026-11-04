@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "denes_hal.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Hal_-_Chromis_viridis_-_1.jpg",
+      "author": "Emőke Dénes",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium, red rock background, slightly pale/yellow"
+    },
+    {
+      "file": "zerpe.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Blue-green_chromis_(Chromis_viridis)_(39851326113).jpg",
+      "author": "Rickard Zerpe",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, dark background, warm/yellow-green cast"
+    },
+    {
+      "file": "pingstone.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Green.chromis.arp.jpg",
+      "author": "Adrian Pingstone",
+      "license": "Public domain",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium, true colour, modest resolution"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "nightflyer_senckenberg.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Sachsen,_Görlitz,_GLAM_on_Tour_(2018)_im_Senckenberg_Museum_für_Naturkunde_NIK_5329.jpg",
+      "author": "Nightflyer",
+      "license": "CC BY 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium, pink coral behind"
+    },
+    {
+      "file": "karelj_prague.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Paracanthurus_hepatus_Prague_2011_3.jpg",
+      "author": "Karelj",
+      "license": "CC BY-SA 3.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, plain blue background"
+    },
+    {
+      "file": "ciar_saq.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:ParacanthurusHepatusSAq.JPG",
+      "author": "Ciar",
+      "license": "CC BY-SA 3.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, dark aquarium background"
+    }
+  ]
+}

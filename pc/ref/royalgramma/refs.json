@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "zell.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Gramma_loreto_01.jpg",
+      "author": "H. Zell",
+      "license": "CC BY-SA 3.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, aquarium, orange background"
+    },
+    {
+      "file": "delso_belize.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pez_abuela_real_(Gramma_loreto),_San_Pedro,_Belice,_2025-12-18,_DD_31.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef, pinkish background"
+    },
+    {
+      "file": "gratwicke.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Gramma_loreto,_Fairy_Basslet.jpg",
+      "author": "Brian Gratwicke",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef"
+    }
+  ]
+}

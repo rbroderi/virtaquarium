@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "delso_kalakajoro38.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pez_mariposa_hocicona_(Forcipiger_flavissimus),_Nosy_Kalakajoro,_Madagascar,_2025-09-14,_DD_38.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef"
+    },
+    {
+      "file": "delso_kalakajoro07.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pez_mariposa_hocicona_(Forcipiger_flavissimus),_Nosy_Kalakajoro,_Madagascar,_2025-09-14,_DD_07.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, plain blue water"
+    },
+    {
+      "file": "delso_anilao.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pez_mariposa_hocicona_(Forcipiger_flavissimus),_Anilao,_Filipinas,_2023-08-22,_DD_103.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef, soft background"
+    }
+  ]
+}

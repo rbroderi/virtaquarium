@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "viatour.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Zebrasoma_flavescens_Luc_Viatour.jpg",
+      "author": "Luc Viatour",
+      "license": "CC BY-SA 3.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, black background"
+    },
+    {
+      "file": "amada44.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Zebrasoma_flavescens_004a.jpg",
+      "author": "Amada44",
+      "license": "CC BY 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, dark aquarium"
+    },
+    {
+      "file": "thesupermat_brest.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Brest_-_Océanopolis_-_2015_-_092.jpg",
+      "author": "Thesupermat",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, fish smallish in frame"
+    }
+  ]
+}

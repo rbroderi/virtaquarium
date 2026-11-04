@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "delso_redsea.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pez_ángel_emperador_(Pomacanthus_imperator),_mar_Rojo,_Egipto,_2023-04-17,_DD_104.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "adult, side-on, reef, dark background"
+    },
+    {
+      "file": "zerpe.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Emperor_angelfish_(Pomacanthus_imperator)_(32827796637).jpg",
+      "author": "Rickard Zerpe",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "adult, side-on, reef"
+    },
+    {
+      "file": "baviere_copenhagen.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Copenhagen_2014-03-01_(12994726903).jpg",
+      "author": "Guillaume Baviere",
+      "license": "CC BY-SA 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "adult, side-on, dark aquarium"
+    }
+  ]
+}

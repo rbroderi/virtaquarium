@@ -1,0 +1,37 @@
+{
+  "refs": [
+    {
+      "file": "eldar_oniria.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Oniria_-_Poisson_159.jpg",
+      "author": "Tylwyth Eldar",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, full dorsal streamer, blue aquarium background"
+    },
+    {
+      "file": "delso_mauricio.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Ídolo_moro_(Zanclus_cornutus),_Mauricio,_2025-09-24,_DD_140.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, reef, plain green water"
+    },
+    {
+      "file": "zerpe.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Moorish_idol_(Zanclus_cornutus)_(28038957078).jpg",
+      "author": "Rickard Zerpe",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side-on, sandy background"
+    }
+  ]
+}
