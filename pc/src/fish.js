@@ -153,7 +153,7 @@ export class Fish {
     const Ueq = Math.sqrt(Math.max(0, T) / kf);          // speed the current thrust sustains
     const blEq = Ueq / L;                                 // in body lengths / s
     const bursting = want > 1 || blEq > sw.maxBL;
-    const tailShare = sw.mode === 'bcf' || bursting ? 1 : smoothstep(sw.gait * 0.8, sw.gait * 1.3, blEq);
+    const tailShare = sw.mode === 'bcf' || sw.mode === 'anguilliform' || bursting ? 1 : smoothstep(sw.gait * 0.8, sw.gait * 1.3, blEq);
     const finShare = 1 - 0.7 * tailShare;
 
     // Tail: Strouhal f = St U / A. A small idle beat keeps the fish from looking frozen.
@@ -174,6 +174,14 @@ export class Fish {
     // Ventilation: the gill covers flare at ~1-1.5 Hz at rest, faster when working hard.
     this.ventPhase += dt * Math.PI * 2 * this.ventHz * (1 + 0.5 * clamp(blEq / sw.maxBL, 0, 1));
     u.uVent.value = 0.035 * (0.5 + 0.5 * Math.sin(this.ventPhase));
+    if (sp.mouth) {
+      // Morays have no gill covers: they pump water over the gills by opening and closing the mouth
+      // (~0.6-0.9 Hz), wider when working, and gape wide to strike.
+      u.uVent.value = 0;
+      u.uGape.value = 0.06 + (0.14 + 0.1 * clamp(blEq / sw.maxBL, 0, 1)) * (0.5 + 0.5 * Math.sin(this.ventPhase * 0.6)) + this.gulp * 1.5;
+      // Resting in its crevice, an eel holds the front of its body up and out.
+      u.uLift.value = lerp(u.uLift.value, brain.mode === 'lurk' ? 0.35 : 0, Math.min(1, dt * 0.8));
+    }
 
     // Median fins: balistiform swimmers undulate dorsal + anal fins for thrust; others ripple gently.
     const finDrive = sw.mode === 'balistiform' ? finShare * (0.5 + blEq * 1.5) : 0.3 + 0.2 * blEq;

@@ -453,7 +453,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -11
     },
     {
       "file": "amada44.jpg",
@@ -728,7 +729,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 6
     },
     {
       "file": "thesupermat_brest.jpg",
@@ -1311,7 +1313,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -5
     }
   ]
 }

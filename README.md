@@ -48,11 +48,12 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
     - Labriform (tangs, angels, butterflyfish, damsels) row with their pectoral fins and recruit the tail above a gait-transition speed.
     - Balistiform (triggerfish, lionfish) undulate the dorsal and anal fins.
     - Body-caudal-fin swimmers (gramma) use burst-and-coast.
+    - Anguilliform (the snowflake moray) undulates the whole body: wavelength about 0.6 body lengths (1.5–2 waves on the body), amplitude rising from about 0.03 BL at the head to 0.1 BL at the tail, with no separate caudal blade (`uAnguil`).
   - The body wave travels head to tail with slip ratio ≈ 0.6, and the spine curves with path curvature in turns.
     - The wave is a spine curve: each cross-section is carried along the midline and turned to its tangent, so the body keeps its length and the caudal blade pitches.
     - Wavelength is about 0.95 body lengths. Amplitude runs from about 0.02 BL of head recoil to about 0.1 BL at the tail tip, and the caudal fin lags the peduncle by about 45°.
   - **Pectoral stroke**: on the recovery stroke the fin feathers edge-on and its rays partly collapse (`posePectoral`). Hovering fish hold the body still and scull with the pectorals.
-  - **Breathing**: the gill covers flare at 1–1.5 Hz, faster after exertion.
+  - **Breathing**: the gill covers flare at 1–1.5 Hz, faster after exertion. Morays have no gill covers: they pump water by opening and closing a hinged lower jaw (~0.6–0.9 Hz) and gape wide to strike. By day a moray holds its crevice with the front of its body raised (`lurk` mode, `uLift`).
 - **Water** (`water.js`): three.js fog is replaced by a per-channel Beer–Lambert medium.
   - Beam attenuation and downwelling attenuation Kd use clear reef-water coefficients.
   - Inscattered light fills long paths, and only the path inside the glass counts.
@@ -86,6 +87,7 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   - The membrane is a thin pigmented film that thins from base to margin. Pigmented margins (`edgeW`, in body lengths) follow only the free edge and can have a translucent fringe outside them.
   - Pelvic fins (`sp.pelvic`) are paired and splay out from the belly. Pectorals are pleated and slightly cupped; `kind: 'round'` gives the damselfish paddle.
   - Free spines (`kind: 'spines'`: the lionfish dorsal, the triggerfish's trigger) are banded 3D tubes joined only by a low, incised web, each with a membrane flag along its rear edge. Fan pectorals (`kind: 'fan'`) have tube rays standing free past a deeply notched membrane.
+- **Eels** (`moray`): no pectoral or pelvic fins (`pectoral: null`); a solid, skin-covered fin fold (`solid: true`); scaleless, glossier skin (`scales: 0`); a hinged jaw (`sp.mouth`: the lower jaw turns about the corner of the gape, over a dark lining painted along the lip line); the snowflake pattern (`op: 'blotches'`: rows of dendritic dark blotches with yellow centres over fine speckle).
 - **Head detail**: `sp.ridges` raises ridges or cuts grooves along segments placed on the side view (the lionfish's suborbital stay and brow, the triggerfish's groove before the eye and its lips). `sp.appendages` adds paired tentacles and lappets (the lionfish's leaf-shaped supraorbital tentacles) as tapered, banded tubes.
 - **Eyes**: iris stroma and a lens pupil under a nearly flush cornea, with no dark limbal ring. Pupil and iris size and the melanophore flecks around the pupil can be set per species (`sp.eye`). The eyes are baked into fish space so they move with the swimming head.
 

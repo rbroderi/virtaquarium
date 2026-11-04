@@ -5,8 +5,16 @@ import clownfish from './clownfish.js';
 import lionfish from './lionfish.js';
 import clowntrigger from './clowntrigger.js';
 import copperband from './copperband.js';
+import bluetang from './bluetang.js';
+import yellowtang from './yellowtang.js';
+import moorishidol from './moorishidol.js';
+import royalgramma from './royalgramma.js';
+import emperorangel from './emperorangel.js';
+import longnose from './longnose.js';
+import chromis from './chromis.js';
+import coralbeauty from './coralbeauty.js';
 
-const FITTED = { clownfish, lionfish, clowntrigger, copperband };
+const FITTED = { clownfish, lionfish, clowntrigger, copperband, bluetang, yellowtang, moorishidol, royalgramma, emperorangel, longnose, chromis, coralbeauty };
 
 // Linear-light gain on a species' saturated colours (pattern, fins), from the lab's white-referenced
 // patch comparison; white and black pattern are left alone.
@@ -22,7 +30,7 @@ function gainColours(sp, gain) {
   const g = (h) => (typeof h === 'string' && h[0] === '#' ? gainHex(h, gain) : h);
   for (const p of sp.pattern) { if (p.color) p.color = g(p.color); if (p.stops) p.stops = p.stops.map(([v, c]) => [v, g(c)]); }
   for (const f of sp.fins) f.fill = Array.isArray(f.fill) ? f.fill.map(([t, c]) => [t, g(c)]) : g(f.fill);
-  sp.caudal.fill = g(sp.caudal.fill); sp.pectoral.fill = g(sp.pectoral.fill); sp.eye.iris = g(sp.eye.iris);
+  sp.caudal.fill = g(sp.caudal.fill); if (sp.pectoral) sp.pectoral.fill = g(sp.pectoral.fill); sp.eye.iris = g(sp.eye.iris);
   if (sp.pelvic) sp.pelvic.fill = g(sp.pelvic.fill);
 }
 

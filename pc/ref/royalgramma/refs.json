@@ -621,7 +621,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 11
     },
     {
       "file": "delso_belize.jpg",
@@ -1170,7 +1171,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -4
     },
     {
       "file": "gratwicke.jpg",
@@ -1569,7 +1571,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 10
     }
   ]
 }

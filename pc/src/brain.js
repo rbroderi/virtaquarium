@@ -15,6 +15,7 @@ export const MODES = {
   inspect: 'Checking out the glass',
   host: 'Snuggling in the anemone',
   hover: 'Hovering, fins fanned',
+  lurk: 'Lurking in its crevice, gulping water',
 };
 
 const _v = new THREE.Vector3();
@@ -150,7 +151,8 @@ export class Brain {
     s.school = sp.school > 0 && this.neighbors.length ? t.sociability * (0.5 + 0.6 * d.social) : 0;
     s.forage = (sp.grazer || 0) * (0.25 + d.hunger * 0.9);
     s.feed = this.focusFood ? 0.5 + d.hunger * 1.2 + t.boldness * 0.3 : 0;
-    s.rest = (1 - d.energy) * 1.1 + (sp.nocturnal ? 0 : dark * 0.8) + (sp.shy || 0) * 0.15;
+    s.rest = sp.lurker ? 0 : (1 - d.energy) * 1.1 + (sp.nocturnal ? 0 : dark * 0.8) + (sp.shy || 0) * 0.15;
+    s.lurk = sp.lurker ? 0.85 + (1 - d.energy) * 0.4 - d.hunger * 0.35 - dark * 0.45 : 0;
     s.flee = sp.host ? 0 : d.fear * 1.8;
     s.patrol = (this.intruder ? t.aggression * 1.1 : t.aggression * 0.2) * (1 - this.chaseFatigue);
     s.inspect = this.inspectDone || (sp.shy || 0) > 0.6 ? 0 : t.curiosity * d.boredom * 0.9;
@@ -330,6 +332,17 @@ export class Brain {
         dir.normalize();
         speed = dist > 1.5 ? pace.host[0] : pace.host[1] + dist * 0.1;
         clearance = 0.05;
+        break;
+      }
+      case 'lurk': {
+        // Settle on the rock at home, head up and out, swaying slowly.
+        dir.subVectors(this.home, pos);
+        const dist = dir.length();
+        clearance = me.size * 0.04;
+        if (dist < me.size * 0.3) {
+          dir.set(Math.sin(this.modeTime * 0.25 + this.orbit) * 0.3, 0, Math.cos(this.modeTime * 0.17) * 0.2).add(me.dir);
+          speed = pace.lurk[1];
+        } else { dir.normalize(); speed = pace.lurk[0]; }
         break;
       }
       case 'hover': {

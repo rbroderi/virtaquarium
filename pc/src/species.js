@@ -42,9 +42,13 @@ export const SPECIES = [
     brain: { maxSpeed: 1.2, turn: 4.0, zone: [0.45, 1.0], school: 0.3, grazer: 0.3, territorial: 0.5, boldness: 0.6, curiosity: 0.6, activity: 0.7, host: true, prey: true, tailHz: 5.0 },
   },
   {
+    // bodyDepthSL below (bluetang..coralbeauty): approximate published body depth / SL ranges (FishBase
+    // species summaries); they bound the shape fit (tools/fit-anatomy.mjs).
     id: 'bluetang', name: 'Pacific Blue Tang', sci: 'Paracanthurus hepatus',
     fact: 'A grazing surgeonfish: the scalpel-like spine by its tail is used in territorial spats.',
     size: 1.05, count: 2,
+    anatomy: { bodyDepthSL: [0.4, 0.5] },
+    albedoGain: [0.96, 1.014, 0.975],   // lab patch comparison (chromaticity, 7 patches), half strength
     body: { len: 0.78, depth: 0.5, width: 0.3, m: 0.38, headP: 0.6, tailP: 1.2, ped: 0.3 },
     eye: { u: 0.1, v: -0.28, r: 0.04, iris: '#1a1a40' },
     pattern: [
@@ -64,6 +68,8 @@ export const SPECIES = [
     id: 'yellowtang', name: 'Yellow Tang', sci: 'Zebrasoma flavescens',
     fact: 'Spends most of the day grazing algae from rock, which keeps reefs healthy.',
     size: 0.95, count: 2,
+    anatomy: { bodyDepthSL: [0.5, 0.6] },
+    albedoGain: [0.917, 1.025, 0.978],   // lab patch comparison (chromaticity, 6 patches), half strength
     body: { len: 0.78, depth: 0.78, width: 0.24, m: 0.42, headP: 0.9, tailP: 1.6, ped: 0.22, snout: 0.06, snoutH: 0.05 },
     eye: { u: 0.2, v: -0.4, r: 0.04, iris: '#2a2a20' },
     pattern: [
@@ -82,6 +88,8 @@ export const SPECIES = [
     id: 'moorishidol', name: 'Moorish Idol', sci: 'Zanclus cornutus',
     fact: 'Named by Moors who believed it a bringer of happiness; trails a long white dorsal filament.',
     size: 1.0, count: 2,
+    anatomy: { bodyDepthSL: [0.7, 1.0] },
+    albedoGain: [0.933, 1.015, 1.0],   // lab patch comparison (white-referenced, 6 patches), half strength
     body: { len: 0.74, depth: 0.88, width: 0.2, m: 0.38, headP: 1.2, tailP: 1.5, ped: 0.18, snout: 0.14, snoutH: 0.045 },
     eye: { u: 0.22, v: -0.3, r: 0.04, iris: '#1a1a1a' },
     pattern: [
@@ -105,6 +113,7 @@ export const SPECIES = [
     size: 1.45, count: 1,
     // Dorsal XIII + 11, anal III + 7, pectoral 14 unbranched rays, pelvic I + 5 (Schultz 1986; FishBase).
     anatomy: { bodyDepthSL: [0.28, 0.38], dorsalSoft: { spines: 0, rays: 11 }, anal: { spines: 3, rays: 7 }, pectoralRays: 14, pelvic: { spines: 1, rays: 5 } },
+    albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
     body: { len: 0.78, depth: 0.27, width: 0.6, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35 },
     eye: { u: 0.17, v: -0.35, r: 0.03, iris: '#b05a3a', irisR: 0.98, pupil: 0.42, fleck: '#5a2010', fleckR: 0.8 },
     pattern: [
@@ -139,6 +148,7 @@ export const SPECIES = [
     id: 'copperband', name: 'Copperband Butterflyfish', sci: 'Chelmon rostratus',
     fact: 'Uses its tweezer snout to pick tiny invertebrates from crevices; the false eyespot confuses predators.',
     size: 0.85, count: 1,
+    albedoGain: [0.906, 1.179, 1.049],   // lab patch comparison (white-referenced, 28 patches), half strength
     body: { len: 0.76, depth: 0.6, width: 0.2, m: 0.45, headP: 1.1, tailP: 1.5, ped: 0.2, snout: 0.16, snoutH: 0.03 },
     eye: { u: 0.24, v: -0.3, r: 0.035, iris: '#222222' },
     pattern: [
@@ -160,6 +170,7 @@ export const SPECIES = [
     id: 'royalgramma', name: 'Royal Gramma', sci: 'Gramma loreto',
     fact: 'Claims a crevice and defends it; often swims upside-down under ledges.',
     size: 0.5, count: 2,
+    anatomy: { bodyDepthSL: [0.26, 0.36] },
     body: { len: 0.82, depth: 0.3, width: 0.5, m: 0.35, headP: 0.7, tailP: 1.0, ped: 0.5 },
     eye: { u: 0.1, v: -0.3, r: 0.05, iris: '#d0a020' },
     pattern: [
@@ -178,6 +189,7 @@ export const SPECIES = [
     id: 'clowntrigger', name: 'Clown Triggerfish', sci: 'Balistoides conspicillum',
     fact: 'Bold and inquisitive; locks itself into crevices with its "trigger" dorsal spine.',
     size: 1.15, count: 1,
+    albedoGain: [1.02, 0.995, 0.889],   // lab patch comparison (white-referenced, 8 patches), half strength
     body: { len: 0.82, depth: 0.55, width: 0.36, m: 0.45, headP: 0.9, tailP: 1.2, ped: 0.3 },
     // Dorsal III + 25-27, anal 21-23, pectoral 14-15 (Randall 2005; FishBase).
     anatomy: { bodyDepthSL: [0.48, 0.56], dorsalSoft: { spines: 0, rays: 26 }, anal: { spines: 0, rays: 22 }, pectoralRays: 14 },
@@ -212,6 +224,8 @@ export const SPECIES = [
     id: 'emperorangel', name: 'Emperor Angelfish', sci: 'Pomacanthus imperator',
     fact: 'Juveniles wear white rings on blue; adults change completely into this striped livery.',
     size: 1.3, count: 1,
+    anatomy: { bodyDepthSL: [0.52, 0.65] },
+    albedoGain: [0.927, 0.943, 1.077],   // lab patch comparison (white-referenced, 12 patches), half strength
     body: { len: 0.8, depth: 0.62, width: 0.24, m: 0.45, headP: 1.0, tailP: 1.4, ped: 0.3 },
     eye: { u: 0.16, v: -0.3, r: 0.035, iris: '#202020' },
     pattern: [
@@ -233,6 +247,8 @@ export const SPECIES = [
     id: 'longnose', name: 'Yellow Longnose Butterflyfish', sci: 'Forcipiger flavissimus',
     fact: 'Its elongated snout reaches into coral branches to pluck tube-worm tentacles.',
     size: 0.8, count: 1,
+    anatomy: { bodyDepthSL: [0.42, 0.56] },
+    albedoGain: [1.026, 0.989, 1.031],   // lab patch comparison (chromaticity, 9 patches), half strength
     body: { len: 0.76, depth: 0.58, width: 0.2, m: 0.5, headP: 1.2, tailP: 1.5, ped: 0.2, snout: 0.22, snoutH: 0.025 },
     eye: { u: 0.3, v: -0.35, r: 0.035, iris: '#202020' },
     pattern: [
@@ -252,6 +268,7 @@ export const SPECIES = [
     id: 'chromis', name: 'Blue-Green Chromis', sci: 'Chromis viridis',
     fact: 'Shoals of these damselfish hover above branching coral and dart into it when threatened.',
     size: 0.38, count: 9,
+    anatomy: { bodyDepthSL: [0.42, 0.55] },
     body: { len: 0.74, depth: 0.4, width: 0.42, m: 0.4, headP: 0.8, tailP: 1.2, ped: 0.3 },
     eye: { u: 0.12, v: -0.22, r: 0.055, iris: '#4a6a6a' },
     pattern: [
@@ -270,6 +287,7 @@ export const SPECIES = [
     id: 'coralbeauty', name: 'Coral Beauty Angelfish', sci: 'Centropyge bispinosa',
     fact: 'A dwarf angelfish that rarely strays far from rockwork, darting between caves.',
     size: 0.6, count: 1,
+    anatomy: { bodyDepthSL: [0.48, 0.6] },
     body: { len: 0.8, depth: 0.5, width: 0.32, m: 0.42, headP: 0.9, tailP: 1.3, ped: 0.35 },
     eye: { u: 0.14, v: -0.25, r: 0.045, iris: '#3a2a8a' },
     pattern: [
@@ -284,6 +302,34 @@ export const SPECIES = [
     caudal: { type: 'round', spread: 0.16, fill: '#3a2a9a' },
     pectoral: { u: 0.3, v: 0.12, len: 0.12, w: 0.07, fill: '#ff9a4a', alpha: 0.6 },
     brain: { maxSpeed: 1.1, turn: 4.0, zone: [0.6, 1.0], school: 0, grazer: 0.9, territorial: 0.4, boldness: 0.35, curiosity: 0.5, activity: 0.7, shy: 0.7, tailHz: 4.0 },
+  },
+  {
+    id: 'moray', name: 'Snowflake Moray', sci: 'Echidna nebulosa',
+    fact: 'Spends the day with its head out of a crevice, gulping water through its mouth; hunts crabs at night.',
+    size: 3.2, count: 1,
+    // Anguilliform: no pectoral or pelvic fins, one continuous fin fold (dorsal from just ahead of the gill
+    // opening, anal from the vent at mid-body) running round the tail; scaleless, mucus-covered skin.
+    // Proportions from the side-on references (pc/ref/moray): depth ~6.5% TL, head ~12% TL.
+    body: { len: 0.97, depth: 0.065, width: 0.9, flank: 1, m: 0.3, headP: 0.32, tailP: 1.4, ped: 0.18 },
+    eye: { u: 0.035, v: -0.4, r: 0.0065, iris: '#e8c020', irisR: 0.98, pupil: 0.5 },
+    gill: false,
+    // The gape runs back past the eye; the lower jaw hinges at its corner (fishModel jaw, fish.js breathing).
+    mouth: { u: 0.065, v: 0.12, v0: 0.0, lining: 0.08 },
+    pattern: [
+      { op: 'vgrad', stops: [[-1, '#e9e5d8'], [1, '#f3f0e8']] },
+      { op: 'blotches', u0: 0.04, u1: 1.0, n: 22, rows: [{ v: -0.5 }, { v: 0.45, du: 0.022 }], r: 0.013, color: '#161412', inner: '#e6c826', innerN: 4, speck: '#2a2520', speckN: 3000, speckR: 0.0011, seed: 5 },
+      { op: 'blob', u: 0.0, v: 0.0, ru: 0.035, rv: 1.0, color: '#ecebe6', soft: 0.5 },   // pale snout
+      { op: 'blob', u: 0.115, v: 0.25, ru: 0.004, rv: 0.08, color: '#101010', soft: 0.3 },   // gill opening
+    ],
+    // Tubular anterior nostrils at the tip of the snout.
+    appendages: [{ u: 0.008, v: -0.05, len: 0.012, dir: [1, 0.3, 0.5], r: 0.0022, color: '#e8cc30' }],
+    fins: [
+      { pos: 'top', u0: 0.11, u1: 1.0, pts: [[0, 0.004], [0.1, 0.012], [0.9, 0.014], [1, 0.008]], sweep: 0, solid: true, fill: '#e8e4d8', alpha: 1, spots: '#161412', spotR: 0.0035, spotN: 160 },
+      { pos: 'bottom', u0: 0.47, u1: 1.0, pts: [[0, 0.004], [0.1, 0.01], [0.9, 0.012], [1, 0.008]], sweep: 0, solid: true, fill: '#e8e4d8', alpha: 1, spots: '#161412', spotR: 0.0035, spotN: 90 },
+    ],
+    caudal: { type: 'round', spread: 0.018, solid: true, fill: '#e8e4d8', alpha: 1, spots: '#161412', spotR: 0.006, spotN: 8 },
+    pectoral: null,
+    brain: { maxSpeed: 0.6, turn: 1.5, zone: [0.9, 1.0], school: 0, grazer: 0, territorial: 0.3, boldness: 0.6, curiosity: 0.3, activity: 0.2, predator: true, nocturnal: true, lurker: true, tailHz: 1.0 },
   },
 ];
 applyFitted(SPECIES);
@@ -314,6 +360,7 @@ export const SWIM = {
   longnose: { mode: 'labriform', maxBL: 2.5, burstBL: 6, gait: 2.0, rmin: 0.3, hoverTurn: 1.8 },
   chromis: { mode: 'labriform', maxBL: 4.5, burstBL: 10, gait: 2.5, rmin: 0.2, hoverTurn: 2.5 },
   coralbeauty: { mode: 'labriform', maxBL: 3.0, burstBL: 7, gait: 2.0, rmin: 0.25, hoverTurn: 2.0 },
+  moray: { mode: 'anguilliform', maxBL: 0.6, burstBL: 2, gait: 0, rmin: 0.2, hoverTurn: 0.6 },   // curls round tightly
 };
 
 // Turning and posture (merged into sp.swim). Turns speed up and slow down gradually; at low speed a
@@ -343,6 +390,7 @@ export const MOTION = {
   longnose: { aLat: 0.07, aLatBurst: 0.45, wide: 2, turnDrag: 0.6, pitchCruise: 18, pitchSlow: 60, climb: 0.6, pitchRate: [45, 120], bank: 7 },
   chromis: { aLat: 0.12, aLatBurst: 0.7, wide: 1.8, turnDrag: 0.4, pitchCruise: 25, pitchSlow: 40, climb: 0.7, pitchRate: [60, 170], bank: 12 },
   coralbeauty: { aLat: 0.09, aLatBurst: 0.6, wide: 1.8, turnDrag: 0.5, pitchCruise: 20, pitchSlow: 50, climb: 0.6, pitchRate: [55, 150], bank: 9 },
+  moray: { aLat: 0.05, aLatBurst: 0.3, wide: 1.5, turnDrag: 0.3, pitchCruise: 20, pitchSlow: 35, climb: 0.5, pitchRate: [30, 90], bank: 3 },
 };
 
 // Pace: the speed each behaviour asks for, as a fraction of the species' max sustained speed (maxBL).
@@ -350,7 +398,7 @@ export const MOTION = {
 // Pairs are [far, near] (or [base, +activity] for cruise). Species list only what differs from PACE_BASE.
 export const PACE_BASE = {
   cruise: [0.15, 0.2], school: 0.35, forage: [0.3, 0.15], peck: 0.05, feed: [0.8, 0.4], rest: [0.25, 0.06],
-  flee: 1.25, chase: 0.75, patrol: 0.25, inspect: [0.3, 0.03], host: [0.5, 0.15], hover: 0.25,
+  flee: 1.25, chase: 0.75, patrol: 0.25, inspect: [0.3, 0.03], host: [0.5, 0.15], hover: 0.25, lurk: [0.3, 0.0],
 };
 export const PACE = {
   clownfish: { cruise: [0.12, 0.15], host: [0.55, 0.18] },          // stays close, wiggles in the tentacles
@@ -365,6 +413,7 @@ export const PACE = {
   longnose: { forage: [0.25, 0.12], peck: 0.03 },
   chromis: { cruise: [0.2, 0.2], school: 0.4 },                    // active schooling planktivore
   coralbeauty: { cruise: [0.12, 0.2], rest: [0.3, 0.06] },         // darts between rocks
+  moray: { cruise: [0.3, 0.2], feed: [0.9, 0.5], flee: 1.0 },       // slow prowl along the bottom at night
 };
 
 const DEG = Math.PI / 180, G_UNITS = 9.81 / 0.125;   // g in world units/s^2
@@ -395,5 +444,6 @@ export const SKIN = {
   longnose: { scales: 72, hump: 0.04 },
   chromis: { scales: 28, hump: 0.07 },
   coralbeauty: { scales: 45, hump: 0.06 },
+  moray: { scales: 0, hump: 0.02 },   // scaleless
 };
 for (const sp of SPECIES) Object.assign(sp.body, SKIN[sp.id]);

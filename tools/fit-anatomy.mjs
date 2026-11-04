@@ -112,7 +112,7 @@ function silhouette(sp) {
   for (const f of sp.fins) { const o = finOutline(sp, prof, f); polys.push([...o.base, ...o.outer.slice().reverse()]); }
   polys.push(caudalOutline(sp, prof).map(([x, y]) => [x, prof.centre(1) + y]));
   if (sp.pelvic) polys.push(pelvicOutline(sp, prof).outline);   // paired, but splayed only slightly: side view
-  if (sp.pectoral.kind === 'fan') polys.push(pectoralOutline(sp, prof));   // lionfish wings reach past the body
+  if (sp.pectoral?.kind === 'fan') polys.push(pectoralOutline(sp, prof));   // lionfish wings reach past the body
   return normalise(polys);
 }
 // Fins on the same edge follow one another (a spiny dorsal ends where the soft dorsal begins).
@@ -133,6 +133,7 @@ const bodyKey = (k, lo, hi) => add((s) => s.body[k] ?? 0, (s, v) => { s.body[k] 
 // Body depth is depth/len in SL terms: the body (u in [0, 1]) is the standard length.
 add((s) => s.body.depth / s.body.len, (s, v) => { s.body.depth = v * s.body.len; }, bdLo, bdHi);
 bodyKey('m', 0.25, 0.6); bodyKey('headP', 0.3, 1.6); bodyKey('tailP', 0.5, 2.5); bodyKey('ped', 0.25, 0.65); bodyKey('hump', 0, 0.16);
+if (base.body.snout) { bodyKey('snout', 0.06, 0.32); bodyKey('snoutH', 0.01, 0.05); }   // butterflyfish beaks
 base.fins.forEach((f, fi) => {
   add((s) => s.fins[fi].u0, (s, v) => { s.fins[fi].u0 = v; }, Math.max(0.05, f.u0 - 0.15), Math.min(0.95, f.u0 + 0.15));
   add((s) => s.fins[fi].u1, (s, v) => { s.fins[fi].u1 = v; }, Math.max(0.1, f.u1 - 0.15), Math.min(1, f.u1 + 0.1));
@@ -141,7 +142,7 @@ base.fins.forEach((f, fi) => {
   (f.pts || []).forEach((_, pi) => add((s) => s.fins[fi].pts[pi][1], (s, v) => { s.fins[fi].pts[pi][1] = v; }, 0, 0.35));
 });
 add((s) => s.caudal.spread, (s, v) => { s.caudal.spread = v; }, 0.08, 0.4);
-if (base.pectoral.kind === 'fan') {
+if (base.pectoral?.kind === 'fan') {
   const fk = (k, lo, hi) => add((s) => s.pectoral[k], (s, v) => { s.pectoral[k] = v; }, lo, hi);
   fk('len', 0.3, 0.65); fk('u', Math.max(0.1, base.pectoral.u - 0.08), base.pectoral.u + 0.08); fk('v', -0.2, 0.6);
 }
@@ -239,11 +240,11 @@ for (const b of bands) console.log(`  band ${b.index}: u ${b.from} -> ${b.u.toFi
 const r3 = (v) => Math.round(v * 1000) / 1000;
 const fit = {
   bands: bands.map((b) => ({ index: b.index, u: r3(b.u), w: r3(b.w) })),
-  body: Object.fromEntries(['depth', 'm', 'headP', 'tailP', 'ped', 'hump'].map((k) => [k, r3(sp.body[k])])),
+  body: Object.fromEntries(['depth', 'm', 'headP', 'tailP', 'ped', 'hump', ...(sp.body.snout ? ['snout', 'snoutH'] : [])].map((k) => [k, r3(sp.body[k])])),
   fins: sp.fins.map((f) => (f.kind === 'spines' ? { u0: r3(f.u0), u1: r3(f.u1), h: r3(f.h) } : { u0: r3(f.u0), u1: r3(f.u1), sweep: r3(f.sweep ?? 0), pts: f.pts?.map(([t, h]) => [t, r3(h)]) })),
   caudal: { spread: r3(sp.caudal.spread) },
   ...(sp.pelvic ? { pelvic: { u: r3(sp.pelvic.u), len: r3(sp.pelvic.len), angle: Math.round(sp.pelvic.angle) } } : {}),
-  ...(sp.pectoral.kind === 'fan' ? { pectoral: { u: r3(sp.pectoral.u), v: r3(sp.pectoral.v), len: r3(sp.pectoral.len) } } : {}),
+  ...(sp.pectoral?.kind === 'fan' ? { pectoral: { u: r3(sp.pectoral.u), v: r3(sp.pectoral.v), len: r3(sp.pectoral.len) } } : {}),
 };
 console.log(`  body depth ${(fit.body.depth / sp.body.len).toFixed(3)} SL (published ${bdLo}-${bdHi})`);
 const atBound = P.filter((p) => { const v = p.get(sp); return v <= p.lo + 1e-6 || v >= p.hi - 1e-6; }).length;

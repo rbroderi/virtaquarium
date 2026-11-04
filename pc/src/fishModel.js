@@ -145,6 +145,29 @@ function paintSkin(sp, prof) {
         }
         break;
       }
+      case 'blotches': {
+        // Snowflake moray: rows of dendritic dark blotches, each holding a few yellow spots, over a fine
+        // dark speckle. rows: [{ v, du }] (du: shift along the body, so rows alternate); r: blotch radius (TL).
+        const r2 = mulberry32(p.seed || 1);
+        const dot = (u, v, rr) => { g.beginPath(); g.ellipse(U(u), V(v), (rr / len) * TW, (rr / prof.half(clamp(u, 0, 1))) * TH / 2, 0, 0, Math.PI * 2); g.fill(); };
+        g.fillStyle = p.speck || p.color;
+        for (let i = 0; i < (p.speckN || 0); i++) dot(lerp(p.u0, 1, r2()), r2() * 2.2 - 1.1, p.speckR * (0.5 + r2()));
+        for (const row of p.rows) {
+          for (let i = 0; i < p.n; i++) {
+            const u = lerp(p.u0, p.u1, (i + 0.5 + (r2() - 0.5) * 0.4) / p.n) + (row.du || 0), v = row.v + (r2() - 0.5) * 0.2;
+            const h = prof.half(clamp(u, 0, 1)), rr = p.r * (0.75 + r2() * 0.5), k = 9;
+            g.fillStyle = p.color; g.beginPath();
+            for (let j = 0; j < 2 * k; j++) {
+              const a = (j / (2 * k)) * Math.PI * 2, rad = rr * (j % 2 ? 0.6 + 0.2 * r2() : 0.85 + 0.45 * r2());
+              g.lineTo(U(u + (Math.cos(a) * rad) / len), V(v + (Math.sin(a) * rad) / h));
+            }
+            g.closePath(); g.fill();
+            g.fillStyle = p.inner;
+            for (let q = 0; q < (p.innerN || 3); q++) dot(u + ((r2() - 0.5) * rr) / len, v + ((r2() - 0.5) * rr) / h, rr * (0.1 + 0.08 * r2()));
+          }
+        }
+        break;
+      }
     }
     g.restore();
   }
@@ -184,6 +207,7 @@ function paintSkin(sp, prof) {
     for (let i = 0; i <= 24; i++) { const v = -span + (2 * span * i) / 24; g.lineTo(U(uu - bow * (1 - (v / span) ** 2)), V(v)); }
   };
   g.lineCap = 'round';
+  if (sp.gill !== false) {
   g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 2.5 * K; gillPath(g0, 0.78, 0.035); g.stroke();
   g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 1.5 * K; gillPath(g0 - (3 * K) / TW, 0.76, 0.035); g.stroke();
   g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1.5 * K; gillPath(g0 - 0.05, 0.6, 0.03); g.stroke();
@@ -193,8 +217,14 @@ function paintSkin(sp, prof) {
     const t = (u - g0) / (0.95 - g0), v = -0.5 + 0.38 * t * t;
     g.fillRect(U(u), V(v) - 0.6 * K, 2.2 * K, 1.2 * K);
   }
-  // Mouth: gape line and slightly darker lips.
-  if (!sp.body.snout) {
+  }
+  // Mouth: gape line and slightly darker lips. A long hinged gape (sp.mouth: morays) is lined dark
+  // along the lip line; the jaw seam stretches over this lining when the mouth opens.
+  if (sp.mouth) {
+    const M = sp.mouth, lw = (M.lining ?? 0.06) * TH / 2;
+    g.strokeStyle = '#2a0e10'; g.lineWidth = lw; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(U(-0.01), V(M.v0)); g.lineTo(U(M.u), V(M.v)); g.stroke();
+  } else if (!sp.body.snout) {
     g.fillStyle = 'rgba(0,0,0,0.5)'; g.fillRect(0, V(0.08) - 0.7 * K, U(0.045), 1.4 * K);
     g.globalCompositeOperation = 'multiply';
     const lip = g.createRadialGradient(0, V(0.08), 0, 0, V(0.08), U(0.06));
@@ -230,7 +260,7 @@ function paintSkin(sp, prof) {
     const v = ((j + 0.5) / SH) * 2 - 1;
     for (let i = 0; i < SW; i++) {
       const u = (i + 0.5) / SW, X = u * len, Y = v * halfCol[i];
-      const mask = smooth01((u - g0 + 0.005) / 0.03) * fade[i];
+      const mask = sp.body.scales === 0 ? 0 : smooth01((u - g0 + 0.005) / 0.03) * fade[i];
       let best = Infinity, bt = 0, bd = 1;
       const jr = Math.round(Y / dy);
       for (let rj = jr - 2; rj <= jr + 2; rj++) {
@@ -426,10 +456,11 @@ function paintFins(sp, prof) {
     // more of the light behind it passes through near the edge.
     let bc = [0, 0], oc = [0, 0];
     for (let i = 0; i <= 8; i++) { const [a, b] = rays(i / 8); bc = [bc[0] + a[0] / 9, bc[1] + a[1] / 9]; oc = [oc[0] + b[0] / 9, oc[1] + b[1] / 9]; }
-    const a0 = Math.min(0.95, (spec.alpha ?? 0.9) + 0.05);
+    // spec.solid: a thick, skin-covered fin fold (morays), opaque to the margin.
+    const a0 = spec.solid ? 1 : Math.min(0.95, (spec.alpha ?? 0.9) + 0.05);
     g.globalCompositeOperation = 'destination-out';
     const mg = g.createLinearGradient(bc[0], bc[1], oc[0], oc[1]);
-    for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${1 - a0 * (1 - 0.38 * (s / 4) ** 2)})`);
+    for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${spec.solid ? 0 : 1 - a0 * (1 - 0.38 * (s / 4) ** 2)})`);
     g.fillStyle = mg; g.fillRect(-1, -1, 2, 2);
     // Spiny fins: the membrane is incised between the spine tips, which stand free.
     g.fillStyle = '#000';
@@ -905,16 +936,22 @@ uniform float uFinPhase;
 uniform float uXPed;    // x of the caudal peduncle (the caudal blade lags behind it)
 uniform float uXGill;   // x of the gill cover's rear edge
 uniform float uVent;    // opercular flare, 0..~0.04
+uniform float uAnguil;  // 1 = anguilliform (eels): the whole body undulates
+uniform float uLift;    // front of the body raised (an eel resting with its head up)
 // Lateral offset of the spine (the body midline) at x; x runs from +0.5 (snout) to -0.5 (tail tip).
 // Body wave h = A(s) sin(wt + kx): wavelength ~0.95 BL (carangiform-like), amplitude from a small head
 // recoil (~0.02 BL) through a minimum ~0.15 BL behind the snout to ~0.1 BL at the tail tip at cruise.
 // The caudal blade trails the peduncle by ~45 deg. uBend adds the curvature of a turn.
+// Anguilliform: ~0.6 BL wavelength (1.5-2 waves on the body), amplitude ~0.03 BL at the head rising
+// to ~0.1 BL at the tail, no separate caudal blade.
 float spineH(float x) {
   float s = 0.5 - x;
-  float env = 0.02 - 0.06 * s + 0.2 * s * s;
-  float lag = 0.8 * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));
-  return uAmp * env * sin(uPhase + x * 6.6 - lag) + uBend * (x - 0.05) * (x - 0.05) * 2.0;
+  float env = mix(0.02 - 0.06 * s + 0.2 * s * s, 0.03 + 0.07 * s, uAnguil);
+  float lag = 0.8 * (1.0 - uAnguil) * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));
+  return uAmp * env * sin(uPhase + x * mix(6.6, 10.5, uAnguil) - lag) + uBend * (x - 0.05) * (x - 0.05) * 2.0;
 }
+// Raise the front of the body, bending up ahead of x = 0.1.
+float liftY(float x) { float d = max(0.0, x - 0.1); return uLift * d * d * 2.5; }
 // Travelling wave along the dorsal/anal fins (head to tail), confined to the fins.
 float finFlutter(vec3 p) {
   float fin = smoothstep(uFinH, uFinH + 0.15, abs(p.y));
@@ -1000,12 +1037,23 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
           vec3 objectTangent = vec3(tangent.xyz);
         #endif`)
       .replace('#include <begin_vertex>', `
-        vec3 transformed = vec3(position);
-        float swZ = position.z * ventScale(position) + finFlutter(position);
-        transformed.x = position.x - swZ * swS;
+        vec3 p0 = position;
+        #ifdef FISH_JAW
+          // Lower jaw: turns down about the hinge at the corner of the mouth (aJaw: 1 on the jaw).
+          { float a = -uGape * aJaw, c = cos(a), s = sin(a); vec2 d = p0.xy - uHinge;
+            p0.xy = uHinge + vec2(d.x * c - d.y * s, d.x * s + d.y * c); }
+        #endif
+        vec3 transformed = p0;
+        float swZ = p0.z * ventScale(p0) + finFlutter(p0);
+        transformed.x = p0.x - swZ * swS;
+        transformed.y = p0.y + liftY(p0.x);
         transformed.z = swH + swZ * swC;`);
+    if (tissue?.jaw) {
+      shader.defines = { ...shader.defines, FISH_JAW: '' };
+      shader.vertexShader = 'attribute float aJaw;\nuniform float uGape;\nuniform vec2 uHinge;\n' + shader.vertexShader;
+    }
   };
-  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind : 'plain');
+  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') : 'plain');
   return addCaustics(base);   // fish swim through the same focused light as the reef
 }
 
@@ -1035,7 +1083,7 @@ function bodyGeometry(prof, sp) {
   const e = sp.eye, len = sp.body.len, g0 = gillU(sp);
   // Section exponent: compressed fish (tangs, angels) have a lens-shaped section, thickest along the
   // spine and sharp at the fin bases (> 1); round-bodied fish (gramma, lionfish) are fuller (< 1).
-  const flank = 1.6 - sp.body.width * 1.6;
+  const flank = sp.body.flank ?? 1.6 - sp.body.width * 1.6;
   const us = [];
   for (let i = 0; i <= NU; i++) { const t = i / NU; us.push(t * t * 0.35 + t * 0.65); }
   // Cross-section at body position u and angle th (th = 0 is the dorsal midline).
@@ -1056,7 +1104,9 @@ function bodyGeometry(prof, sp) {
     }
     return [y, Math.sign(sz) * z];
   };
-  const pos = [], uv = [], thick = [], idx = [];
+  const pos = [], uv = [], thick = [], idx = [], jaw = [];
+  // Lower jaw (sp.mouth): vertices below the lip line, ahead of the corner of the mouth.
+  const M = sp.mouth, jawAt = (u, v) => (M && u < M.u && v > lerp(M.v0, M.v, u / M.u) ? 1 : 0);
   const ringOf = (x, u, scale, uvU) => {
     for (let a = 0; a < NA; a++) {
       const th = (a / NA) * Math.PI * 2;
@@ -1065,18 +1115,19 @@ function bodyGeometry(prof, sp) {
       pos.push(x, yc + (y - yc) * scale, z * scale);
       uv.push(uvU, (1 + Math.cos(th)) / 2);
       thick.push(2 * Math.abs(z * scale));   // tissue a backlight has to pass through
+      jaw.push(jawAt(u, -Math.cos(th)));
     }
   };
   // Rounded nose cap: rings shrinking on a quarter ellipse ahead of u = 0.
   const capLen = Math.min(prof.half(0), prof.width(0)) * 0.55;
-  pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, 0.5); thick.push(0);
+  pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, 0.5); thick.push(0); jaw.push(0);
   for (let k = CAP; k >= 1; k--) {
     const phi = (k / (CAP + 1)) * Math.PI / 2;
     ringOf(prof.x(0) + Math.sin(phi) * capLen, 0, Math.cos(phi), 0);
   }
   for (const u of us) ringOf(prof.x(u), u, 1, u);
   const tailIdx = pos.length / 3;
-  pos.push(prof.x(1) - 0.004, prof.centre(1), 0); uv.push(1, 0.5); thick.push(0);
+  pos.push(prof.x(1) - 0.004, prof.centre(1), 0); uv.push(1, 0.5); thick.push(0); jaw.push(0);
   const rings = CAP + us.length, ring = (i) => 1 + i * NA;
   for (let a = 0; a < NA; a++) idx.push(0, ring(0) + ((a + 1) % NA), ring(0) + a);
   for (let i = 0; i < rings - 1; i++) {
@@ -1094,6 +1145,7 @@ function bodyGeometry(prof, sp) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute('aThick', new THREE.Float32BufferAttribute(thick, 1));
+  if (M) g.setAttribute('aJaw', new THREE.Float32BufferAttribute(jaw, 1));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -1108,7 +1160,7 @@ function speciesAssets(sp) {
   const prof = makeProfile(sp.body);
   const skin = paintSkin(sp, prof);
   const fins = paintFins(sp, prof);
-  const pect = paintPectoral(sp);
+  const pect = sp.pectoral ? paintPectoral(sp) : makeCanvas(4, 4);
   const eye = paintEye(sp);
   const tex = (c, srgb = true) => {
     const t = new THREE.CanvasTexture(c);
@@ -1120,13 +1172,13 @@ function speciesAssets(sp) {
     const geo = finMesh(m, fins);
     return m.xforms ? m.xforms.map((x) => geo.clone().applyMatrix4(x)) : [geo];
   }));
-  const pectGeo = pectoralGeometry(sp);
+  const pectGeo = sp.pectoral ? pectoralGeometry(sp) : null;
   const tubes = (list) => (list.length ? mergeGeometries(list.map((d) => tubeGeometry(d))) : null);
   const a = {
     prof,
     bodyGeo: bodyGeometry(prof, sp),
     finGeo, pectGeo,
-    tubeGeo: tubes([...fins.tubes, ...appendageTubes(sp, prof)]), pectTubeGeo: tubes(pectoralTubes(sp)),
+    tubeGeo: tubes([...fins.tubes, ...appendageTubes(sp, prof)]), pectTubeGeo: tubes(sp.pectoral ? pectoralTubes(sp) : []),
     skinTex: tex(skin.map), normalTex: tex(skin.normal, false), iridTex: tex(skin.irid, false), finTex: tex(fins.canvas), pectTex: tex(pect), eyeTex: tex(eye),
     eyeGeos: [1, -1].map((side) => eyeGeometry(prof, sp, side)),
     canvases: { skin: skin.map, fins: fins.canvas, pect },
@@ -1194,7 +1246,7 @@ function normaliseModel(root, cfg) {
 
 function buildCustomModel(sp, model) {
   const uniforms = {
-    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: model.finH }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -0.3 }, uXGill: { value: 9 }, uVent: { value: 0 },
+    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: model.finH }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -0.3 }, uXGill: { value: 9 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 },
   };
   const group = new THREE.Group();
   for (const p of model.parts) {
@@ -1249,18 +1301,21 @@ export function buildFishModel(sp, opts = {}) {
   const a = speciesAssets(sp);
   const uniforms = {
     uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: a.prof.H }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: a.prof.xPed }, uXGill: { value: a.prof.x(gillU(sp)) }, uVent: { value: 0 },
+    uAnguil: { value: sp.swim?.mode === 'anguilliform' ? 1 : 0 }, uLift: { value: 0 },
+    uGape: { value: 0 }, uHinge: { value: new THREE.Vector2(9, 9) },
   };
+  if (sp.mouth) uniforms.uHinge.value.set(a.prof.x(sp.mouth.u), a.prof.centre(sp.mouth.u) - sp.mouth.v * a.prof.half(sp.mouth.u));
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
-    roughness: 0.42, metalness: 0.0, ior: IN_WATER_IOR,
+    roughness: sp.body.scales === 0 ? 0.3 : 0.42, metalness: 0.0, ior: IN_WATER_IOR,   // scaleless skin: a mucus film
     iridescence: sp.iridescent ? 1.0 : 0.35, iridescenceIOR: 1.8, iridescenceThicknessRange: [180, 420],   // guanine platelet stacks
-  }), uniforms, { kind: 'body', sizeMM: sp.size * 125 });
+  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: !!sp.mouth });
   const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport.
-  const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -9 }, uXGill: { value: 9 }, uVent: { value: 0 } };
+  const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -9 }, uXGill: { value: 9 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 } };
   const pectMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), still, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
@@ -1275,9 +1330,9 @@ export function buildFishModel(sp, opts = {}) {
   if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms)));
 
   const pects = [], pectTubeMat = a.pectTubeGeo ? tubeMat(still) : null;
-  const p = sp.pectoral, pu = p.u;
-  const px = a.prof.x(pu), py = a.prof.centre(pu) - p.v * a.prof.half(pu), pz = a.prof.width(pu);
-  for (const side of [1, -1]) {
+  const p = sp.pectoral;
+  for (const side of p ? [1, -1] : []) {
+    const px = a.prof.x(p.u), py = a.prof.centre(p.u) - p.v * a.prof.half(p.u), pz = a.prof.width(p.u);
     const pivot = new THREE.Group();
     pivot.position.set(px, py, side * pz * 0.9);
     const m = new THREE.Mesh(a.pectGeo, pectMat);
@@ -1296,7 +1351,7 @@ export function buildFishModel(sp, opts = {}) {
   }), uniforms);
   for (const geo of a.eyeGeos) group.add(new THREE.Mesh(geo, eyeMat));
 
-  group.userData = { uniforms, pects, fan: p.kind === 'fan' };
+  group.userData = { uniforms, pects, fan: p?.kind === 'fan' };
   return group;
 }
 
