@@ -280,7 +280,10 @@ export class Fish {
     // Ventilation: the gill covers flare at ~1-1.5 Hz at rest, faster when working hard.
     this.ventPhase += dt * Math.PI * 2 * this.ventHz * (1 + 0.5 * clamp(blEq / sw.maxBL, 0, 1));
     u.uVent.value = 0.035 * (0.5 + 0.5 * Math.sin(this.ventPhase));
-    if (sp.mouth) {
+    // Buccal pump: the mouth opens a little while the gill covers close (drawing water in), then shuts
+    // as they flare (pushing it out over the gills); it snaps open to take food.
+    if (u.uGape) u.uGape.value = 0.07 * (0.5 - 0.5 * Math.sin(this.ventPhase)) + this.gulp * 2;
+    if (sp.gill === false) {
       // Morays have no gill covers: they pump water over the gills by opening and closing the mouth
       // (~0.6-0.9 Hz), wider when working, and gape wide to strike.
       u.uVent.value = 0;

@@ -48,6 +48,7 @@ async function generatedModel(id) {
   return generated.get(id);
 }
 
+const hold = { vent: null, gape: null };   // lab.hold({ vent, gape }): pin the breathing pose (null: breathe)
 let fish = [], yaw = Number(params.get('yaw') || 0), spin = params.get('spin') === '1', swim = params.get('swim') !== '0';
 let pitch = Number(params.get('pitch') || 0);   // camera elevation, degrees (positive looks down on the fish)
 let compare = params.get('compare') === '1', showing = 0;
@@ -136,7 +137,11 @@ function frame() {
     u.uFinPhase.value = swim ? t * Math.PI * 2 * 3 : 0;
     u.uAmp.value = swim ? 0.6 : 0;
     u.uFlutter.value = swim ? 0.6 : 0;
-    u.uVent.value = 0.035 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * 1.2));   // breathing, even when still
+    // Breathing, even when still: the gill covers flare as the mouth closes (fish.js). hold: fixed
+    // values to inspect the mouth and gill opening.
+    const br = Math.sin(t * Math.PI * 2 * 1.2);
+    u.uVent.value = hold.vent ?? 0.035 * (0.5 + 0.5 * br);
+    if (u.uGape) u.uGape.value = hold.gape ?? 0.07 * (0.5 - 0.5 * br);
     for (const p of m.userData.pects) {
       if (m.userData.fan) p.rotation.set(0, p.userData.side * 0.9, 0);
       else if (swim) posePectoral(p, t * 9, 0.5 + 0.3 * Math.sin(t * 9), 0.2 + 0.25 * Math.cos(t * 9));
@@ -161,6 +166,15 @@ window.lab = {
   setSwim: (v) => { swim = v; $('swim').checked = v; }, setSpin: (v) => { spin = v; $('spin').checked = v; },
   setFov: (v) => { camera.fov = v; frameCamera(); }, setLight, setLightDir, setTone,
   // Render one frame now (e.g. right before reading pixels), with the pose applied.
-  render: () => { for (const m of fish) m.rotation.set(THREE.MathUtils.degToRad(pitch), THREE.MathUtils.degToRad(yaw), 0); renderer.render(scene, camera); },
+  render: () => {
+    for (const m of fish) {
+      m.rotation.set(THREE.MathUtils.degToRad(pitch), THREE.MathUtils.degToRad(yaw), 0);
+      const u = m.userData.uniforms;
+      if (hold.vent != null) u.uVent.value = hold.vent;
+      if (hold.gape != null && u.uGape) u.uGape.value = hold.gape;
+    }
+    renderer.render(scene, camera);
+  },
+  hold: (h) => Object.assign(hold, h),
 };
 installReference(window.lab);

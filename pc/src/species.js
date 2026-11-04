@@ -51,6 +51,9 @@ export const SPECIES = [
     albedoGain: [0.96, 1.014, 0.975],   // lab patch comparison (chromaticity, 7 patches), half strength
     body: { len: 0.78, depth: 0.5, width: 0.3, m: 0.38, headP: 0.6, tailP: 1.2, ped: 0.3 },
     eye: { u: 0.1, v: -0.28, r: 0.04, iris: '#1a1a40' },
+    mouth: { u: 0.05, v: 0.32, v0: 0.22 },   // small, low on the face
+    // The caudal spine: a pale blade folded into a groove on the peduncle, where the yellow begins.
+    scalpel: { u: 0.93, v: 0.0, len: 0.055, color: '#e8dc98' },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#1d3db8'], [0, '#2b5fe6'], [1, '#4a86f5']] },
       { op: 'poly', color: '#0b0c1a', pts: [[0.1, -0.35], [0.25, -0.72], [0.5, -0.84], [0.75, -0.72], [0.9, -0.45], [0.97, -0.2], [0.97, 0.25], [0.88, 0.08], [0.78, 0.02], [0.65, 0.32], [0.48, 0.46], [0.32, 0.36], [0.33, 0.16], [0.45, 0.22], [0.58, 0.1], [0.66, -0.15], [0.62, -0.42], [0.48, -0.52], [0.33, -0.42], [0.2, -0.15]] },
@@ -75,9 +78,10 @@ export const SPECIES = [
     // the head narrows to a wedge at the front (headW), as seen head-on.
     body: { len: 0.78, depth: 0.78, width: 0.2, flank: 1.7, m: 0.42, headP: 0.9, tailP: 1.6, ped: 0.22, snout: 0.06, snoutH: 0.05, snoutW: 0.55, snoutTip: 0.45, snoutBlend: 0.03, headW: 0.6 },
     eye: { u: 0.215, v: -0.55, r: 0.04, iris: '#2a2a20' },   // high under the steep forehead (viatour.jpg blend, with body.mouth)
+    // The white caudal spine, folded into its groove on the peduncle (the tang's 'scalpel').
+    scalpel: { u: 0.955, v: -0.02, len: 0.07, color: '#f6f4ec' },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#ffe14a'], [0, '#ffd400'], [1, '#f2c000']] },
-      { op: 'poly', color: '#ffffff', pts: [[0.92, -0.06], [0.99, -0.04], [0.99, 0.02], [0.92, 0.0]] },
     ],
     fins: [
       // The fins are as opaque and saturated as the body (the photos), so body and fins read as one disc.
@@ -121,6 +125,7 @@ export const SPECIES = [
     albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
     body: { len: 0.78, depth: 0.27, width: 0.6, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35 },
     eye: { u: 0.17, v: -0.35, r: 0.03, iris: '#b05a3a', irisR: 0.98, pupil: 0.42, fleck: '#5a2010', fleckR: 0.8 },
+    mouth: { u: 0.13, v: 0.3, v0: 0.02, lining: 0.06 },   // large and oblique, the lower jaw projecting
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
       // From just behind the snout tip: run to the tip, where the body closes to a point, the stripes turn
@@ -187,6 +192,7 @@ export const SPECIES = [
     ],
     body: { len: 0.82, depth: 0.3, width: 0.5, m: 0.35, headP: 0.7, tailP: 1.0, ped: 0.5 },
     eye: { u: 0.1, v: -0.3, r: 0.05, iris: '#d0a020' },
+    mouth: { u: 0.085, v: 0.22, v0: 0.0 },   // fairly large, oblique
     pattern: [
       { op: 'hgrad', stops: [[0, '#b72aa6'], [0.42, '#9c2bb0'], [0.56, '#ffcc1f'], [1, '#ffd52a']] },
       { op: 'poly', color: '#111111', pts: [[0, -0.42], [0.18, -0.32], [0.18, -0.24], [0, -0.3]] },
@@ -208,6 +214,7 @@ export const SPECIES = [
     // Dorsal III + 25-27, anal 21-23, pectoral 14-15 (Randall 2005; FishBase).
     anatomy: { bodyDepthSL: [0.48, 0.56], dorsalSoft: { spines: 0, rays: 26 }, anal: { spines: 0, rays: 22 }, pectoralRays: 14 },
     eye: { u: 0.28, v: -0.38, r: 0.035, iris: '#3a3020' },
+    mouth: { u: 0.04, v: 0.1, v0: 0.06 },   // small, at the end of the long snout
     // Plate-scaled head: a deep groove runs forward from the eye, the small terminal mouth has thick
     // lips, and the gill opening is a short slit above the pectoral base.
     ridges: [
@@ -242,6 +249,7 @@ export const SPECIES = [
     albedoGain: [0.927, 0.943, 1.077],   // lab patch comparison (white-referenced, 12 patches), half strength
     body: { len: 0.8, depth: 0.62, width: 0.24, m: 0.45, headP: 1.0, tailP: 1.4, ped: 0.3 },
     eye: { u: 0.16, v: -0.3, r: 0.035, iris: '#202020' },
+    mouth: { u: 0.05, v: 0.22, v0: 0.15 },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#1b3aa8'], [0, '#1d43b8'], [1, '#253fa0']] },
       { op: 'stripesH', n: 11, color: '#ffd436', w: 0.05, tilt: 0.35, u0: 0.32, u1: 1.0 },
@@ -249,6 +257,8 @@ export const SPECIES = [
       { op: 'band', u: 0.16, w: 0.07, curve: 0, color: '#111111', edge: '#6fa0ff', ew: 0.012 },
       { op: 'poly', color: '#0d1430', pts: [[0.25, -0.4], [0.34, -0.4], [0.34, 0.75], [0.25, 0.75]] },
     ],
+    // The preopercular spine, strong and pale blue, at the corner of the cheek (all Pomacanthus).
+    appendages: [{ u: 0.235, v: 0.5, len: 0.05, dir: [-1, -0.2, 0.3], r: 0.005, color: '#cfe2f4' }],
     fins: [
       { pos: 'top', u0: 0.3, u1: 0.96, pts: [[0, 0.04], [0.3, 0.12], [0.85, 0.13], [1, 0.03]], sweep: 0.3, fill: '#1d43b8', edge: '#7fb0ff', edgeW: 0.003 },
       { pos: 'bottom', u0: 0.5, u1: 0.96, pts: [[0, 0.04], [0.4, 0.13], [1, 0.03]], sweep: 0.3, fill: '#1a2f8a', edge: '#7fb0ff', edgeW: 0.003 },
@@ -290,6 +300,7 @@ export const SPECIES = [
     colourGain: [{ hex: ['#6fd8d0', '#8fe8df', '#c8f6ef', '#6fd8d4', '#7fe0d8', '#a0f0e8'], gain: [0.814, 1.007, 0.938] }],
     body: { len: 0.74, depth: 0.4, width: 0.42, m: 0.4, headP: 0.8, tailP: 1.2, ped: 0.3 },
     eye: { u: 0.12, v: -0.22, r: 0.055, iris: '#4a6a6a' },
+    mouth: { u: 0.06, v: 0.15, v0: 0.0 },   // small, terminal, a little oblique
     pattern: [
       { op: 'vgrad', stops: [[-1, '#6fd8d0'], [0, '#8fe8df'], [1, '#c8f6ef']] },
     ],
@@ -315,11 +326,14 @@ export const SPECIES = [
     ],
     body: { len: 0.8, depth: 0.5, width: 0.32, m: 0.42, headP: 0.9, tailP: 1.3, ped: 0.35 },
     eye: { u: 0.14, v: -0.25, r: 0.045, iris: '#3a2a8a' },
+    mouth: { u: 0.05, v: 0.2, v0: 0.12 },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#3c2a9a'], [0, '#5a2fa6'], [1, '#3a2890']] },
       { op: 'blob', u: 0.45, v: 0.08, ru: 0.32, rv: 0.6, color: '#ff7a1a', soft: 0.55 },
       { op: 'stripesV', u0: 0.25, u1: 0.85, n: 11, color: '#3a2a8a', ratio: 0.15, alpha: 0.45 },
     ],
+    // The preopercular spine at the corner of the cheek (Centropyge: 'two-spined angelfish').
+    appendages: [{ u: 0.225, v: 0.5, len: 0.045, dir: [-1, -0.2, 0.3], r: 0.0045, color: '#4a48b8' }],
     fins: [
       { pos: 'top', u0: 0.28, u1: 0.96, pts: [[0, 0.04], [0.4, 0.12], [0.9, 0.12], [1, 0.03]], sweep: 0.25, fill: '#3a2a9a', edge: '#7fa0ff', edgeW: 0.0036 },
       { pos: 'bottom', u0: 0.55, u1: 0.96, pts: [[0, 0.04], [0.4, 0.12], [1, 0.03]], sweep: 0.25, fill: '#3a2a9a', edge: '#7fa0ff', edgeW: 0.0036 },

@@ -51,6 +51,44 @@ const smooth01 = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 // Rear edge of the gill cover (operculum), in body u.
 export const gillU = (sp) => sp.eye.u + (0.09 / sp.body.len) + sp.eye.r * 0.6;
 
+// The gill cover's free rear margin: it bows back in the middle (u at its ends, g0 - bow at the
+// middle) and runs from about level with the top of the pectoral base (v = top) down and forward
+// to the throat (v = bot). Null for fish without a gill cover (morays: a small round gill opening).
+const gills = new WeakMap();
+export function gillOf(sp) {
+  if (sp.gill === false) return null;
+  if (gills.has(sp)) return gills.get(sp);
+  const G = { u: gillU(sp), bow: 0.035, top: -0.55, bot: 0.85 };
+  const s = (v) => (2 * v - G.top - G.bot) / (G.bot - G.top);   // -1 at the top end, +1 at the throat
+  G.edge = (v) => G.u - G.bow * Math.max(0, 1 - s(v) ** 2);
+  G.fade = (v) => 1 - smooth01((Math.abs(s(v)) - 0.7) / 0.3);   // the margin closes at its ends
+  gills.set(sp, G);
+  return G;
+}
+
+// Nostrils (nares), each side: the posterior one just ahead of the eye and a little above its
+// centre, the anterior one further forward; r in body units (about a tenth of the eye's radius).
+export function naresOf(sp) {
+  const e = sp.eye, len = sp.body.len, sn = sp.body.snout || 0;
+  // On the face, not out on a snout: snouted fish have them just ahead of the eye.
+  const lo = sn ? sn + 0.45 * (e.u - e.r / len - sn) : 0.004, front = e.u - e.r / len;
+  const uA = Math.max(lo, e.u - (e.r * 2.9) / len), uP = Math.max((uA + front) / 2, e.u - (e.r * 1.7) / len);
+  return [
+    { u: uP, v: e.v - 0.05, r: Math.min(e.r * 0.14, 0.0055) },
+    { u: uA, v: e.v + 0.06, r: Math.min(e.r * 0.11, 0.0045) },
+  ];
+}
+
+// The mouth, for the hinged lower jaw and the lips: the gape runs from the tip (v0) back to the corner
+// of the mouth (u, v), where the lower jaw hinges (v as for the eye: +1 is ventral). sp.mouth sets it
+// (the moray's long gape); otherwise a small terminal mouth ending under the front of the eye, or a
+// tiny one at the end of a snout.
+export function mouthOf(sp) {
+  if (sp.mouth) return sp.mouth;
+  const sn = sp.body.snout || 0;
+  return sn ? { u: Math.min(0.03, sn * 0.25), v: 0.12, v0: 0.04 } : { u: sp.eye.u * 0.55, v: 0.2, v0: 0.08 };
+}
+
 // ---------- skin texture ----------
 
 const TW = 2048, TH = 1024;
@@ -215,16 +253,21 @@ function paintSkin(sp, prof) {
   g.restore();
   sg.globalCompositeOperation = 'multiply';
 
-  // Gill cover: shadowed rear edge with a lit lip, and the fainter pre-opercle groove ahead of it.
-  const gillPath = (uu, span, bow) => {
+  // Gill cover: a soft shadow behind its rear margin (the margin itself is a step in the body mesh,
+  // with the gill opening under it), a lit lip, and the fainter pre-opercle groove ahead of it.
+  const G = gillOf(sp);
+  const gillPath = (du, shrink) => {   // the margin's curve, shifted du and shortened at both ends
     g.beginPath();
-    for (let i = 0; i <= 24; i++) { const v = -span + (2 * span * i) / 24; g.lineTo(U(uu - bow * (1 - (v / span) ** 2)), V(v)); }
+    for (let i = 0; i <= 24; i++) {
+      const v = lerp(G.top * shrink + (1 - shrink) * (G.top + G.bot) / 2, G.bot * shrink + (1 - shrink) * (G.top + G.bot) / 2, i / 24);
+      g.lineTo(U(G.edge(v) + du), V(v));
+    }
   };
   g.lineCap = 'round';
-  if (sp.gill !== false) {
-  g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 2.5 * K; gillPath(g0, 0.78, 0.035); g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 1.5 * K; gillPath(g0 - (3 * K) / TW, 0.76, 0.035); g.stroke();
-  g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1.5 * K; gillPath(g0 - 0.05, 0.6, 0.03); g.stroke();
+  if (G) {
+  g.strokeStyle = 'rgba(0,0,0,0.16)'; g.lineWidth = 3.5 * K; gillPath((2 * K) / TW, 1); g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 1.5 * K; gillPath(-(3 * K) / TW, 0.97); g.stroke();
+  g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1.5 * K; gillPath(-0.05, 0.75); g.stroke();
   // Lateral line: a row of pored scales arching along the upper flank.
   g.fillStyle = 'rgba(0,0,0,0.14)';
   for (let u = g0 + 0.01; u < 0.95; u += 0.012) {
@@ -232,19 +275,41 @@ function paintSkin(sp, prof) {
     g.fillRect(U(u), V(v) - 0.6 * K, 2.2 * K, 1.2 * K);
   }
   }
-  // Mouth: gape line and slightly darker lips. A long hinged gape (sp.mouth: morays) is lined dark
-  // along the lip line; the jaw seam stretches over this lining when the mouth opens.
-  if (sp.mouth) {
-    const M = sp.mouth, lw = (M.lining ?? 0.06) * TH / 2;
+  // Mouth: the gape is lined dark (the inside of the mouth); the jaw seam in the body mesh stretches
+  // over this lining when the lower jaw drops. The lips (raised in the mesh) are a little darker.
+  {
+    const M = mouthOf(sp), lw = (M.lining ?? 0.05) * TH / 2;
+    g.globalCompositeOperation = 'multiply';
+    g.strokeStyle = 'rgba(170,150,145,0.55)'; g.lineWidth = lw * 3.2; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(U(-0.01), V(M.v0)); g.lineTo(U(M.u), V(M.v)); g.stroke();
+    g.globalCompositeOperation = 'source-over';
     g.strokeStyle = '#2a0e10'; g.lineWidth = lw; g.lineCap = 'round';
     g.beginPath(); g.moveTo(U(-0.01), V(M.v0)); g.lineTo(U(M.u), V(M.v)); g.stroke();
-  } else if (!sp.body.snout) {
-    g.fillStyle = 'rgba(0,0,0,0.5)'; g.fillRect(0, V(0.08) - 0.7 * K, U(0.045), 1.4 * K);
-    g.globalCompositeOperation = 'multiply';
-    const lip = g.createRadialGradient(0, V(0.08), 0, 0, V(0.08), U(0.06));
-    lip.addColorStop(0, 'rgba(150,130,120,0.6)'); lip.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = lip; g.fillRect(0, 0, U(0.07), TH);
-    g.globalCompositeOperation = 'source-over';
+  }
+  // Nostrils: two small openings each side between the eye and the snout tip, the rear one just
+  // ahead of the eye and a little higher (pits in the normal map below; dark inside, lit lower rim).
+  const nares = sp.nares === false ? [] : naresOf(sp);
+  for (const n of nares) {
+    const rx = (n.r / len) * TW, ry = (n.r / prof.half(n.u)) * TH / 2;
+    g.fillStyle = 'rgba(10,6,6,0.55)';
+    g.beginPath(); g.ellipse(U(n.u), V(n.v), rx, ry, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = Math.max(1, rx * 0.35);
+    g.beginPath(); g.ellipse(U(n.u), V(n.v), rx * 1.1, ry * 1.1, 0, 0.2, Math.PI - 0.2); g.stroke();
+  }
+  // Tangs' caudal spine (sp.scalpel): a blade that lies in a groove on the peduncle, its sheath
+  // outlined dark (raised in the mesh by reliefOf).
+  if (sp.scalpel) {
+    // A lance: sharp at the front (the free point), rounder at the hinged rear.
+    const S = sp.scalpel, rx = (S.len / 2) * TW, ry = ((S.len * len * 0.11) / prof.half(S.u)) * TH / 2;
+    const blade = (k) => {
+      const cx = U(S.u), cy = V(S.v);
+      g.beginPath(); g.moveTo(cx - rx * k, cy);
+      g.quadraticCurveTo(cx - rx * 0.2, cy - ry * 2 * k, cx + rx * k, cy - ry * 0.3 * k);
+      g.quadraticCurveTo(cx + rx * 1.15 * k, cy, cx + rx * k, cy + ry * 0.3 * k);
+      g.quadraticCurveTo(cx - rx * 0.2, cy + ry * 2 * k, cx - rx * k, cy);
+    };
+    g.fillStyle = 'rgba(0,0,0,0.35)'; blade(1.12); g.fill();   // the groove it lies in
+    g.fillStyle = S.color; blade(1); g.fill();
   }
   // Orbit: only a faint shading where the skin rolls into the socket (photos show a soft rim, not a
   // dark ring).
@@ -294,6 +359,17 @@ function paintSkin(sp, prof) {
       // Guanine platelets: reflective exposed fields, strongest on the flanks and belly.
       const ir = mask * (0.35 + 0.65 * smooth01((v + 0.4) / 1.2)) * (0.6 + 0.4 * (bt * 0.5 + 0.5));
       iridImg.data[k] = iridImg.data[k + 1] = iridImg.data[k + 2] = ir * 255; iridImg.data[k + 3] = 255;
+    }
+  }
+  // Nostril pits: a hollow with a slightly raised rim, in the same physical units as the scales.
+  for (const n of nares) {
+    const i0 = Math.floor((n.u - (3 * n.r) / len) * SW), i1 = Math.ceil((n.u + (3 * n.r) / len) * SW);
+    for (let i = Math.max(0, i0); i <= Math.min(SW - 1, i1); i++) {
+      const hc = halfCol[i], j0 = Math.floor(((n.v + 1) / 2 - (3 * n.r) / (2 * hc)) * SH), j1 = Math.ceil(((n.v + 1) / 2 + (3 * n.r) / (2 * hc)) * SH);
+      for (let j = Math.max(0, j0); j <= Math.min(SH - 1, j1); j++) {
+        const du = (((i + 0.5) / SW) - n.u) * len, dv = ((((j + 0.5) / SH) * 2 - 1) - n.v) * hc, d = Math.hypot(du, dv) / n.r;
+        height[j * SW + i] += n.r * (0.25 * Math.exp(-(((d - 1.1) / 0.35) ** 2)) - 0.7 * Math.exp(-d * d * 1.5));
+      }
     }
   }
   const shadeC = makeCanvas(SW, SH); shadeC.getContext('2d').putImageData(shadeImg, 0, 0);
@@ -848,6 +924,8 @@ function tubeGeometry(d, seg = 7) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  // On the lower jaw (d.jaw): swings down with it as the mouth opens (FISH_JAW).
+  g.setAttribute('aJaw', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3).fill(d.jaw ? 1 : 0), 1));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -856,16 +934,21 @@ function tubeGeometry(d, seg = 7) {
 // Paired appendages on the head and body (supraorbital tentacles, lappets), both sides:
 // sp.appendages: [{ u, v (as the eye), len (TL), dir: [x, y, z out], r, flat, shape, color, stripes, nb, bend }].
 function appendageTubes(sp, prof) {
-  const out = [];
+  const out = [], M = mouthOf(sp);
   for (const a of sp.appendages || []) {
+    // Rooted on the lower jaw (below the gape, ahead of its corner): it moves with the jaw.
+    const jaw = a.u < M.u && a.v > lerp(M.v0, M.v, a.u / M.u);
     for (const side of [1, -1]) {
       const x = prof.x(a.u), y = prof.centre(a.u) - a.v * prof.half(a.u);
-      const z = side * prof.width(a.u) * Math.sqrt(Math.max(0.05, 1 - a.v * a.v)) * 0.9;
+      const z = side * flankZ(sp, prof, a.u, a.v);
       const d = new THREE.Vector3(a.dir[0], a.dir[1], side * a.dir[2]).normalize().multiplyScalar(a.len);
       const bend = a.bend ?? 0.15;
+      // The base starts a quarter of the length inside the skin, so it grows out of it rather than
+      // touching it at a point (a leaf-shaped lappet would otherwise sit on a thin stalk).
+      const x0 = x - d.x * 0.25, y0 = y - d.y * 0.25, z0 = z - d.z * 0.25 - side * a.r;
       out.push({
-        pts: [[x, y, z], [x + d.x * 0.5 - bend * d.y * 0.5, y + d.y * 0.5 + bend * d.x * 0.5, z + d.z * 0.5], [x + d.x, y + d.y, z + d.z]],
-        r0: a.r, r1: a.r * 0.15, flat: a.flat, shape: a.shape, color: a.color, stripes: a.stripes, nb: a.nb || 0,
+        pts: [[x0, y0, z0], [x + d.x * 0.4 - bend * d.y * 0.4, y + d.y * 0.4 + bend * d.x * 0.4, z + d.z * 0.4], [x + d.x, y + d.y, z + d.z]],
+        r0: a.r, r1: a.r * 0.15, flat: a.flat, shape: a.shape, color: a.color, stripes: a.stripes, nb: a.nb || 0, jaw,
       });
     }
   }
@@ -923,10 +1006,21 @@ function paintEye(sp) {
 }
 
 // Eyeball geometry already placed in fish space (so the swim shader moves it with the head).
+// Gill cover: how far it stands proud of the body (a share of the body's half-width), rising over
+// its rear half to a step at the free margin. cover: whether the point is on the cover (the body mesh
+// puts two coincident rings on the margin, one each side of the step); by default, ahead of the margin.
+const COVER = 0.05;
+function coverAt(G, u, v, cover) {
+  if (!G) return 0;
+  const edge = G.edge(v);
+  if (!(cover ?? u <= edge)) return 0;
+  return smooth01((u - (edge - 0.13)) / 0.12) * G.fade(v);
+}
+
 // The skin's distance from the midplane at body position u and texture height v (-1 dorsal, +1
 // ventral), before relief: the body mesh's cross-section, shared with the eyes so they sit on it.
-function flankZ(sp, prof, u, v) {
-  const e = sp.eye, len = sp.body.len, g0 = gillU(sp), cy = -v;
+function flankZ(sp, prof, u, v, cover) {
+  const e = sp.eye, len = sp.body.len, cy = -v;
   // Section exponent: compressed fish (tangs, angels) have a lens-shaped section, thickest along the
   // spine and sharp at the fin bases (> 1); round-bodied fish (gramma, lionfish) are fuller (< 1).
   const flank = sp.body.flank ?? 1.6 - sp.body.width * 1.6;
@@ -934,8 +1028,7 @@ function flankZ(sp, prof, u, v) {
   let z = Math.pow(Math.sqrt(Math.max(0, 1 - cy * cy)), flank) * prof.width(u);
   z *= 1 - 0.25 * Math.max(0, cy) ** 4;                                  // narrow dorsal ridge (fin base)
   z *= 1 + 0.12 * Math.max(0, -cy) * (1 - smooth01(u / 0.6));            // fuller belly over the gut
-  const op = smooth01((u - (g0 - 0.14)) / 0.13) * (1 - smooth01((u - (g0 - 0.01)) / 0.022));
-  z *= 1 + 0.045 * op * (1 - Math.abs(cy) ** 3);                         // gill cover overhangs the flank
+  z *= 1 + COVER * coverAt(gillOf(sp), u, v, cover);                    // gill cover overhangs the flank
   const du = (u - e.u) / (e.r * 1.6 / len), dv = (v - e.v) / (e.r * 1.6 / Math.max(h, 1e-3));
   z *= 1 + 0.07 * Math.exp(-(du * du + dv * dv));                       // eye socket
   return z;
@@ -977,7 +1070,6 @@ uniform float uFinH;
 uniform float uBend;
 uniform float uFinPhase;
 uniform float uXPed;    // x of the caudal peduncle (the caudal blade lags behind it)
-uniform float uXGill;   // x of the gill cover's rear edge
 uniform float uVent;    // opercular flare, 0..~0.04
 uniform float uAnguil;  // 1 = anguilliform (eels): the whole body undulates
 uniform float uLift;    // front of the body raised (an eel resting with its head up)
@@ -1011,11 +1103,15 @@ float finFlutter(vec3 p) {
   float fin = smoothstep(uFinH, uFinH + 0.15, abs(p.y));
   return uFlutter * fin * 0.018 * sin(uFinPhase + p.x * 14.0 + abs(p.y) * 6.0);
 }
-// Gill cover breathing: the rear of the operculum flares out and back.
-float ventScale(vec3 p) {
-  float m = (1.0 - smoothstep(uXGill, uXGill + 0.07, p.x)) * step(uXGill - 0.004, p.x);
-  return 1.0 + uVent * m * (1.0 - smoothstep(uFinH * 0.5, uFinH * 0.9, abs(p.y)));
-}
+// Gill cover breathing: the rear of the operculum flares out and back (aCover: the share of the flare
+// each body vertex takes, most at the margin; the rings behind the margin stay put, so the gill
+// opening under it widens).
+#ifdef FISH_COVER
+attribute float aCover;
+float ventScale(vec3 p) { return 1.0 + uVent * 1.5 * aCover; }
+#else
+float ventScale(vec3 p) { return 1.0; }
+#endif
 `;
 
 // Light transport through fish tissue (physically motivated, cheap enough for every fish):
@@ -1116,8 +1212,16 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
       shader.defines = { ...shader.defines, FISH_JAW: '' };
       shader.vertexShader = 'attribute float aJaw;\nuniform float uGape;\nuniform vec2 uHinge;\n' + shader.vertexShader;
     }
+    if (tissue?.cover) {
+      // The gill opening (aSlit: the wall under the cover's margin): dark red gill chamber.
+      shader.defines = { ...shader.defines, FISH_COVER: '' };
+      shader.vertexShader = 'attribute float aSlit;\nvarying float vSlit;\n' + shader.vertexShader
+        .replace('vec3 transformed = p0;', 'vec3 transformed = p0;\n        vSlit = aSlit;');
+      shader.fragmentShader = 'varying float vSlit;\n' + shader.fragmentShader
+        .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.06, 0.012, 0.014), vSlit);');
+    }
   };
-  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') : 'plain');
+  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') : 'plain');
   return addCaustics(base);   // fish swim through the same focused light as the reef
 }
 
@@ -1128,7 +1232,9 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
 // the lionfish's bony suborbital stay and brow, the triggerfish's groove before the eye and its lips.
 function reliefOf(sp, prof) {
   const P = (u, v) => [prof.x(u), prof.centre(u) - v * prof.half(u)];
-  const R = (sp.ridges || []).map((r) => ({ ...r, a: P(r.u0, r.v0), b: P(r.u1 ?? r.u0, r.v1 ?? r.v0) }));
+  const S = sp.scalpel, len = sp.body.len;
+  const all = [...(sp.ridges || []), ...(S ? [{ u0: S.u - S.len * 0.35, v0: S.v, u1: S.u + S.len * 0.35, v1: S.v, w: S.len * len * 0.12, h: S.len * len * 0.05 }] : [])];
+  const R = all.map((r) => ({ ...r, a: P(r.u0, r.v0), b: P(r.u1 ?? r.u0, r.v1 ?? r.v0) }));
   return (x, y) => {
     let d = 0;
     for (const r of R) {
@@ -1142,66 +1248,136 @@ function reliefOf(sp, prof) {
 }
 
 function bodyGeometry(prof, sp) {
-  const fine = !!sp.ridges, NU = fine ? 160 : 110, NA = fine ? 80 : 56, CAP = 5;
+  const fine = !!sp.ridges, NU = fine ? 170 : 140, NA = 112, CAP = 5;
   const relief = reliefOf(sp, prof);
-  const e = sp.eye, len = sp.body.len, g0 = gillU(sp);
+  const len = sp.body.len, G = gillOf(sp), M = mouthOf(sp);
   const us = [];
   for (let i = 0; i <= NU; i++) { const t = i / NU; us.push(t * t * 0.35 + t * 0.65); }
-  // Cross-section at body position u and angle th (th = 0 is the dorsal midline).
-  const section = (u, th) => {
-    const h = prof.half(u), cy = Math.cos(th), sz = Math.sin(th);
-    let z = flankZ(sp, prof, u, -cy);   // texture v = -cos(th): -1 dorsal, +1 ventral
-    let y = prof.centre(u) + cy * h;
-    if (fine) {
-      const yc = prof.centre(u), ry = y - yc, k = 1 + relief(prof.x(u), y) / Math.max(1e-3, Math.hypot(ry, z));
-      y = yc + ry * k; z *= k;
-    }
-    return [y, Math.sign(sz) * z];
+  // Ring angles (th = 0 is the dorsal midline, texture v = -cos th): closer together on the flanks,
+  // where the mouth, eye and gill margin are, than over the back and belly.
+  const thAt = (a) => { const t = a / NA; return Math.PI * 2 * t - 0.12 * Math.sin(Math.PI * 4 * t); };
+  // The gape: every ring has a vertex on it each side (index iL on +z, NA - iL on -z), the angles
+  // round it eased so the line falls on that vertex; ahead of the corner of the mouth the vertex is
+  // doubled twice over (upper lip, its inner face, the lower lip's inner face, lower lip), so the jaws
+  // part along a clean seam and the band between the inner faces is the inside of the mouth.
+  const lineV = (u) => lerp(M.v0, M.v, clamp(u / M.u, 0, 1));
+  const th0 = Math.acos(-lineV(M.u * 0.5));
+  let iL = 1;
+  for (let a = 1; a < NA / 2; a++) if (Math.abs(thAt(a) - th0) < Math.abs(thAt(iL) - th0)) iL = a;
+  const W = 10, angle = (a, u) => {
+    const d = Math.acos(clamp(-lineV(u), -1, 1)) - thAt(iL);
+    const w = (k) => Math.max(0, 1 - Math.abs(a - k) / W);
+    return thAt(a) + d * w(iL) - d * w(NA - iL);   // mirrored on the -z side
   };
-  const pos = [], uv = [], thick = [], idx = [], jaw = [];
-  // Lower jaw (sp.mouth): vertices below the lip line, ahead of the corner of the mouth.
-  const M = sp.mouth, jawAt = (u, v) => (M && u < M.u && v > lerp(M.v0, M.v, u / M.u) ? 1 : 0);
-  const ringOf = (x, u, scale, uvU) => {
+  // Near the gill margin the rings bend to follow its bow, so none crosses it; the body-side rings of
+  // the margin sit GAP behind it, and the rings behind those stay behind.
+  const GAP = 0.0025;
+  const backU = (v) => G.edge(v) + GAP * G.fade(v);
+  const bendU = (u, v) => {
+    if (!G) return u;
+    const b = u - (G.u - G.edge(v)) * Math.max(0, 1 - Math.abs(u - G.u) / 0.08);
+    return u > G.u ? Math.max(b, backU(v) + 0.001) : b;
+  };
+  // Lips: raised either side of the gape, with a crease along it, fading out past the corner.
+  const mw = Math.min(0.004 + 0.05 * M.u, 0.12 * prof.half(M.u));
+  const lips = (u, v, h) => {
+    const t = ((u - M.u) * len) / mw;
+    if (t > 1.5) return 0;
+    const dy = (v - lineV(u)) * h;
+    const lip = Math.exp(-(((dy - mw) / (0.7 * mw)) ** 2)) + Math.exp(-(((dy + mw) / (0.7 * mw)) ** 2));
+    return (0.4 * lip - 0.35 * Math.exp(-((dy / (0.45 * mw)) ** 2))) * mw * (1 - smooth01(t + 0.5));
+  };
+  const R = NA + 6;   // vertices per ring: NA round it, and the three extra copies on the gape each side
+  const pos = [], uv = [], thick = [], idx = [], jaw = [], cov = [], slit = [];
+  // One ring at body position u0, or a ring of the nose cap (scale, at capX). seam: the rings on the
+  // gill margin, { cover, slit, back }: the cover's edge (twice: its outer face and the start of the
+  // gill opening) and, GAP behind and a little sunk, the body's (the opening's far side, then skin).
+  const ringOf = (u0, scale = 1, capX = null, seam = null) => {
+    const mouthRing = (seam ? G.u : u0) < M.u;
+    const put = (a, jw, sl) => {
+      const v = -Math.cos(thAt(a));   // which part of the gill margin this vertex sits on
+      const u = seam ? (seam.back ? backU(v) : G.edge(v)) : capX != null ? u0 : bendU(u0, v);
+      const th = angle(a, u), cy = Math.cos(th), vv = -cy;
+      const h = prof.half(u) * scale, yc = prof.centre(u), x = capX ?? prof.x(u);
+      let y = yc + cy * h, z = flankZ(sp, prof, u, vv, seam ? !seam.back : undefined) * scale;
+      if (seam?.back && seam.slit) z *= 1 - 0.04 * G.fade(vv);   // the gill chamber is sunk under the cover
+      const k = 1 + (relief(x, y) + lips(u, vv, h)) / Math.max(Math.hypot(y - yc, z), 2 * mw, 1e-3);
+      y = yc + (y - yc) * k; z *= k;
+      pos.push(x, y, Math.sign(Math.sin(th)) * z);
+      uv.push(capX != null ? 0 : u, (1 + cy) / 2);
+      thick.push(2 * z);   // tissue a backlight has to pass through
+      jaw.push(jw);
+      // How much of the breathing flare (fish.js) a point takes: most at the cover's margin.
+      const c = capX != null || seam?.back ? 0 : coverAt(G, u, vv, seam ? true : undefined);
+      cov.push(c * c);
+      slit.push(sl);
+    };
+    const gs = seam?.slit ? 1 : 0;
     for (let a = 0; a < NA; a++) {
-      const th = (a / NA) * Math.PI * 2;
-      const [y, z] = section(u, th);
-      const yc = prof.centre(u);
-      pos.push(x, yc + (y - yc) * scale, z * scale);
-      uv.push(uvU, (1 + Math.cos(th)) / 2);
-      thick.push(2 * Math.abs(z * scale));   // tissue a backlight has to pass through
-      jaw.push(jawAt(u, -Math.cos(th)));
+      const lower = mouthRing && a > iL && a < NA - iL ? 1 : 0;
+      if (a === iL) {
+        // Down the +z side: upper lip, its inner face, the lower lip's inner face, the lower lip.
+        put(a, 0, gs); put(a, 0, mouthRing ? 1 : gs); put(a, mouthRing ? 1 : 0, mouthRing ? 1 : gs); put(a, mouthRing ? 1 : 0, gs);
+      } else if (a === NA - iL) {
+        // Back up the -z side: lower lip first.
+        put(a, mouthRing ? 1 : 0, gs); put(a, mouthRing ? 1 : 0, mouthRing ? 1 : gs); put(a, 0, mouthRing ? 1 : gs); put(a, 0, gs);
+      } else put(a, lower, gs);
     }
   };
+  const tip = () => { thick.push(0); jaw.push(0); cov.push(0); slit.push(0); };
   // Rounded nose cap: rings shrinking on a quarter ellipse ahead of u = 0.
   const capLen = Math.min(prof.half(0), prof.width(0)) * 0.55;
-  pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, 0.5); thick.push(0); jaw.push(0);
-  for (let k = CAP; k >= 1; k--) {
+  pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, 0.5); tip();
+  let rings = 0;
+  for (let k = CAP; k >= 1; k--, rings++) {
     const phi = (k / (CAP + 1)) * Math.PI / 2;
-    ringOf(prof.x(0) + Math.sin(phi) * capLen, 0, Math.cos(phi), 0);
+    ringOf(0, Math.cos(phi), prof.x(0) + Math.sin(phi) * capLen);
   }
-  for (const u of us) ringOf(prof.x(u), u, 1, u);
+  const slitRings = [];
+  let seamed = !G;
+  for (const u of us) {
+    if (!seamed && u > G.u) {
+      for (const seam of [{}, { slit: true }, { slit: true, back: true }, { back: true }]) {
+        if (seam.slit) slitRings.push(rings);
+        ringOf(G.u, 1, null, seam); rings++;
+      }
+      seamed = true;
+    }
+    ringOf(u); rings++;
+  }
   const tailIdx = pos.length / 3;
-  pos.push(prof.x(1) - 0.004, prof.centre(1), 0); uv.push(1, 0.5); thick.push(0); jaw.push(0);
-  const rings = CAP + us.length, ring = (i) => 1 + i * NA;
-  for (let a = 0; a < NA; a++) idx.push(0, ring(0) + ((a + 1) % NA), ring(0) + a);
+  pos.push(prof.x(1) - 0.004, prof.centre(1), 0); uv.push(1, 0.5); tip();
+  const ring = (i) => 1 + i * R;
+  for (let a = 0; a < R; a++) idx.push(0, ring(0) + ((a + 1) % R), ring(0) + a);
   for (let i = 0; i < rings - 1; i++) {
-    for (let a = 0; a < NA; a++) {
-      const a1 = (a + 1) % NA;
+    for (let a = 0; a < R; a++) {
+      const a1 = (a + 1) % R;
       const p0 = ring(i) + a, p1 = ring(i) + a1, p2 = ring(i + 1) + a, p3 = ring(i + 1) + a1;
       idx.push(p0, p1, p2, p1, p3, p2);
     }
   }
   const last = ring(rings - 1);
-  for (let a = 0; a < NA; a++) idx.push(last + a, last + ((a + 1) % NA), tailIdx);
+  for (let a = 0; a < R; a++) idx.push(last + a, last + ((a + 1) % R), tailIdx);
   // The rings run around +x, so the triangles above wind inwards; flip them so faces point outwards.
   for (let t = 0; t < idx.length; t += 3) { const k = idx[t + 1]; idx[t + 1] = idx[t + 2]; idx[t + 2] = k; }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute('aThick', new THREE.Float32BufferAttribute(thick, 1));
-  if (M) g.setAttribute('aJaw', new THREE.Float32BufferAttribute(jaw, 1));
+  g.setAttribute('aJaw', new THREE.Float32BufferAttribute(jaw, 1));
+  g.setAttribute('aCover', new THREE.Float32BufferAttribute(cov, 1));
+  g.setAttribute('aSlit', new THREE.Float32BufferAttribute(slit, 1));
   g.setIndex(idx);
   g.computeVertexNormals();
+  // Coincident copies (the gape, the gill margin) have no normal of their own where the faces between
+  // them have no width: take a neighbour's, along the ring and then across the gill margin.
+  const n = g.attributes.normal, bad = (i) => Math.hypot(n.getX(i), n.getY(i), n.getZ(i)) < 0.5;
+  const copy = (i, j) => n.setXYZ(i, n.getX(j), n.getY(j), n.getZ(j));
+  slitRings.forEach((r, k) => { for (let a = 0; a < R; a++) if (bad(ring(r) + a)) copy(ring(r) + a, ring(k ? r + 1 : r - 1) + a); });
+  for (let i = 0; i < rings; i++) {
+    for (let a = 0; a < R; a++) if (bad(ring(i) + a)) copy(ring(i) + a, ring(i) + ((a + R - 1) % R));
+    for (let a = R - 1; a >= 0; a--) if (bad(ring(i) + a)) copy(ring(i) + a, ring(i) + ((a + 1) % R));
+  }
   return g;
 }
 
@@ -1302,7 +1478,7 @@ function normaliseModel(root, cfg) {
 function swimUniforms(over = {}) {
   return {
     uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 },
-    uXPed: { value: -0.3 }, uXGill: { value: 9 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 },
+    uXPed: { value: -0.3 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 },
     uBendTail: { value: 0 }, uFold: { value: 0 }, uCup: { value: 0 }, uSpineOn: { value: 0 }, uSpine: { value: new Float32Array(24) },
     ...over,
   };
@@ -1362,16 +1538,17 @@ export function buildFishModel(sp, opts = {}) {
   if (!opts.procedural && custom.has(sp.id)) return buildCustomModel(sp, custom.get(sp.id));
   const a = speciesAssets(sp);
   const uniforms = swimUniforms({
-    uFinH: { value: a.prof.H }, uXPed: { value: a.prof.xPed }, uXGill: { value: a.prof.x(gillU(sp)) },
+    uFinH: { value: a.prof.H }, uXPed: { value: a.prof.xPed },
     uAnguil: { value: sp.swim?.mode === 'anguilliform' ? 1 : 0 },
     uGape: { value: 0 }, uHinge: { value: new THREE.Vector2(9, 9) },
   });
-  if (sp.mouth) uniforms.uHinge.value.set(a.prof.x(sp.mouth.u), a.prof.centre(sp.mouth.u) - sp.mouth.v * a.prof.half(sp.mouth.u));
+  const M = mouthOf(sp);   // the lower jaw hinges at the corner of the mouth
+  uniforms.uHinge.value.set(a.prof.x(M.u), a.prof.centre(M.u) - M.v * a.prof.half(M.u));
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
     roughness: sp.body.scales === 0 ? 0.3 : 0.42, metalness: 0.0, ior: IN_WATER_IOR,   // scaleless skin: a mucus film
     iridescence: sp.iridescent ? 1.0 : 0.35, iridescenceIOR: 1.8, iridescenceThicknessRange: [180, 420],   // guanine platelet stacks
-  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: !!sp.mouth });
+  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: true, cover: !!gillOf(sp) });
   const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
@@ -1388,8 +1565,8 @@ export function buildFishModel(sp, opts = {}) {
   fins.renderOrder = 1;
   group.add(fins, body);
   // Spines, free rays and tentacles: solid, glossy, banded by vertex colour; thin enough to glow when backlit.
-  const tubeMat = (u) => makeSwimMaterial(new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }), u, { kind: 'fin', thickMM: 0.8 * sp.size * 8 });
-  if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms)));
+  const tubeMat = (u, jaw = false) => makeSwimMaterial(new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }), u, { kind: 'fin', thickMM: 0.8 * sp.size * 8, jaw });
+  if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms, true)));   // chin lappets ride on the lower jaw
 
   const pects = [], pectTubeMat = a.pectTubeGeo ? tubeMat(still) : null;
   const p = sp.pectoral;
