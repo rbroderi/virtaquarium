@@ -127,6 +127,14 @@ export class Brain {
         if (nearHome && rival && (!this.intruder || dist < this.intruder.pos.distanceTo(me.pos))) this.intruder = o;
       }
     }
+    // The cuttlefish and octopus eat small fish.
+    if (sp.prey) for (const o of world.critters) {
+      const dist = o.pos.distanceTo(me.pos);
+      if (o.sp.predator && dist < 3) {
+        const s = (1 - dist / 3) * 0.8;
+        if (s > threatStim) { threatStim = s; threat = o; }
+      }
+    }
     if (threat) this.startle(threat, threatStim);
 
     // Food within sight. Bold, hungry fish notice from further away.
@@ -378,6 +386,12 @@ export class Brain {
       _v.subVectors(pos, o.pos);
       const dist = _v.length(), min = (me.size + o.size) * 0.45;
       if (dist < min && dist > 1e-4) dir.addScaledVector(_v, ((min - dist) / min) * 2.5 / dist);
+    }
+    // The cuttlefish, octopus and turtle (critters.js) are given a wide berth.
+    if (!anchored) for (const o of world.critters) {
+      _v.subVectors(pos, o.pos);
+      const dist = _v.length(), min = o.radius + me.size * 0.5;
+      if (dist < min && dist > 1e-4) dir.addScaledVector(_v, ((min - dist) / min) * 3 / dist);
     }
     const B = world.bounds, m = 0.9;
     if (pos.x < B.x0 + m) dir.x += (B.x0 + m - pos.x) * 2;

@@ -157,7 +157,23 @@ A Roku jelly tank would need:
 - **Motion:** a port of `Jelly.update`, which covers the pulse thrust, slight sinking, a preferred depth and
   home column, the righting tendency, soft bumping between bells, and the tank's current.
 
+## Cuttlefish, octopus and turtle (added 2026-11-04)
+
+`pc/src/critters.js` adds three reef animals that are not fish: they have their own models and
+behaviour and live in `World.critters`, not `World.fish`, so `bake.js` (which bakes `SPECIES`) skips them.
+
+For Roku each needs its own sprite set:
+- **Cuttlefish:** a side-on swim loop of the fin-skirt wave (forward and reversed), plus colour states:
+  zebra, passing clouds (a short loop), mottled at rest and pale. The arms are a rigid bundle, so one pose
+  will do, plus a frame of the tentacle strike.
+- **Octopus:** the arms are rebuilt every frame against the reef heights, so baking them is the hard
+  part. A den pose (arms tucked, drawn in place in front of its cave) and a few crawl frames would probably
+  read well enough. A jet pose has the arms trailing.
+- **Turtle:** a 12-frame flipper stroke at several headings, a glide frame, and a resting pose for the sand.
+
 ## Log
+
+- 2026-11-04: cuttlefish, octopus and turtle (`critters.js`), PC only; not in `SPECIES`, so the bake skips them.
 
 - 2026-11-04: jelly tank (`scenery: "jelly"`), PC only; not in `SCENERY`, so the bake skips it.
 

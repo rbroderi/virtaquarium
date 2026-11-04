@@ -12,6 +12,7 @@ export class World {
     this.rng = rng;
     this.fish = [];
     this.food = [];
+    this.critters = [];   // cuttlefish, octopus, turtle (critters.js)
     this.light = 1;
     this.time = 0;
     this.goals = new Map();

@@ -16,6 +16,7 @@ import { PhotoCamera } from './photo.js';
 import { LightRig } from './rig.js';
 import { bakeReefLight, reefLightUniforms, ScreenAO } from './reefLight.js';
 import { JELLY_SPECIES, Jelly, buildJellyTank } from './jelly.js';
+import { CRITTER_SPECIES, Cuttlefish, Octopus, Turtle } from './critters.js';
 
 const params = new URLSearchParams(location.search);
 fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
@@ -121,12 +122,33 @@ const names = FISH_NAMES.filter((n) => !chosen.has(n));
 const homes = reef.homes.slice();
 const jellies = [];
 const jellyById = new Map(JELLY_SPECIES.map((sp) => [sp.id, sp]));
+const critterById = new Map(CRITTER_SPECIES.map((sp) => [sp.id, sp]));
 for (const entry of tank.fish) {
   if (jellyById.has(entry.species)) {
     for (let i = 0; i < entry.count; i++) {
       const j = new Jelly(jellyById.get(entry.species), rng, bounds);
       jellies.push(j);
       scene.add(j.model);
+    }
+    continue;
+  }
+  if (critterById.has(entry.species)) {
+    const sp = critterById.get(entry.species);
+    for (let i = 0; i < entry.count; i++) {
+      let c;
+      if (sp.id === 'cuttlefish') c = new Cuttlefish(sp, rng, world);
+      else if (sp.id === 'turtle') c = new Turtle(sp, rng, world);
+      else {
+        // The octopus dens in a cave the moray doesn't hold (the eels take the first ones), else in a
+        // low crevice among the rock.
+        const eels = tank.fish.filter((e) => speciesById.get(e.species)?.brain.lurker).reduce((n, e) => n + e.count, 0);
+        const cave = reef.caves[eels + world.critters.filter((o) => o instanceof Octopus).length];
+        const den = cave ? cave.mouth.clone().addScaledVector(cave.dir, -0.2) : reef.homes.slice().sort((a, b) => a.y - b.y)[0].clone();
+        c = new Octopus(sp, rng, world, den);
+        if (cave) c.yaw = Math.atan2(cave.dir.z, cave.dir.x);
+      }
+      world.critters.push(c);
+      scene.add(c.model);
     }
     continue;
   }
@@ -225,6 +247,7 @@ function frame() {
 
   world.update(dt);
   for (const j of jellies) j.update(dt, world, jellies);
+  for (const c of world.critters) c.update(dt, world);
   updateWaves(t);
   if (!JELLY_TANK) caustics.update();   // no surface in view: the light panel is behind the tank
   const flow = (p, out) => world.flow(p, out);
