@@ -94,7 +94,8 @@ export const SPECIES = [
     size: 1.0, count: 2,
     anatomy: { bodyDepthSL: [0.7, 1.0] },
     albedoGain: [0.933, 1.015, 1.0],   // lab patch comparison (white-referenced, 6 patches), half strength
-    body: { len: 0.74, depth: 0.88, width: 0.2, m: 0.38, headP: 1.2, tailP: 1.5, ped: 0.18, snout: 0.14, snoutH: 0.045 },
+    body: { len: 0.74, depth: 0.88, width: 0.2, m: 0.38, headP: 1.2, tailP: 1.5, ped: 0.18, snout: 0.14, snoutH: 0.045,
+      snoutTip: 0.6, snoutBlend: 0.04 },   // the tube narrows to the mouth and runs smoothly into the steep face
     eye: { u: 0.22, v: -0.3, r: 0.04, iris: '#1a1a1a' },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f7f4ea'], [1, '#ece5d2']] },
@@ -122,7 +123,9 @@ export const SPECIES = [
     eye: { u: 0.17, v: -0.35, r: 0.03, iris: '#b05a3a', irisR: 0.98, pupil: 0.42, fleck: '#5a2010', fleckR: 0.8 },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
-      { op: 'stripesV', u0: 0.0, u1: 1.0, n: 20, color: '#9a4a28', ratio: 0.55 },
+      // From just behind the snout tip: run to the tip, where the body closes to a point, the stripes turn
+      // into rings round the nose (a bullseye head-on).
+      { op: 'stripesV', u0: 0.05, u1: 1.0, n: 19, color: '#9a4a28', ratio: 0.55 },
       { op: 'blob', u: 0.4, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
     ],
     // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle,
@@ -153,7 +156,8 @@ export const SPECIES = [
     fact: 'Uses its tweezer snout to pick tiny invertebrates from crevices; the false eyespot confuses predators.',
     size: 0.85, count: 1,
     albedoGain: [0.906, 1.179, 1.049],   // lab patch comparison (white-referenced, 28 patches), half strength
-    body: { len: 0.76, depth: 0.6, width: 0.2, m: 0.45, headP: 1.1, tailP: 1.5, ped: 0.2, snout: 0.16, snoutH: 0.03 },
+    body: { len: 0.76, depth: 0.6, width: 0.2, m: 0.45, headP: 1.1, tailP: 1.5, ped: 0.2, snout: 0.16, snoutH: 0.03,
+      snoutTip: 0.85, snoutBlend: 0.03 },   // a beak of even thickness, filleted into the forehead
     eye: { u: 0.24, v: -0.3, r: 0.035, iris: '#222222' },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#fbfaf3'], [1, '#efeadb']] },
@@ -259,12 +263,14 @@ export const SPECIES = [
     size: 0.8, count: 1,
     anatomy: { bodyDepthSL: [0.42, 0.56] },
     albedoGain: [1.026, 0.989, 1.031],   // lab patch comparison (chromaticity, 9 patches), half strength
-    body: { len: 0.76, depth: 0.58, width: 0.2, m: 0.5, headP: 1.2, tailP: 1.5, ped: 0.2, snout: 0.22, snoutH: 0.025 },
+    body: { len: 0.76, depth: 0.58, width: 0.2, m: 0.5, headP: 1.2, tailP: 1.5, ped: 0.2, snout: 0.22, snoutH: 0.025,
+      snoutTip: 0.8, snoutBlend: 0.025 },   // the long beak barely tapers; it runs into a conical head
     eye: { u: 0.3, v: -0.35, r: 0.035, iris: '#202020' },
     pattern: [
       { op: 'vgrad', stops: [[-1, '#ffe21a'], [1, '#ffd200']] },
-      { op: 'poly', color: '#141414', pts: [[0, -1.2], [0.37, -1.2], [0.37, -0.15], [0.2, 0.0], [0, 0.0]] },
-      { op: 'poly', color: '#e8e8e0', pts: [[0, 0.0], [0.2, 0.0], [0.37, -0.15], [0.37, 1.2], [0, 1.2]] },
+      // The hood ends 0.43 back from the beak tip, level with the dorsal origin (delso_kalakajoro38.jpg).
+      { op: 'poly', color: '#141414', pts: [[0, -1.2], [0.43, -1.2], [0.43, -0.2], [0.3, -0.1], [0, 0.0]] },
+      { op: 'poly', color: '#e8e8e0', pts: [[0, 0.0], [0.3, -0.1], [0.43, -0.2], [0.44, 1.2], [0, 1.2]] },
     ],
     fins: [
       { pos: 'top', u0: 0.35, u1: 0.96, pts: [[0, 0.04], [0.2, 0.18], [0.7, 0.2], [1, 0.04]], sweep: 0.3, fill: '#ffd800', rays: '#e8b800' },

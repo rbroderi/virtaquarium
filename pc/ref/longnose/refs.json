@@ -5,7 +5,7 @@
       "source": "https://commons.wikimedia.org/wiki/File:Pez_mariposa_hocicona_(Forcipiger_flavissimus),_Nosy_Kalakajoro,_Madagascar,_2025-09-14,_DD_38.jpg",
       "author": "Diego Delso",
       "license": "CC BY-SA 4.0",
-      "mirror": true,
+      "mirror": false,
       "yaw": 0,
       "pitch": 0,
       "fov": 30,
@@ -364,14 +364,14 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
-      "rot": -30
+      "rot": 8
     },
     {
       "file": "delso_kalakajoro07.jpg",
       "source": "https://commons.wikimedia.org/wiki/File:Pez_mariposa_hocicona_(Forcipiger_flavissimus),_Nosy_Kalakajoro,_Madagascar,_2025-09-14,_DD_07.jpg",
       "author": "Diego Delso",
       "license": "CC BY-SA 4.0",
-      "mirror": true,
+      "mirror": false,
       "yaw": 0,
       "pitch": 0,
       "fov": 30,
@@ -682,14 +682,14 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
-      "rot": -30
+      "rot": 6
     },
     {
       "file": "delso_anilao.jpg",
       "source": "https://commons.wikimedia.org/wiki/File:Pez_mariposa_hocicona_(Forcipiger_flavissimus),_Anilao,_Filipinas,_2023-08-22,_DD_103.jpg",
       "author": "Diego Delso",
       "license": "CC BY-SA 4.0",
-      "mirror": true,
+      "mirror": false,
       "yaw": 0,
       "pitch": 0,
       "fov": 30,
@@ -1104,7 +1104,7 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
-      "rot": -28
+      "rot": 15
     }
   ]
 }

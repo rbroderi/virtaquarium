@@ -928,11 +928,21 @@ function eyeGeometry(prof, sp, side) {
   const p = geo.attributes.position, uv = geo.attributes.uv;
   for (let i = 0; i < p.count; i++) uv.setXY(i, 0.5 - p.getX(i) * 0.5, 0.5 + p.getY(i) * 0.5);   // planar, looking along +z
   const ex = prof.x(e.u), ey = prof.centre(e.u) - e.v * prof.half(e.u);
-  const ez = prof.width(e.u) * Math.sqrt(Math.max(0.05, 1 - e.v * e.v));
+  const zAt = (u, v) => prof.width(u) * Math.sqrt(Math.max(0.05, 1 - v * v));
+  const ez = zAt(e.u, e.v);
   // The cornea sits nearly flush with the head (only the lens bulges a little), so the eyeball is a
-  // shallow cap just proud of the socket.
+  // shallow cap just proud of the socket, turned to the head's surface there: the head narrows towards
+  // the snout and rounds over at the top, and a cap facing straight out would stand proud at its front
+  // and upper edges (bug eyes, head-on).
+  const du = 0.01, dv = 0.02, len = sp.body.len;
+  const dzdx = (zAt(e.u + du, e.v) - zAt(e.u - du, e.v)) / (2 * du) / -len;
+  const dzdy = (zAt(e.u, e.v + dv) - zAt(e.u, e.v - dv)) / (2 * dv) / -Math.max(prof.half(e.u), 1e-3);
+  // The surface normal in the cap's own frame (the left cap is the right one turned half round y).
+  const n = new THREE.Vector3(-dzdx * side, -dzdy, 1).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
   const m = new THREE.Matrix4().makeTranslation(ex, ey, side * ez * 0.96)
     .multiply(new THREE.Matrix4().makeRotationY(side > 0 ? 0 : Math.PI))
+    .multiply(new THREE.Matrix4().makeRotationFromQuaternion(q))
     .multiply(new THREE.Matrix4().makeScale(e.r, e.r, e.r * 0.3));
   geo.applyMatrix4(m);
   return geo;

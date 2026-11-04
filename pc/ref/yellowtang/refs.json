@@ -454,7 +454,7 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
-      "rot": -5
+      "rot": -4
     },
     {
       "file": "amada44.jpg",
@@ -730,14 +730,14 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
-      "rot": 0
+      "rot": -1
     },
     {
       "file": "thesupermat_brest.jpg",
       "source": "https://commons.wikimedia.org/wiki/File:Brest_-_Océanopolis_-_2015_-_092.jpg",
       "author": "Thesupermat",
       "license": "CC BY-SA 4.0",
-      "mirror": false,
+      "mirror": true,
       "yaw": 0,
       "pitch": 0,
       "fov": 30,
@@ -1314,7 +1314,7 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
-      "rot": -13
+      "rot": -4
     }
   ]
 }

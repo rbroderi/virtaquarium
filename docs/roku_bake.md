@@ -186,6 +186,8 @@ The springs are dynamic, so most of this is PC only. What a bake could take:
 
 ## Log
 
+- 2026-11-04: fish look pass, head-on and front three-quarter. The longnose's three refs and the yellow tang's thesupermat_brest.jpg had the wrong `mirror` flag (the fitter was fitting a fish facing backwards; the longnose had lost its beak); both refitted, the longnose with `--maxrot 15` (new: limits the photo-rotation search; `--check-mirror` reports refs that fit better flipped). Eyes now turn to the head's surface instead of facing straight out (no bug eyes head-on). Snout fillets for the Moorish idol, copperband and longnose; the lionfish stripes stop short of the nose (no bullseye); the longnose hood moved back to 0.43. Every fish's Roku sprites need a rebake (the eyes changed on all of them).
+
 - 2026-11-04: look pass against the reference photos. Yellow tang: the snout is now a tube of even thickness (`snoutTip`, `snoutBlend` in `makeProfile`) and the forehead is narrower (`headW`); refit with `--start mouth=-0.5,snout=0.12,snoutH=0.03`. Its Roku sprites need a rebake. Cuttlefish, octopus (interbrachial web, standing posture, net-patterned skin), turtle (no head gap, scutes reach down the dome) and moon jelly (deeper bell, broad frilly oral arms) are PC only, so the bake skips them.
 
 - 2026-11-04: yellow tang reshaped (low mouth `body.mouth`, flattened snout `snoutW`, thinner lens section, near-opaque fins `thin`): its Roku sprites need a rebake. The cave roofs now carry `roof` data (no layout change).
