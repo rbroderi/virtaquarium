@@ -1,0 +1,22 @@
+{
+  "name": "virtaquarium",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node tools/serve.mjs 8080",
+    "bake": "node tools/bake.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Physically based virtual reef aquarium with per-fish brains (PC + Roku)",
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "sharp": "^0.35.5"
+  }
+}

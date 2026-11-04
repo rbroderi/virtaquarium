@@ -1,0 +1,456 @@
+{
+  "version": 1,
+  "generated": "2026-11-04T02:15:40.588Z",
+  "screen": {
+    "w": 1920,
+    "h": 1080
+  },
+  "pxPerUnit": 144,
+  "species": {
+    "clownfish": {
+      "name": "Ocellaris Clownfish",
+      "sci": "Amphiprion ocellaris",
+      "fact": "Lives among anemone tentacles, protected by a mucus coat that stops the sting.",
+      "sheet": "fish/clownfish.png",
+      "frameW": 104,
+      "frameH": 72,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 93,
+      "brain": {
+        "maxSpeed": 2.17,
+        "zone": [
+          0.45,
+          1
+        ],
+        "school": 0.3,
+        "grazer": 0.3,
+        "territorial": 0.5,
+        "boldness": 0.6,
+        "curiosity": 0.6,
+        "activity": 0.7,
+        "host": true,
+        "prey": true,
+        "shy": 0
+      }
+    },
+    "bluetang": {
+      "name": "Pacific Blue Tang",
+      "sci": "Paracanthurus hepatus",
+      "fact": "A grazing surgeonfish: the scalpel-like spine by its tail is used in territorial spats.",
+      "sheet": "fish/bluetang.png",
+      "frameW": 178,
+      "frameH": 130,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 157,
+      "brain": {
+        "maxSpeed": 3.1500000000000004,
+        "zone": [
+          0.2,
+          0.8
+        ],
+        "school": 0.25,
+        "grazer": 0.7,
+        "territorial": 0.2,
+        "boldness": 0.4,
+        "curiosity": 0.5,
+        "activity": 0.8,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "yellowtang": {
+      "name": "Yellow Tang",
+      "sci": "Zebrasoma flavescens",
+      "fact": "Spends most of the day grazing algae from rock, which keeps reefs healthy.",
+      "sheet": "fish/yellowtang.png",
+      "frameW": 160,
+      "frameH": 202,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 142,
+      "brain": {
+        "maxSpeed": 2.8499999999999996,
+        "zone": [
+          0.3,
+          0.95
+        ],
+        "school": 0.3,
+        "grazer": 0.9,
+        "territorial": 0.3,
+        "boldness": 0.5,
+        "curiosity": 0.5,
+        "activity": 0.75,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "moorishidol": {
+      "name": "Moorish Idol",
+      "sci": "Zanclus cornutus",
+      "fact": "Named by Moors who believed it a bringer of happiness; trails a long white dorsal filament.",
+      "sheet": "fish/moorishidol.png",
+      "frameW": 168,
+      "frameH": 430,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 150,
+      "brain": {
+        "maxSpeed": 2.5,
+        "zone": [
+          0.2,
+          0.85
+        ],
+        "school": 0.45,
+        "grazer": 0.6,
+        "territorial": 0.1,
+        "boldness": 0.4,
+        "curiosity": 0.5,
+        "activity": 0.7,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "lionfish": {
+      "name": "Red Lionfish",
+      "sci": "Pterois volitans",
+      "fact": "Hovers almost motionless, fanning venomous spines; an ambush hunter at dusk.",
+      "sheet": "fish/lionfish.png",
+      "frameW": 244,
+      "frameH": 262,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 217,
+      "brain": {
+        "maxSpeed": 1.74,
+        "zone": [
+          0.4,
+          1
+        ],
+        "school": 0,
+        "grazer": 0,
+        "territorial": 0.2,
+        "boldness": 0.95,
+        "curiosity": 0.4,
+        "activity": 0.3,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "copperband": {
+      "name": "Copperband Butterflyfish",
+      "sci": "Chelmon rostratus",
+      "fact": "Uses its tweezer snout to pick tiny invertebrates from crevices; the false eyespot confuses predators.",
+      "sheet": "fish/copperband.png",
+      "frameW": 144,
+      "frameH": 138,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 127,
+      "brain": {
+        "maxSpeed": 2.125,
+        "zone": [
+          0.5,
+          1
+        ],
+        "school": 0,
+        "grazer": 0.95,
+        "territorial": 0.2,
+        "boldness": 0.3,
+        "curiosity": 0.5,
+        "activity": 0.6,
+        "host": false,
+        "prey": false,
+        "shy": 0.5
+      }
+    },
+    "royalgramma": {
+      "name": "Royal Gramma",
+      "sci": "Gramma loreto",
+      "fact": "Claims a crevice and defends it; often swims upside-down under ledges.",
+      "sheet": "fish/royalgramma.png",
+      "frameW": 84,
+      "frameH": 42,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 75,
+      "brain": {
+        "maxSpeed": 2,
+        "zone": [
+          0.75,
+          1
+        ],
+        "school": 0,
+        "grazer": 0.3,
+        "territorial": 0.6,
+        "boldness": 0.2,
+        "curiosity": 0.4,
+        "activity": 0.6,
+        "host": false,
+        "prey": true,
+        "shy": 0.9
+      }
+    },
+    "clowntrigger": {
+      "name": "Clown Triggerfish",
+      "sci": "Balistoides conspicillum",
+      "fact": "Bold and inquisitive; locks itself into crevices with its \"trigger\" dorsal spine.",
+      "sheet": "fish/clowntrigger.png",
+      "frameW": 194,
+      "frameH": 146,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 172,
+      "brain": {
+        "maxSpeed": 2.875,
+        "zone": [
+          0.3,
+          1
+        ],
+        "school": 0,
+        "grazer": 0.6,
+        "territorial": 0.9,
+        "boldness": 0.9,
+        "curiosity": 0.9,
+        "activity": 0.8,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "emperorangel": {
+      "name": "Emperor Angelfish",
+      "sci": "Pomacanthus imperator",
+      "fact": "Juveniles wear white rings on blue; adults change completely into this striped livery.",
+      "sheet": "fish/emperorangel.png",
+      "frameW": 220,
+      "frameH": 192,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 195,
+      "brain": {
+        "maxSpeed": 3.25,
+        "zone": [
+          0.3,
+          0.95
+        ],
+        "school": 0,
+        "grazer": 0.7,
+        "territorial": 0.5,
+        "boldness": 0.7,
+        "curiosity": 0.8,
+        "activity": 0.7,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "longnose": {
+      "name": "Yellow Longnose Butterflyfish",
+      "sci": "Forcipiger flavissimus",
+      "fact": "Its elongated snout reaches into coral branches to pluck tube-worm tentacles.",
+      "sheet": "fish/longnose.png",
+      "frameW": 136,
+      "frameH": 122,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 120,
+      "brain": {
+        "maxSpeed": 2,
+        "zone": [
+          0.4,
+          1
+        ],
+        "school": 0.2,
+        "grazer": 0.85,
+        "territorial": 0.1,
+        "boldness": 0.5,
+        "curiosity": 0.5,
+        "activity": 0.65,
+        "host": false,
+        "prey": false,
+        "shy": 0
+      }
+    },
+    "chromis": {
+      "name": "Blue-Green Chromis",
+      "sci": "Chromis viridis",
+      "fact": "Shoals of these damselfish hover above branching coral and dart into it when threatened.",
+      "sheet": "fish/chromis.png",
+      "frameW": 64,
+      "frameH": 42,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 57,
+      "brain": {
+        "maxSpeed": 1.71,
+        "zone": [
+          0.15,
+          0.75
+        ],
+        "school": 1,
+        "grazer": 0.1,
+        "territorial": 0,
+        "boldness": 0.3,
+        "curiosity": 0.3,
+        "activity": 0.9,
+        "host": false,
+        "prey": true,
+        "shy": 0
+      }
+    },
+    "coralbeauty": {
+      "name": "Coral Beauty Angelfish",
+      "sci": "Centropyge bispinosa",
+      "fact": "A dwarf angelfish that rarely strays far from rockwork, darting between caves.",
+      "sheet": "fish/coralbeauty.png",
+      "frameW": 102,
+      "frameH": 76,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 90,
+      "brain": {
+        "maxSpeed": 1.7999999999999998,
+        "zone": [
+          0.6,
+          1
+        ],
+        "school": 0,
+        "grazer": 0.9,
+        "territorial": 0.4,
+        "boldness": 0.35,
+        "curiosity": 0.5,
+        "activity": 0.7,
+        "host": false,
+        "prey": false,
+        "shy": 0.7
+      }
+    }
+  },
+  "scenery": {
+    "reef-7": {
+      "scenery": "reef",
+      "seed": 7,
+      "backdrop": "scenery/reef-7.jpg",
+      "foreground": "scenery/reef-7-fg.png",
+      "floor": [
+        812,
+        795,
+        768,
+        737,
+        719,
+        717,
+        717,
+        713,
+        665,
+        600,
+        591,
+        583,
+        579,
+        579,
+        579,
+        585,
+        587,
+        608,
+        718,
+        778,
+        773,
+        719,
+        659,
+        649,
+        639,
+        620,
+        620,
+        589,
+        569,
+        334,
+        328,
+        328,
+        328,
+        680,
+        698,
+        720,
+        774,
+        780,
+        788,
+        826,
+        818,
+        796,
+        752,
+        743,
+        736,
+        733,
+        661,
+        645,
+        645,
+        645,
+        647,
+        675,
+        692,
+        710,
+        713,
+        731,
+        769,
+        789,
+        858,
+        920,
+        920,
+        920,
+        920,
+        920,
+        920
+      ],
+      "anemone": [
+        1286,
+        823
+      ],
+      "swimBox": [
+        207,
+        8,
+        1692,
+        896
+      ]
+    }
+  }
+}

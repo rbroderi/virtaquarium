@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://virtaquarium.app/schema/tank.schema.json",
+  "title": "Virtual aquarium tank",
+  "description": "One user's aquarium. Written by the dashboard, read by the PC and Roku builds. Readers also clamp values and drop unknown species (see pc/src/tank.js), so this schema is for the backend to reject bad writes early.",
+  "type": "object",
+  "required": ["version", "fish"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647, "default": 7, "description": "Seeds reef layout and fish placement." },
+    "scenery": { "enum": ["reef"], "default": "reef" },
+    "clock": { "type": "boolean", "default": false, "description": "Follow local time of day (lights dim at night)." },
+    "feedMinutes": { "type": "integer", "minimum": 0, "maximum": 120, "default": 4, "description": "Auto-feeder interval; 0 turns it off." },
+    "drift": { "type": "boolean", "default": true, "description": "Gentle camera parallax." },
+    "fish": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "required": ["species"],
+        "additionalProperties": false,
+        "properties": {
+          "species": { "type": "string", "pattern": "^[a-z0-9]+$", "description": "An id from pc/src/species.js." },
+          "count": { "type": "integer", "minimum": 0, "maximum": 12 },
+          "names": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 20 } }
+        }
+      }
+    }
+  }
+}

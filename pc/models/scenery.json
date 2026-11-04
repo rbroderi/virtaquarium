@@ -1,0 +1,52 @@
+{
+  "rock_a": {
+    "file": "scenery/rock_a.glb",
+    "kind": "rock",
+    "task": "5de212ce-8e11-42f2-b9f0-13a377048dde"
+  },
+  "rock_b": {
+    "file": "scenery/rock_b.glb",
+    "kind": "rock",
+    "task": "73ff0dc1-6100-48c2-a37f-9b2099ac50eb"
+  },
+  "rock_c": {
+    "file": "scenery/rock_c.glb",
+    "kind": "rock",
+    "task": "c1e48cc7-5409-4087-a712-cc99b0cecd74"
+  },
+  "rock_d": {
+    "file": "scenery/rock_d.glb",
+    "kind": "rock",
+    "task": "8fb96601-04d8-4049-b5b3-104aad1d4c62"
+  },
+  "coral_staghorn": {
+    "file": "scenery/coral_staghorn.glb",
+    "kind": "coral",
+    "task": "c5bfd5ac-38fd-4c0d-818f-7b570f9197b0"
+  },
+  "coral_finger": {
+    "file": "scenery/coral_finger.glb",
+    "kind": "coral",
+    "task": "e844f790-cc34-4920-ba73-e093d8584d40"
+  },
+  "coral_cauliflower": {
+    "file": "scenery/coral_cauliflower.glb",
+    "kind": "coral",
+    "task": "ecdf3ad8-9908-4b18-8674-b69beb3d0a02"
+  },
+  "coral_brain": {
+    "file": "scenery/coral_brain.glb",
+    "kind": "coral",
+    "task": "1256286a-4015-4b22-be57-8fbc67d195bb"
+  },
+  "coral_leather": {
+    "file": "scenery/coral_leather.glb",
+    "kind": "coral",
+    "task": "7fbf03ee-22d6-408d-8c4c-655544d54a41"
+  },
+  "coral_fan": {
+    "file": "scenery/coral_fan.glb",
+    "kind": "coral",
+    "task": "42ed92a1-a7f6-4fef-917b-6ed5d6b25da3"
+  }
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fish Lab</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b2a3a; overflow: hidden; font: 13px system-ui, sans-serif; color: #cfe6f0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #bar { position: fixed; left: 12px; top: 10px; background: rgba(0, 20, 30, 0.6); padding: 6px 10px; border-radius: 6px; }
+  #bar select, #bar input { vertical-align: middle; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="lab"></canvas>
+<div id="bar">
+  <select id="sp"></select>
+  <label><input type="checkbox" id="swim" checked> swim</label>
+  <label><input type="checkbox" id="spin"> spin</label>
+  <label>yaw <input type="range" id="yaw" min="-180" max="180" value="0"></label>
+  <label>light <input type="range" id="light" min="0" max="100" value="100"></label>
+</div>
+<script type="module" src="./src/lab.js"></script>
+</body>
+</html>
