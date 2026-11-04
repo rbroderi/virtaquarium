@@ -100,11 +100,21 @@ fix should be rebaked.** The PC layout for a given seed is now the same on every
 ## Moray caves (added 2026-11-04)
 
 `buildReef` now adds two rock arches per tank for the moray. They're built from their own random stream
-(`seed + 101`), so nothing else in the layout moves. They show up in the backdrop, and in the foreground
+(`seed + 101`), so nothing else in the layout moves.
+
+Each cave is placed where the viewer can see into it:
+- Candidate sites on the sand are tried back row first.
+- The mouth is turned towards the camera.
+- A site is taken only if 7 sight lines, from the camera's rest position to the mouth and the interior,
+  clear the rocks, the corals and the earlier cave.
+- Sites on a rock pile, near the clownfish anemone or within 3.5 units of another cave are rejected.
+
+The camera position is `buildReef`'s last argument. It defaults to `(0, 4.6, 15)`, the camera both
+`main.js` and `bake.js` use, so the bake needs no change unless its camera moves. They show up in the backdrop, and in the foreground
 layer when they're near the glass. They change the height field, which the Roku fish brains use if those
 are exported. If the Roku side has its own copy of the height field, regenerate it.
 
 ## Log
 
 - 2026-11-04: baked reef light added (PC). Bake needs `bakeReefLight` plus the light changes above. Rock
-  order fixed, so rebake. Moray caves added to the layout.
+  order fixed, so rebake. Moray caves added to the layout, then moved to sites the camera can see into.

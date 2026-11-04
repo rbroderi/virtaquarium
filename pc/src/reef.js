@@ -474,7 +474,8 @@ function swapCoral(parent, proc, model) {
 // ---------- assembly ----------
 
 // scenery: optional { rocks, coral } from loadScenery(); generated models replace procedural ones.
-export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {} }) {
+// view: the camera's rest position (main.js CAM_BASE, bake.js), which the moray caves must face.
+export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
   const rng = mulberry32(seed);
   const noise = new Noise(mulberry32(seed + 1));
   const sx = width / 16;   // layout scales with the tank width
@@ -677,11 +678,55 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   // the front, so every tank has a crevice for an eel. They draw from their own random stream, so the
   // rest of the seeded layout (and the Roku backdrop baked from it) is unchanged. The roof stays out of
   // the height field and the floor is carved back to the sand afterwards, so an eel can lie inside.
+  // Each cave goes where the viewer can see into it: rays from the camera to its mouth and interior
+  // must reach them past the rocks and corals already placed (and the caves before it).
   const caves = [];
   {
     const crng = mulberry32(seed + 101);
-    for (const [cx0, cz] of [[2.3, -0.9], [-4.2, -0.3]]) {
-      const cx = cx0 * sx + range(crng, -0.2, 0.2), yaw = range(crng, -0.3, 0.3);
+    const sight = new THREE.Raycaster(), _t = new THREE.Vector3(), _d = new THREE.Vector3();
+    const anem = new THREE.Vector3(2.9 * sx, 0, 1.3);
+    const local = (cx, cz, yaw, lx, y, lz, out) => out.set(cx + lx * Math.cos(yaw) + lz * Math.sin(yaw), y, cz - lx * Math.sin(yaw) + lz * Math.cos(yaw));
+    // Fraction of sight lines that reach the cave, or -1 where the site is unusable.
+    const seen = (cx, cz, yaw) => {
+      const ground = Math.max(0, hf.sample(cx, cz));
+      if (ground > 0.3) return -1;   // on the sand, not perched on a rock pile
+      for (const [lx, lz] of [[0, 0], [-0.3, 0.5], [0.3, 0.5], [0, 0.9], [0, -0.4]]) {
+        if (hf.sample(local(cx, cz, yaw, lx, 0, lz, _t).x, _t.z) > ground + 0.3) return -1;   // rock where the eel lies
+      }
+      if (Math.hypot(cx - anem.x, cz - anem.z) < 2 || caves.some((c) => Math.hypot(cx - c.x, cz - c.z) < 3.5)) return -1;
+      rocks.updateMatrixWorld(true); corals.updateMatrixWorld(true);
+      let hit = 0, n = 0;
+      for (const [lx, y, lz] of [[0, 0.3, 0.1], [-0.3, 0.2, 0.55], [0, 0.2, 0.55], [0.3, 0.2, 0.55], [-0.3, 0.45, 0.55], [0, 0.45, 0.55], [0.3, 0.45, 0.55]]) {
+        local(cx, cz, yaw, lx, ground + y, lz, _t);
+        _d.subVectors(_t, view);
+        sight.set(view, _d.clone().normalize());
+        sight.far = _d.length() - 0.05;
+        n++;
+        if (!sight.intersectObjects([rocks, corals], true).length) hit++;
+      }
+      return hit / n;
+    };
+    // Candidate sites across the tank, back rows first (a cave tucked into the reef), shuffled within a row.
+    const rows = [-1.4, -0.8, -0.2, 0.4, 1.0].map((z) => {
+      const row = [];
+      for (let x = -width * 0.4; x <= width * 0.4; x += 0.8) row.push([x + range(crng, -0.2, 0.2), z + range(crng, -0.15, 0.15)]);
+      for (let i = row.length - 1; i > 0; i--) { const j = Math.floor(crng() * (i + 1)); [row[i], row[j]] = [row[j], row[i]]; }
+      return row;
+    });
+    for (let k = 0; k < 2; k++) {
+      let best = null, bestV = -1;
+      for (const row of rows) {
+        for (const [x, z] of row) {
+          // Mouth turned towards the viewer.
+          const yaw = clamp(Math.atan2(view.x - x, view.z - z) + range(crng, -0.15, 0.15), -0.6, 0.6);
+          const v = seen(x, z, yaw);
+          if (v > bestV) { bestV = v; best = [x, z, yaw]; }
+          if (v === 1) break;
+        }
+        if (bestV === 1) break;
+      }
+      if (!best) break;
+      const [cx, cz, yaw] = best;
       const ground = Math.max(0, hf.sample(cx, cz));
       const cave = new THREE.Group();
       cave.position.set(cx, ground, cz);
@@ -711,7 +756,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       caves.push({
         mouth: new THREE.Vector3(cx, ground + 0.3, cz).addScaledVector(out, 0.55),   // where the head rests
         dir: out,                                                                     // facing out of the cave
-        yaw, ground, x: cx, z: cz,
+        yaw, ground, x: cx, z: cz, seen: bestV,                                      // share of sight lines clear
       });
     }
   }

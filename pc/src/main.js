@@ -81,7 +81,7 @@ if (customModels.length) console.info('Using GLB models for:', customModels.join
 // Optional generated rocks/corals (tools/tripo.mjs) replace the procedural ones.
 const scenery = await loadScenery();
 if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
-const reef = buildReef(scene, TANK_W, SEED, scenery);
+const reef = buildReef(scene, TANK_W, SEED, scenery, CAM_BASE);
 // Ray-cast the static reef's view of the open water once (?reeflight=0 to compare; L toggles it).
 if (params.get('reeflight') !== '0') bakeReefLight(renderer, reef);
 const snow = new MarineSnow(scene, TANK_W * 1.4, rng);
