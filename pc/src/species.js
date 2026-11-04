@@ -171,6 +171,12 @@ export const SPECIES = [
     fact: 'Claims a crevice and defends it; often swims upside-down under ledges.',
     size: 0.5, count: 2,
     anatomy: { bodyDepthSL: [0.26, 0.36] },
+    // Per-colour calibration (lab patches, 3 photos, 2026-11-04; half the median Lab difference, as a
+    // linear gain): the purple is violet in every photo (b* -35 vs the render), the yellow a little richer.
+    colourGain: [
+      { hex: ['#b72aa6', '#9c2bb0', '#c23ab3'], gain: [0.923, 1.225, 1.505] },
+      { hex: ['#ffcc1f', '#ffd52a'], gain: [0.946, 0.936, 0.5] },
+    ],
     body: { len: 0.82, depth: 0.3, width: 0.5, m: 0.35, headP: 0.7, tailP: 1.0, ped: 0.5 },
     eye: { u: 0.1, v: -0.3, r: 0.05, iris: '#d0a020' },
     pattern: [
@@ -269,6 +275,9 @@ export const SPECIES = [
     fact: 'Shoals of these damselfish hover above branching coral and dart into it when threatened.',
     size: 0.38, count: 9,
     anatomy: { bodyDepthSL: [0.42, 0.55] },
+    // Per-colour calibration (lab patches, 2026-11-04): the iridescent body reads differently in each
+    // photo, so all 9 back/body/belly patches are pooled (median Lab difference -1, -10, +5: greener).
+    colourGain: [{ hex: ['#6fd8d0', '#8fe8df', '#c8f6ef', '#6fd8d4', '#7fe0d8', '#a0f0e8'], gain: [0.814, 1.007, 0.938] }],
     body: { len: 0.74, depth: 0.4, width: 0.42, m: 0.4, headP: 0.8, tailP: 1.2, ped: 0.3 },
     eye: { u: 0.12, v: -0.22, r: 0.055, iris: '#4a6a6a' },
     pattern: [
@@ -288,6 +297,12 @@ export const SPECIES = [
     fact: 'A dwarf angelfish that rarely strays far from rockwork, darting between caves.',
     size: 0.6, count: 1,
     anatomy: { bodyDepthSL: [0.48, 0.6] },
+    // Per-colour calibration (lab patches, 3 photos, 2026-11-04; half the median Lab difference): the
+    // blue is darker and less red than rendered (5 patches), the orange flank lighter and yellower (2).
+    colourGain: [
+      { hex: ['#3c2a9a', '#5a2fa6', '#3a2890', '#3a2a8a', '#3a2a9a'], gain: [0.699, 0.837, 0.798] },
+      { hex: ['#ff7a1a', '#ff9a4a'], gain: [1.215, 1.446, 1.611] },
+    ],
     body: { len: 0.8, depth: 0.5, width: 0.32, m: 0.42, headP: 0.9, tailP: 1.3, ped: 0.35 },
     eye: { u: 0.14, v: -0.25, r: 0.045, iris: '#3a2a8a' },
     pattern: [
