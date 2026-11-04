@@ -2,8 +2,10 @@
 // Each file holds body profile parameters, per-fin outlines (by index into sp.fins), the caudal spread and
 // band positions and widths (by index into sp.pattern).
 import clownfish from './clownfish.js';
+import lionfish from './lionfish.js';
+import clowntrigger from './clowntrigger.js';
 
-const FITTED = { clownfish };
+const FITTED = { clownfish, lionfish, clowntrigger };
 
 // Linear-light gain on a species' saturated colours (pattern, fins), from the lab's white-referenced
 // patch comparison; white and black pattern are left alone.
@@ -33,6 +35,7 @@ export function applyFitted(species) {
     f.fins.forEach((fin, i) => { if (sp.fins[i]) Object.assign(sp.fins[i], fin); });
     Object.assign(sp.caudal, f.caudal);
     if (f.pelvic && sp.pelvic) Object.assign(sp.pelvic, f.pelvic);
+    if (f.pectoral) Object.assign(sp.pectoral, f.pectoral);
     for (const b of f.bands || []) if (sp.pattern[b.index]?.op === 'band') Object.assign(sp.pattern[b.index], { u: b.u, w: b.w });
     sp.fitted = true;
   }

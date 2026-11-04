@@ -103,20 +103,36 @@ export const SPECIES = [
     id: 'lionfish', name: 'Red Lionfish', sci: 'Pterois volitans',
     fact: 'Hovers almost motionless, fanning venomous spines; an ambush hunter at dusk.',
     size: 1.45, count: 1,
-    body: { len: 0.78, depth: 0.32, width: 0.6, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35 },
-    eye: { u: 0.12, v: -0.45, r: 0.045, iris: '#b03020' },
+    // Dorsal XIII + 11, anal III + 7, pectoral 14 unbranched rays, pelvic I + 5 (Schultz 1986; FishBase).
+    anatomy: { bodyDepthSL: [0.28, 0.38], dorsalSoft: { spines: 0, rays: 11 }, anal: { spines: 3, rays: 7 }, pectoralRays: 14, pelvic: { spines: 1, rays: 5 } },
+    body: { len: 0.78, depth: 0.27, width: 0.6, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35 },
+    eye: { u: 0.17, v: -0.35, r: 0.03, iris: '#b05a3a', irisR: 0.98, pupil: 0.42, fleck: '#5a2010', fleckR: 0.8 },
     pattern: [
-      { op: 'vgrad', stops: [[-1, '#e4cdb8'], [1, '#f2e6d8']] },
-      { op: 'stripesV', u0: 0.0, u1: 1.0, n: 15, color: '#8a2416', ratio: 0.5 },
+      { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
+      { op: 'stripesV', u0: 0.0, u1: 1.0, n: 20, color: '#9a4a28', ratio: 0.55 },
       { op: 'blob', u: 0.4, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
     ],
-    fins: [
-      { pos: 'top', kind: 'spines', u0: 0.12, u1: 0.62, n: 13, h: 0.4, sweep: 0.4, fill: '#e8d6c4', stripes: '#8a2416' },
-      { pos: 'top', u0: 0.62, u1: 0.96, pts: [[0, 0.04], [0.3, 0.13], [0.8, 0.12], [1, 0.02]], sweep: 0.2, fill: '#efe2d4', alpha: 0.55, spots: '#7a2a1a' },
-      { pos: 'bottom', u0: 0.55, u1: 0.9, pts: [[0, 0.03], [0.4, 0.15], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.6, spots: '#7a2a1a' },
+    // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle,
+    // with a ridge over each eye.
+    ridges: [
+      { u0: 0.15, v0: 0.05, u1: 0.29, v1: 0.15, w: 0.008, h: 0.004 },
+      { u0: 0.13, v0: -0.72, u1: 0.21, v1: -0.75, w: 0.007, h: 0.004 },
+      { u0: 0.27, v0: -0.25, u1: 0.3, v1: 0.3, w: 0.006, h: 0.003 },   // preopercle margin
     ],
-    caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.6, spots: '#7a2a1a' },
-    pectoral: { kind: 'fan', u: 0.25, v: 0.25, len: 0.5, w: 0.3, fill: '#efe2d4', alpha: 0.7, stripes: '#8a2416' },
+    // A banded, leaf-like tentacle over each eye, and fleshy lappets at the chin.
+    appendages: [
+      { u: 0.17, v: -0.85, len: 0.075, dir: [0.35, 1, 0.25], r: 0.004, flat: 0.3, shape: 'leaf', color: '#f2e8dc', stripes: '#9a4a2a', nb: 3, bend: -0.2 },
+      { u: 0.04, v: 0.45, len: 0.022, dir: [0.2, -1, 0.4], r: 0.004, flat: 0.4, shape: 'leaf', color: '#efe3d6' },
+      { u: 0.1, v: 0.6, len: 0.02, dir: [0, -1, 0.5], r: 0.004, flat: 0.4, shape: 'leaf', color: '#efe3d6' },
+    ],
+    fins: [
+      { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.3, hs: [0.55, 0.75, 0.85, 0.95, 1, 1, 0.95, 0.85, 0.7, 0.55, 0.42, 0.3, 0.22], lean: [-5, 60], r: 0.0045, flag: 0.13, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c' },
+      { pos: 'top', meristic: 'dorsalSoft', u0: 0.66, u1: 0.93, pts: [[0, 0.04], [0.3, 0.13], [0.8, 0.12], [1, 0.02]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
+      { pos: 'bottom', meristic: 'anal', u0: 0.62, u1: 0.88, pts: [[0, 0.03], [0.4, 0.15], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
+    ],
+    caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
+    pectoral: { kind: 'fan', u: 0.27, v: 0.2, len: 0.5, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.004, flag: 0.016, web: 0.6, spots: '#20140c', spotR: 0.004, spotN: 50 },
+    pelvic: { u: 0.3, len: 0.2, angle: 60, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },
   },
   {
@@ -163,18 +179,30 @@ export const SPECIES = [
     fact: 'Bold and inquisitive; locks itself into crevices with its "trigger" dorsal spine.',
     size: 1.15, count: 1,
     body: { len: 0.82, depth: 0.55, width: 0.36, m: 0.45, headP: 0.9, tailP: 1.2, ped: 0.3 },
+    // Dorsal III + 25-27, anal 21-23, pectoral 14-15 (Randall 2005; FishBase).
+    anatomy: { bodyDepthSL: [0.48, 0.56], dorsalSoft: { spines: 0, rays: 26 }, anal: { spines: 0, rays: 22 }, pectoralRays: 14 },
     eye: { u: 0.28, v: -0.38, r: 0.035, iris: '#3a3020' },
+    // Plate-scaled head: a deep groove runs forward from the eye, the small terminal mouth has thick
+    // lips, and the gill opening is a short slit above the pectoral base.
+    ridges: [
+      { u0: 0.12, v0: -0.28, u1: 0.25, v1: -0.36, w: 0.006, h: -0.003 },
+      { u0: 0.006, v0: -0.4, u1: 0.006, v1: 0.4, w: 0.009, h: 0.005 },
+      { u0: 0.36, v0: -0.12, u1: 0.37, v1: 0.12, w: 0.004, h: -0.0025 },
+    ],
+    // The pelvic fins are reduced to a single spine at the end of a movable belly flap.
+    appendages: [{ u: 0.56, v: 0.97, len: 0.03, dir: [-1, -0.35, 0.1], r: 0.006, flat: 0.7, color: '#1c1a18' }],
     pattern: [
       { op: 'vgrad', stops: [[-1, '#101010'], [1, '#1c1c1c']] },
       { op: 'spots', n: 26, r: 0.024, color: '#e9c22a', u0: 0.3, u1: 0.78, v0: -0.85, v1: -0.15, seed: 3 },
       { op: 'spots', n: 14, r: 0.055, color: '#f5f5f0', u0: 0.25, u1: 0.85, v0: 0.15, v1: 0.95, seed: 7 },
       { op: 'band', u: 0.18, w: 0.045, curve: 0, color: '#f0c020' },
-      { op: 'blob', u: 0.03, v: 0.0, ru: 0.06, rv: 0.6, color: '#f28c28', soft: 0.2 },
+      { op: 'blob', u: 0.03, v: 0.0, ru: 0.06, rv: 0.6, color: '#ffb01c', soft: 0.2 },
     ],
     fins: [
-      { pos: 'top', u0: 0.6, u1: 0.93, pts: [[0, 0.03], [0.2, 0.13], [1, 0.03]], sweep: 0.2, fill: '#141414', edge: '#d8b030', edgeW: 0.0036 },
-      { pos: 'top', u0: 0.4, u1: 0.48, pts: [[0, 0.02], [0.3, 0.07], [1, 0.0]], sweep: 0.4, fill: '#141414' },
-      { pos: 'bottom', u0: 0.6, u1: 0.93, pts: [[0, 0.03], [0.2, 0.13], [1, 0.03]], sweep: 0.2, fill: '#141414', edge: '#d8b030', edgeW: 0.0036 },
+      { pos: 'top', meristic: 'dorsalSoft', u0: 0.6, u1: 0.93, pts: [[0, 0.03], [0.2, 0.13], [1, 0.03]], sweep: 0.2, fill: '#8c8a94', alpha: 0.55, rays: 'rgba(20,20,28,0.35)' },
+      // The trigger: a stout first spine locked upright by the second; folded flat into a groove at rest.
+      { pos: 'top', kind: 'spines', u0: 0.4, u1: 0.47, n: 3, h: 0.08, hs: [1, 0.55, 0.2], lean: [70, 75], r: 0.0075, web: 0.9, fill: '#141414', alpha: 0.9, color: '#1c1a18', bend: 0.02 },
+      { pos: 'bottom', meristic: 'anal', u0: 0.6, u1: 0.93, pts: [[0, 0.03], [0.2, 0.13], [1, 0.03]], sweep: 0.2, fill: '#8c8a94', alpha: 0.55, rays: 'rgba(20,20,28,0.35)' },
     ],
     caudal: { type: 'round', spread: 0.17, fill: '#141414', band: { t: 0.45, w: 0.25, color: '#e0e0d8' } },
     pectoral: { u: 0.38, v: 0.0, len: 0.1, w: 0.06, fill: '#e9c22a', alpha: 0.6 },

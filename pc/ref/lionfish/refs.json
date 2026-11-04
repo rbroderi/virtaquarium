@@ -877,7 +877,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -2
     },
     {
       "file": "vanderwel.jpg",
@@ -1656,7 +1657,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -7
     },
     {
       "file": "eldar_oniria11.jpg",
@@ -2503,7 +2505,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 3
     }
   ]
 }

@@ -85,6 +85,8 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   - Spines are stiff and unjointed, and the membrane is incised between their tips. Soft rays are jointed and branch towards the margin.
   - The membrane is a thin pigmented film that thins from base to margin. Pigmented margins (`edgeW`, in body lengths) follow only the free edge and can have a translucent fringe outside them.
   - Pelvic fins (`sp.pelvic`) are paired and splay out from the belly. Pectorals are pleated and slightly cupped; `kind: 'round'` gives the damselfish paddle.
+  - Free spines (`kind: 'spines'`: the lionfish dorsal, the triggerfish's trigger) are banded 3D tubes joined only by a low, incised web, each with a membrane flag along its rear edge. Fan pectorals (`kind: 'fan'`) have tube rays standing free past a deeply notched membrane.
+- **Head detail**: `sp.ridges` raises ridges or cuts grooves along segments placed on the side view (the lionfish's suborbital stay and brow, the triggerfish's groove before the eye and its lips). `sp.appendages` adds paired tentacles and lappets (the lionfish's leaf-shaped supraorbital tentacles) as tapered, banded tubes.
 - **Eyes**: iris stroma and a lens pupil under a nearly flush cornea, with no dark limbal ring. Pupil and iris size and the melanophore flecks around the pupil can be set per species (`sp.eye`). The eyes are baked into fish space so they move with the swimming head.
 
 Inspect any species up close at <http://localhost:8080/pc/lab.html?sp=clownfish>. Use `sp=all` for a lineup, and `yaw` or `swim=0` to pose it. The toolbar also switches the light rig (`rig=sun|led`) and tone mapping (`tone=aces|neutral|agx|none`), and **screenshot** saves what is on screen as a PNG.

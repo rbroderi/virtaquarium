@@ -184,7 +184,8 @@ export function installReference(lab) {
       for (let x = 0; x < w; x++) {
         const i = (src + x) * 4;
         const cover = 1 - (wh[i] - k[i] + wh[i + 1] - k[i + 1] + wh[i + 2] - k[i + 2]) / 765;
-        if (cover >= 0.5) { mask[y * w + x] = 1; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        // 0.2: low enough that faint membranes (lionfish caudal, alpha ~0.35) count, as they do in the traces.
+        if (cover >= 0.2) { mask[y * w + x] = 1; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
       }
     }
     return { w, h, mask, box: x1 < 0 ? null : { x0, y0, x1, y1 } };

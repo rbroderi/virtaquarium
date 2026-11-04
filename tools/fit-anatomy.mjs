@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeProfile, finOutline, caudalOutline, pelvicOutline } from '../pc/src/fishModel.js';
+import { makeProfile, finOutline, caudalOutline, pelvicOutline, pectoralOutline } from '../pc/src/fishModel.js';
 import { SPECIES } from '../pc/src/species.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -112,9 +112,15 @@ function silhouette(sp) {
   for (const f of sp.fins) { const o = finOutline(sp, prof, f); polys.push([...o.base, ...o.outer.slice().reverse()]); }
   polys.push(caudalOutline(sp, prof).map(([x, y]) => [x, prof.centre(1) + y]));
   if (sp.pelvic) polys.push(pelvicOutline(sp, prof).outline);   // paired, but splayed only slightly: side view
+  if (sp.pectoral.kind === 'fan') polys.push(pectoralOutline(sp, prof));   // lionfish wings reach past the body
   return normalise(polys);
 }
-const score = (sp) => { const m = raster(silhouette(sp)); return photos.reduce((s, p) => s + bestIoU(m, p.mask), 0) / photos.length; };
+// Fins on the same edge follow one another (a spiny dorsal ends where the soft dorsal begins).
+const overlaps = (sp) => ['top', 'bottom'].some((pos) => {
+  const fs = sp.fins.filter((f) => f.pos === pos).sort((a, b) => a.u0 - b.u0);
+  return fs.some((f, i) => i > 0 && f.u0 < fs[i - 1].u1 - 0.02);
+});
+const score = (sp) => { if (overlaps(sp)) return 0; const m = raster(silhouette(sp)); return photos.reduce((s, p) => s + bestIoU(m, p.mask), 0) / photos.length; };
 
 // ---------- parameters ----------
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -130,10 +136,15 @@ bodyKey('m', 0.25, 0.6); bodyKey('headP', 0.3, 1.6); bodyKey('tailP', 0.5, 2.5);
 base.fins.forEach((f, fi) => {
   add((s) => s.fins[fi].u0, (s, v) => { s.fins[fi].u0 = v; }, Math.max(0.05, f.u0 - 0.15), Math.min(0.95, f.u0 + 0.15));
   add((s) => s.fins[fi].u1, (s, v) => { s.fins[fi].u1 = v; }, Math.max(0.1, f.u1 - 0.15), Math.min(1, f.u1 + 0.1));
+  if (f.kind === 'spines') { add((s) => s.fins[fi].h, (s, v) => { s.fins[fi].h = v; }, f.h * 0.5, f.h * 1.6); return; }
   add((s) => s.fins[fi].sweep ?? 0, (s, v) => { s.fins[fi].sweep = v; }, 0, 1);
   (f.pts || []).forEach((_, pi) => add((s) => s.fins[fi].pts[pi][1], (s, v) => { s.fins[fi].pts[pi][1] = v; }, 0, 0.35));
 });
 add((s) => s.caudal.spread, (s, v) => { s.caudal.spread = v; }, 0.08, 0.4);
+if (base.pectoral.kind === 'fan') {
+  const fk = (k, lo, hi) => add((s) => s.pectoral[k], (s, v) => { s.pectoral[k] = v; }, lo, hi);
+  fk('len', 0.3, 0.65); fk('u', Math.max(0.1, base.pectoral.u - 0.08), base.pectoral.u + 0.08); fk('v', -0.2, 0.6);
+}
 if (base.pelvic) {
   const pk = (k, lo, hi) => add((s) => s.pelvic[k], (s, v) => { s.pelvic[k] = v; }, lo, hi);
   pk('u', Math.max(0.1, base.pelvic.u - 0.1), base.pelvic.u + 0.1); pk('len', 0.06, 0.25); pk('angle', 10, 70);
@@ -142,6 +153,10 @@ if (base.pelvic) {
 // ---------- coordinate descent ----------
 let sp = clone(base);
 for (const p of P) p.set(sp, Math.min(p.hi, Math.max(p.lo, p.get(sp))));   // start inside the bounds
+for (const pos of ['top', 'bottom']) {   // and with the fins in sequence (an earlier fit may not be)
+  const fs = sp.fins.filter((f) => f.pos === pos).sort((a, b) => a.u0 - b.u0);
+  for (let i = 1; i < fs.length; i++) if (fs[i].u0 < fs[i - 1].u1 - 0.02) { const m = (fs[i].u0 + fs[i - 1].u1) / 2; fs[i - 1].u1 = m; fs[i].u0 = m; }
+}
 console.log(`${id}: ${photos.length} side-on refs (${photos.map((p) => p.file).join(', ')}); start IoU ${score(sp).toFixed(3)}`);
 let best = 0;
 for (let round = 0; round < 2; round++) {   // rotations and shape depend on each other: alternate
@@ -221,9 +236,10 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 const fit = {
   bands: bands.map((b) => ({ index: b.index, u: r3(b.u), w: r3(b.w) })),
   body: Object.fromEntries(['depth', 'm', 'headP', 'tailP', 'ped', 'hump'].map((k) => [k, r3(sp.body[k])])),
-  fins: sp.fins.map((f) => ({ u0: r3(f.u0), u1: r3(f.u1), sweep: r3(f.sweep ?? 0), pts: f.pts?.map(([t, h]) => [t, r3(h)]) })),
+  fins: sp.fins.map((f) => (f.kind === 'spines' ? { u0: r3(f.u0), u1: r3(f.u1), h: r3(f.h) } : { u0: r3(f.u0), u1: r3(f.u1), sweep: r3(f.sweep ?? 0), pts: f.pts?.map(([t, h]) => [t, r3(h)]) })),
   caudal: { spread: r3(sp.caudal.spread) },
   ...(sp.pelvic ? { pelvic: { u: r3(sp.pelvic.u), len: r3(sp.pelvic.len), angle: Math.round(sp.pelvic.angle) } } : {}),
+  ...(sp.pectoral.kind === 'fan' ? { pectoral: { u: r3(sp.pectoral.u), v: r3(sp.pectoral.v), len: r3(sp.pectoral.len) } } : {}),
 };
 console.log(`  body depth ${(fit.body.depth / sp.body.len).toFixed(3)} SL (published ${bdLo}-${bdHi})`);
 const atBound = P.filter((p) => { const v = p.get(sp); return v <= p.lo + 1e-6 || v >= p.hi - 1e-6; }).length;

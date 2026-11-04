@@ -278,6 +278,22 @@ function paintSkin(sp, prof) {
 
 // ---------- fins ----------
 
+// Free-standing dorsal spines (the lionfish's venomous spines, the triggerfish's trigger): n spines from
+// u0 to u1, each leaning back from vertical by lean[0]..lean[1] degrees (first to last); hs are relative
+// heights from the first spine to the last (resampled to n), times h (TL).
+export function spineLayout(prof, fin) {
+  const n = Math.max(2, fin.n), hs = fin.hs || [0.7, 1, 1, 0.9, 0.7, 0.5, 0.35], lean = fin.lean || [25, 50];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1), u = lerp(fin.u0, fin.u1, t);
+    const k = t * (hs.length - 1), j = Math.min(hs.length - 2, Math.floor(k));
+    const len = fin.h * lerp(hs[j], hs[j + 1], k - j), a = THREE.MathUtils.degToRad(lerp(lean[0], lean[1], t));
+    const b = [prof.x(u), prof.centre(u) + prof.half(u) * 0.85];
+    out.push({ u, b, tip: [b[0] - Math.sin(a) * len, b[1] + Math.cos(a) * len], len, a });
+  }
+  return out;
+}
+
 export function finOutline(sp, prof, fin) {
   const sign = fin.pos === 'top' ? 1 : -1;
   const base = [], outer = [];
@@ -285,8 +301,14 @@ export function finOutline(sp, prof, fin) {
     const u = lerp(fin.u0, fin.u1, i / 14);
     base.push([prof.x(u), prof.centre(u) + sign * prof.half(u) * 0.85]);
   }
-  const pts = fin.kind === 'spines' ? [[0, 0.02], [0.05, fin.h], [0.9, fin.h * 0.7], [1, 0.04]] : fin.pts;
-  for (const [t, h] of pts) {
+  if (fin.kind === 'spines') {
+    // Side-view envelope: through the spine tips (photo traces fill the gaps between spines).
+    const S = spineLayout(prof, fin);
+    for (const s of S) outer.push(s.tip);
+    outer.push([prof.x(fin.u1) - 0.01, prof.top(fin.u1) + 0.005]);
+    return { base, outer, sign };
+  }
+  for (const [t, h] of fin.pts) {
     const u = lerp(fin.u0, fin.u1, t);
     outer.push([prof.x(u) - (fin.sweep || 0) * h, prof.centre(u) + sign * (prof.half(u) + h)]);
   }
@@ -359,6 +381,7 @@ function paintFins(sp, prof) {
   const rng = mulberry32(sp.id.length * 31 + 5);
 
   const meshes = [];   // { rays, n }: ray field per fin, for the 3D membrane
+  const tubes = [];    // spines and rays modelled as tapered tubes (tubeGeometry)
   const drawFin = (spec, outlinePts, rays, mer = {}, marginPts = null) => {
     g.save();
     g.beginPath(); smoothPath(g, outlinePts, true);
@@ -382,10 +405,12 @@ function paintFins(sp, prof) {
     }
     if (spec.spots) {
       g.fillStyle = spec.spots;
-      for (let i = 0; i < 40; i++) {
+      // spotR: mean spot radius (TL); spotN: how many.
+      const sr = spec.spotR ?? 0.013;
+      for (let i = 0; i < (spec.spotN ?? 40); i++) {
         const [a, b] = rays(rng());
         const t = rng();
-        g.beginPath(); g.arc(lerp(a[0], b[0], t), lerp(a[1], b[1], t), 0.008 + rng() * 0.01, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.arc(lerp(a[0], b[0], t), lerp(a[1], b[1], t), sr * (0.6 + 0.8 * rng()), 0, Math.PI * 2); g.fill();
       }
     }
     if (spec.spot) {
@@ -470,28 +495,59 @@ function paintFins(sp, prof) {
   sp.fins.forEach((spec, i) => {
     const f = fins[i];
     if (spec.kind === 'spines') {
-      // Venomous spines with a low membrane between them (lionfish).
+      // Free spines (3D tubes, below) joined only near the base by a low, deeply incised web; each spine
+      // carries a membrane flag along its rear edge (lionfish), banded like the spine.
+      const S = spineLayout(prof, spec), N = S.length;
+      const at = (s, k) => [lerp(s.b[0], s.tip[0], k), lerp(s.b[1], s.tip[1], k)];
+      const rays = (t) => {
+        const k = t * (N - 1), j = Math.min(N - 2, Math.floor(k)), q = k - j;
+        return [0, 1].map((e) => [lerp(at(S[j], e)[0], at(S[j + 1], e)[0], q), lerp(at(S[j], e)[1], at(S[j + 1], e)[1], q)]);
+      };
+      const web = spec.web ?? 0.3, alpha = spec.alpha ?? 0.6;
       g.save();
-      g.globalAlpha = 0.45; g.fillStyle = spec.fill;
-      g.beginPath(); smoothPath(g, [...f.base, ...f.outer.slice().reverse().map((p) => [p[0], lerp(p[1], f.base[0][1], 0.45)])], true); g.fill();
-      g.globalAlpha = 1; g.lineCap = 'round';
-      for (let s = 0; s < spec.n; s++) {
-        const t = s / (spec.n - 1), u = lerp(spec.u0, spec.u1, t);
-        const bx = prof.x(u), by = prof.top(u) - prof.half(u) * 0.15;
-        const hh = spec.h * (0.55 + 0.45 * Math.sin(Math.PI * (0.15 + t * 0.85))) * (0.85 + rng() * 0.3);
-        const tx = bx - spec.sweep * hh, ty = by + hh;
-        const segs = 6;
-        for (let q = 0; q < segs; q++) {
-          g.strokeStyle = q % 2 ? spec.fill : spec.stripes;
-          g.lineWidth = 0.012 * (1 - q / segs) + 0.003;
-          g.beginPath();
-          g.moveTo(lerp(bx, tx, q / segs), lerp(by, ty, q / segs));
-          g.lineTo(lerp(bx, tx, (q + 1) / segs), lerp(by, ty, (q + 1) / segs));
-          g.stroke();
+      g.fillStyle = spec.fill; g.globalAlpha = alpha;
+      g.beginPath(); g.moveTo(...S[0].b);
+      for (let i = 0; i < N; i++) {
+        g.lineTo(...at(S[i], web));
+        if (i < N - 1) { const m = rays((i + 0.5) / (N - 1)); g.lineTo(lerp(m[0][0], m[1][0], web * 0.45), lerp(m[0][1], m[1][1], web * 0.45)); }
+      }
+      g.lineTo(...S[N - 1].b); g.closePath(); g.fill();
+      const flag = spec.flag ?? 0, fl = spec.flagLen ?? 0.85;
+      for (const s of S) {
+        if (!flag) break;
+        const back = [-Math.cos(s.a), -Math.sin(s.a)], w = flag * s.len;
+        const edge = [];
+        for (let q = 0; q <= 10; q++) {
+          const k = (q / 10) * fl, p = at(s, k), ww = w * Math.sin(Math.PI * Math.min(1, (k / fl) * 0.85 + 0.15)) ** 0.6;
+          edge.push([p[0] + back[0] * ww, p[1] + back[1] * ww]);
         }
+        g.save();
+        g.beginPath(); g.moveTo(...s.b); for (const p of edge) g.lineTo(...p); g.lineTo(...at(s, fl)); g.closePath();
+        g.globalAlpha = alpha; g.fill(); g.clip();
+        if (spec.stripes) {
+          // Bands across spine and flag together, about one per 0.025 TL.
+          const nb = Math.max(3, Math.round(s.len / 0.025));
+          g.globalAlpha = 0.85; g.strokeStyle = spec.stripes; g.lineWidth = s.len / nb * 0.5;
+          for (let q = 0; q < nb; q++) {
+            const p = at(s, (q + 0.5) / nb);
+            g.beginPath(); g.moveTo(...p); g.lineTo(p[0] + back[0] * w * 1.3, p[1] + back[1] * w * 1.3); g.stroke();
+          }
+        }
+        g.restore();
       }
       g.restore();
-      meshes.push({ rays: (t) => [along(f.base, t), along(f.outer, t)], n: spec.n - 1 });
+      meshes.push({ rays, n: N - 1 });
+      // The spines themselves, on the membrane's pleat ridges (see finMesh) so they stay on the web.
+      S.forEach((s, i) => {
+        const z = 0.035 * s.len * Math.cos(Math.PI * i);
+        const bend = spec.bend ?? 0.06, nrm = [Math.cos(s.a), Math.sin(s.a)];
+        const mid = at(s, 0.5);
+        tubes.push({
+          pts: [[...s.b, 0], [mid[0] - nrm[0] * bend * s.len, mid[1] - nrm[1] * bend * s.len, z * 0.5], [...s.tip, z]],
+          r0: spec.r ?? 0.005, r1: (spec.r ?? 0.005) * 0.2, color: spec.color || spec.fill, stripes: spec.stripes,
+          nb: spec.stripes ? Math.max(3, Math.round(s.len / 0.025)) : 0,
+        });
+      });
       return;
     }
     const outline = [...f.base, ...f.outer.slice().reverse()];
@@ -514,7 +570,7 @@ function paintFins(sp, prof) {
     meshes[meshes.length - 1].xforms = pv.xforms;
   }
 
-  return { canvas: c, xmin, xmax, ymax, meshes };
+  return { canvas: c, xmin, xmax, ymax, meshes, tubes };
 }
 
 // Pelvic fin in side view: inserted on the belly just behind the pectoral base, the spine as its leading
@@ -549,6 +605,43 @@ function pectShape(p) {
 }
 // Pectoral ray count: from the species' meristics when known.
 const pectoralRays = (sp) => (sp.anatomy?.pectoralRays ?? (sp.pectoral.kind === 'fan' ? 17 : 11)) - 1;
+// Fan pectoral ray lengths (fraction of p.len): longest in the middle of the fan, slightly irregular.
+const fanLen = (sp, i) => { const n = pectoralRays(sp); return 0.8 + 0.15 * Math.sin(Math.PI * (0.2 + (0.7 * i) / n)) + 0.04 * Math.sin(i * 1.7); };
+const pectBands = (sp, i) => Math.max(3, Math.round((fanLen(sp, i) * sp.pectoral.len) / 0.03));
+// Pleat and cup of the pectoral surface at (x, y) in its own plane (base at the origin, x outwards).
+function pectZ(sp, x, y) {
+  const p = sp.pectoral, { spread, yk } = pectShape(p), pw = p.len, n = pectoralRays(sp);
+  const r = Math.hypot(x, y) / pw, a = Math.atan2(y / yk, Math.max(1e-4, x));
+  return 0.03 * pw * r * Math.cos(Math.PI * (a / spread + 0.5) * n) + 0.12 * pw * r * r;
+}
+// Side view of a fan pectoral as the lab poses it (opened by `open` rad about the vertical), for
+// silhouette fitting: the fan dominates a lionfish's outline.
+export function pectoralOutline(sp, prof, open = 0.9) {   // as lab.js poses fans
+  const p = sp.pectoral, { spread, yk } = pectShape(p), n = pectoralRays(sp), pw = p.len;
+  const px = prof.x(p.u), py = prof.centre(p.u) - p.v * prof.half(p.u), k = Math.cos(open);
+  const pts = [[px, py + 0.01]];
+  for (let i = 0; i <= n; i++) {
+    const a = -spread / 2 + (spread * i) / n, r = fanLen(sp, i) * pw;
+    pts.push([px - Math.cos(a) * r * k, py - Math.sin(a) * r * yk]);
+  }
+  pts.push([px, py - 0.01]);
+  return pts;
+}
+// Fan pectoral rays as tubes, in the fin's own space (the canvas y runs down, so geometry y = -canvas y).
+function pectoralTubes(sp) {
+  const p = sp.pectoral, { fan, spread, yk } = pectShape(p);
+  if (!fan) return [];
+  const n = pectoralRays(sp), pw = p.len, out = [];
+  for (let i = 0; i <= n; i++) {
+    const a = -spread / 2 + (spread * i) / n, L = fanLen(sp, i), pts = [];
+    for (let q = 0; q <= 6; q++) {
+      const r = (L * q) / 6, x = Math.cos(a) * r * pw, y = -Math.sin(a) * r * yk * pw;
+      pts.push([x, y, pectZ(sp, x, y)]);
+    }
+    out.push({ pts, r0: p.rayR ?? 0.004, r1: (p.rayR ?? 0.004) * 0.25, color: p.rayColor || p.fill, stripes: p.stripes, nb: p.stripes ? pectBands(sp, i) : 0 });
+  }
+  return out;
+}
 
 function paintPectoral(sp) {
   const p = sp.pectoral, { fan, round, spread, yk } = pectShape(p);
@@ -569,11 +662,12 @@ function paintPectoral(sp) {
       if (free) { arc(true); return; }
       g.moveTo(0, -H * 0.07); arc(false); g.lineTo(0, H * 0.07);
     } else if (fan) {
+      // Through each ray tip, the membrane incised deeply between them so the tips stand free.
+      const nr = pectoralRays(sp), ang = (i) => -spread / 2 + (spread * i) / nr, pt = (a, r) => [Math.cos(a) * r * W, Math.sin(a) * r * W * yk];
       g.moveTo(0, -H * 0.06);
-      for (let i = 0; i <= 16; i++) {
-        const a = -1.15 + (2.3 * i) / 16;
-        const r = W * (0.85 + 0.12 * Math.sin(i * 1.7));
-        g.lineTo(Math.cos(a) * r, Math.sin(a) * r * 0.5);
+      for (let i = 0; i <= nr; i++) {
+        g.lineTo(...pt(ang(i), fanLen(sp, i)));
+        if (i < nr) g.lineTo(...pt(ang(i + 0.5), (p.web ?? 0.62) * Math.min(fanLen(sp, i), fanLen(sp, i + 1))));
       }
       g.lineTo(0, H * 0.06);
     } else {
@@ -596,13 +690,13 @@ function paintPectoral(sp) {
   const dir = (a, r) => [Math.cos(a) * r, Math.sin(a) * r * yk];
   for (let i = 0; i <= n; i++) {
     const a = a0r + (span * i) / n;
-    if (fan && p.stripes) {
-      g.lineWidth = 3 * K;
-      for (let q = 0; q < 8; q++) {
-        g.strokeStyle = q % 2 ? p.fill : p.stripes;
-        g.beginPath();
-        g.moveTo(...dir(a, (W * q) / 8)); g.lineTo(...dir(a, (W * (q + 1)) / 8));
-        g.stroke();
+    if (fan) {
+      // The rays are 3D tubes (pectoralTubes); the membrane takes a narrow banded flag along each.
+      const L = fanLen(sp, i) * W, nb = pectBands(sp, i);
+      g.lineWidth = ((p.flag ?? 0.012) / p.len) * W;
+      for (let q = 0; q < nb; q++) {
+        g.strokeStyle = q % 2 && p.stripes ? p.stripes : p.fill;
+        g.beginPath(); g.moveTo(...dir(a, (L * q) / nb)); g.lineTo(...dir(a, (L * (q + 1)) / nb)); g.stroke();
       }
     } else {
       // Jointed soft rays (the first is simple), branching at about half their length.
@@ -617,6 +711,15 @@ function paintPectoral(sp) {
         for (const s of [-1, 1]) { g.beginPath(); g.moveTo(...dir(a, W * br)); g.lineTo(...dir(a + (s * 0.22 * span) / n, W)); g.stroke(); }
       }
       g.setLineDash([]);
+    }
+  }
+  if (p.spots) {
+    g.fillStyle = p.spots;
+    const rng = mulberry32(sp.id.length * 17 + 3);
+    const sr = ((p.spotR ?? 0.006) / p.len) * W;
+    for (let i = 0; i < (p.spotN ?? 60); i++) {
+      const a = a0r + span * rng(), r = W * (0.15 + 0.75 * rng());
+      g.beginPath(); g.arc(...dir(a, r), sr * (0.6 + 0.8 * rng()), 0, Math.PI * 2); g.fill();
     }
   }
   if (p.edge) {
@@ -660,18 +763,78 @@ function finMesh({ rays, n }, sheet) {
   return g;
 }
 
+// Tapered tube along a smooth path through d.pts (fish space): spines, free fin rays, tentacles.
+// d: { pts, r0, r1, color, stripes?, nb? (bands), flat? (thickness across z / width), shape?: 'leaf' }.
+// Bands are crisp: rings are doubled at each band boundary. Colours go in a vertex colour attribute.
+function tubeGeometry(d, seg = 7) {
+  const curve = new THREE.CatmullRomCurve3(d.pts.map((p) => new THREE.Vector3(...p)));
+  const nb = d.nb || 0, ts = [];
+  for (let i = 0; i <= 16; i++) ts.push(i / 16);
+  for (let q = 1; q < nb; q++) ts.push(q / nb - 1e-3, q / nb + 1e-3);
+  ts.sort((a, b) => a - b);
+  const ca = new THREE.Color(d.color), cb = new THREE.Color(d.stripes || d.color);
+  const flat = d.flat ?? 1, pos = [], col = [], idx = [];
+  const T = new THREE.Vector3(), N = new THREE.Vector3(), B = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
+  for (const t of ts) {
+    const p = curve.getPointAt(t);
+    curve.getTangentAt(t, T);
+    N.copy(Z).addScaledVector(T, -T.dot(Z));
+    if (N.lengthSq() < 1e-6) N.set(0, 1, 0);
+    N.normalize(); B.crossVectors(T, N);
+    const r = d.shape === 'leaf' ? lerp(d.r0, d.r1, t) + d.r0 * 1.4 * Math.sin(Math.PI * t) ** 1.5 : lerp(d.r0, d.r1, t);
+    const c = nb && Math.floor(t * nb) % 2 ? cb : ca;
+    for (let k = 0; k < seg; k++) {
+      const a = (k / seg) * Math.PI * 2;
+      pos.push(p.x + (N.x * flat * Math.cos(a) + B.x * Math.sin(a)) * r, p.y + (N.y * flat * Math.cos(a) + B.y * Math.sin(a)) * r, p.z + (N.z * flat * Math.cos(a) + B.z * Math.sin(a)) * r);
+      col.push(c.r, c.g, c.b);
+    }
+  }
+  const R = ts.length;
+  for (let i = 0; i < R - 1; i++) {
+    for (let k = 0; k < seg; k++) {
+      const a = i * seg + k, b = i * seg + ((k + 1) % seg);
+      idx.push(a, b, a + seg, b, b + seg, a + seg);
+    }
+  }
+  const tip = curve.getPointAt(1);
+  pos.push(tip.x, tip.y, tip.z); col.push(...(nb && (nb - 1) % 2 ? cb : ca).toArray());
+  for (let k = 0; k < seg; k++) idx.push((R - 1) * seg + k, (R - 1) * seg + ((k + 1) % seg), R * seg);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+// Paired appendages on the head and body (supraorbital tentacles, lappets), both sides:
+// sp.appendages: [{ u, v (as the eye), len (TL), dir: [x, y, z out], r, flat, shape, color, stripes, nb, bend }].
+function appendageTubes(sp, prof) {
+  const out = [];
+  for (const a of sp.appendages || []) {
+    for (const side of [1, -1]) {
+      const x = prof.x(a.u), y = prof.centre(a.u) - a.v * prof.half(a.u);
+      const z = side * prof.width(a.u) * Math.sqrt(Math.max(0.05, 1 - a.v * a.v)) * 0.9;
+      const d = new THREE.Vector3(a.dir[0], a.dir[1], side * a.dir[2]).normalize().multiplyScalar(a.len);
+      const bend = a.bend ?? 0.15;
+      out.push({
+        pts: [[x, y, z], [x + d.x * 0.5 - bend * d.y * 0.5, y + d.y * 0.5 + bend * d.x * 0.5, z + d.z * 0.5], [x + d.x, y + d.y, z + d.z]],
+        r0: a.r, r1: a.r * 0.15, flat: a.flat, shape: a.shape, color: a.color, stripes: a.stripes, nb: a.nb || 0,
+      });
+    }
+  }
+  return out;
+}
+
 // Pectoral fin: rays fan out from the base; pleated like the median fins and slightly cupped.
 function pectoralGeometry(sp) {
-  const p = sp.pectoral, { fan, round, spread, yk } = pectShape(p);
-  const pw = p.len, ph = fan || round ? p.len : p.len * 0.5, n = pectoralRays(sp);
-  const g = new THREE.PlaneGeometry(pw, ph, 28, 18);
+  const p = sp.pectoral, { fan, round } = pectShape(p);
+  const pw = p.len, ph = fan || round ? p.len : p.len * 0.5;
+  const g = fan ? new THREE.PlaneGeometry(pw, ph, 64, 64) : new THREE.PlaneGeometry(pw, ph, 28, 18);   // fans: pleats fine enough for every ray
   g.translate(pw / 2, 0, 0);
   const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    // a: the ray angle as painted (the texture squashes the fan vertically by yk).
-    const x = pos.getX(i), y = pos.getY(i), r = Math.hypot(x, y) / pw, a = Math.atan2(y / yk, Math.max(1e-4, x));
-    pos.setZ(i, 0.03 * pw * r * Math.cos(Math.PI * (a / spread + 0.5) * n) + 0.12 * pw * r * r);
-  }
+  // The ray angle as painted is atan2(y / yk, x) (the texture squashes the fan vertically by yk).
+  for (let i = 0; i < pos.count; i++) pos.setZ(i, pectZ(sp, pos.getX(i), pos.getY(i)));
   g.computeVertexNormals();
   return g;
 }
@@ -848,8 +1011,27 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
 
 // ---------- geometry ----------
 
+// Head relief (sp.ridges): ridges (h > 0) and grooves (h < 0) drawn on the side view as segments from
+// (u0, v0) to (u1, v1) (v as for the eye), w wide and h high (TL), raised along the section's radius:
+// the lionfish's bony suborbital stay and brow, the triggerfish's groove before the eye and its lips.
+function reliefOf(sp, prof) {
+  const P = (u, v) => [prof.x(u), prof.centre(u) - v * prof.half(u)];
+  const R = (sp.ridges || []).map((r) => ({ ...r, a: P(r.u0, r.v0), b: P(r.u1 ?? r.u0, r.v1 ?? r.v0) }));
+  return (x, y) => {
+    let d = 0;
+    for (const r of R) {
+      const ex = r.b[0] - r.a[0], ey = r.b[1] - r.a[1], L2 = ex * ex + ey * ey;
+      const t = L2 > 0 ? clamp(((x - r.a[0]) * ex + (y - r.a[1]) * ey) / L2, 0, 1) : 0;
+      const dx = x - r.a[0] - t * ex, dy = y - r.a[1] - t * ey;
+      d += r.h * Math.exp(-(dx * dx + dy * dy) / (r.w * r.w));
+    }
+    return d;
+  };
+}
+
 function bodyGeometry(prof, sp) {
-  const NU = 110, NA = 56, CAP = 5;
+  const fine = !!sp.ridges, NU = fine ? 160 : 110, NA = fine ? 80 : 56, CAP = 5;
+  const relief = reliefOf(sp, prof);
   const e = sp.eye, len = sp.body.len, g0 = gillU(sp);
   // Section exponent: compressed fish (tangs, angels) have a lens-shaped section, thickest along the
   // spine and sharp at the fin bases (> 1); round-bodied fish (gramma, lionfish) are fuller (< 1).
@@ -867,7 +1049,12 @@ function bodyGeometry(prof, sp) {
     z *= 1 + 0.045 * op * (1 - Math.abs(cy) ** 3);                         // gill cover overhangs the flank
     const du = (u - e.u) / (e.r * 1.6 / len), dv = (v - e.v) / (e.r * 1.6 / Math.max(h, 1e-3));
     z *= 1 + 0.07 * Math.exp(-(du * du + dv * dv));                       // eye socket
-    return [prof.centre(u) + cy * h, Math.sign(sz) * z];
+    let y = prof.centre(u) + cy * h;
+    if (fine) {
+      const yc = prof.centre(u), ry = y - yc, k = 1 + relief(prof.x(u), y) / Math.max(1e-3, Math.hypot(ry, z));
+      y = yc + ry * k; z *= k;
+    }
+    return [y, Math.sign(sz) * z];
   };
   const pos = [], uv = [], thick = [], idx = [];
   const ringOf = (x, u, scale, uvU) => {
@@ -934,10 +1121,12 @@ function speciesAssets(sp) {
     return m.xforms ? m.xforms.map((x) => geo.clone().applyMatrix4(x)) : [geo];
   }));
   const pectGeo = pectoralGeometry(sp);
+  const tubes = (list) => (list.length ? mergeGeometries(list.map((d) => tubeGeometry(d))) : null);
   const a = {
     prof,
     bodyGeo: bodyGeometry(prof, sp),
     finGeo, pectGeo,
+    tubeGeo: tubes([...fins.tubes, ...appendageTubes(sp, prof)]), pectTubeGeo: tubes(pectoralTubes(sp)),
     skinTex: tex(skin.map), normalTex: tex(skin.normal, false), iridTex: tex(skin.irid, false), finTex: tex(fins.canvas), pectTex: tex(pect), eyeTex: tex(eye),
     eyeGeos: [1, -1].map((side) => eyeGeometry(prof, sp, side)),
     canvases: { skin: skin.map, fins: fins.canvas, pect },
@@ -1081,8 +1270,11 @@ export function buildFishModel(sp, opts = {}) {
   const fins = new THREE.Mesh(a.finGeo, finMat);
   fins.renderOrder = 1;
   group.add(fins, body);
+  // Spines, free rays and tentacles: solid, glossy, banded by vertex colour; thin enough to glow when backlit.
+  const tubeMat = (u) => makeSwimMaterial(new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }), u, { kind: 'fin', thickMM: 0.8 * sp.size * 8 });
+  if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms)));
 
-  const pects = [];
+  const pects = [], pectTubeMat = a.pectTubeGeo ? tubeMat(still) : null;
   const p = sp.pectoral, pu = p.u;
   const px = a.prof.x(pu), py = a.prof.centre(pu) - p.v * a.prof.half(pu), pz = a.prof.width(pu);
   for (const side of [1, -1]) {
@@ -1091,6 +1283,7 @@ export function buildFishModel(sp, opts = {}) {
     const m = new THREE.Mesh(a.pectGeo, pectMat);
     m.renderOrder = 2;
     m.rotation.y = Math.PI; // point backwards
+    if (a.pectTubeGeo) m.add(new THREE.Mesh(a.pectTubeGeo, pectTubeMat));
     pivot.add(m);
     pivot.userData.side = side;
     group.add(pivot);

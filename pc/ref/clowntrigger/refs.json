@@ -775,7 +775,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -3
     },
     {
       "file": "hisgett.jpg",
@@ -1468,7 +1469,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 10
     },
     {
       "file": "martin_inat.jpg",
@@ -2393,7 +2395,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 5
     }
   ]
 }
