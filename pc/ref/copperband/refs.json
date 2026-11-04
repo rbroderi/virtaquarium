@@ -1729,7 +1729,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 6
     },
     {
       "file": "denes_percoidei3.jpg",
@@ -2290,7 +2291,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -11
     },
     {
       "file": "amada44_9443.jpg",
@@ -2819,7 +2821,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -3
     },
     {
       "file": "undheim.jpg",
@@ -3276,7 +3279,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 10
     },
     {
       "file": "mustermann_wuppertal.jpg",
@@ -4967,7 +4971,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -1
     },
     {
       "file": "denes_percoidei5.jpg",
@@ -5388,7 +5393,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 5
     },
     {
       "file": "otrebski_genova.jpg",
@@ -5933,7 +5939,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": -11
     },
     {
       "file": "fishhead_289341501.jpg",
@@ -6310,7 +6317,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 2
     },
     {
       "file": "pelletier_pacific.jpg",
@@ -6863,7 +6871,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 19
     },
     {
       "file": "denes_percoidei4.jpg",
@@ -7444,7 +7453,8 @@
         }
       ],
       "sideOn": true,
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
+      "rot": 11
     },
     {
       "file": "fishhead_278601435.jpg",

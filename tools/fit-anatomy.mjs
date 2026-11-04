@@ -220,12 +220,16 @@ const measured = await measureBands(sp);
 for (const m of measured) console.log(`  white runs ${m.file}: ${m.runs.map(([a, b]) => `${a.toFixed(3)}-${b.toFixed(3)}`).join(', ')}`);
 const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const bands = [];
+// White bands (clownfish) match the white runs; coloured or dark bands on a white body (copperband) match
+// the gaps between them.
+const isWhite = (hex) => { const n = parseInt(hex.slice(1), 16), c = [(n >> 16) & 255, (n >> 8) & 255, n & 255]; return Math.max(...c) > 180 && Math.min(...c) > 0.72 * Math.max(...c); };
+const gaps = (runs) => runs.slice(1).map(([a], i) => [runs[i][1], a]);
 bandOps.forEach(([op, pi]) => {
   // The measured run nearest to the model's band, per photo; median over photos.
   const cs = [], ws = [];
   for (const m of measured) {
     let best = null, bd = 0.12;
-    for (const [a, b] of m.runs) { const d = Math.abs((a + b) / 2 - op.u); if (d < bd) { bd = d; best = [a, b]; } }
+    for (const [a, b] of isWhite(op.color) ? m.runs : gaps(m.runs)) { const d = Math.abs((a + b) / 2 - op.u); if (d < bd) { bd = d; best = [a, b]; } }
     if (best) { cs.push((best[0] + best[1]) / 2); ws.push(best[1] - best[0]); }
   }
   if (cs.length >= 2) bands.push({ index: pi, u: median(cs), w: median(ws), from: op.u, n: cs.length });

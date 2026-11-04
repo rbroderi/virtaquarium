@@ -4,8 +4,9 @@
 import clownfish from './clownfish.js';
 import lionfish from './lionfish.js';
 import clowntrigger from './clowntrigger.js';
+import copperband from './copperband.js';
 
-const FITTED = { clownfish, lionfish, clowntrigger };
+const FITTED = { clownfish, lionfish, clowntrigger, copperband };
 
 // Linear-light gain on a species' saturated colours (pattern, fins), from the lab's white-referenced
 // patch comparison; white and black pattern are left alone.
