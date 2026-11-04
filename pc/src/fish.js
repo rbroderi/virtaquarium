@@ -44,7 +44,8 @@ export class Fish {
     this.size = sp.size * range(rng, 0.85, 1.12);
     this.model = buildFishModel(sp);
     this.model.scale.setScalar(this.size);
-    this.model.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    // Receive too, so fins shade the flank (and other fish) as they do in photos.
+    this.model.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
     this.model.userData.fish = this;
     this.pos = new THREE.Vector3();
     this.dir = new THREE.Vector3(rng() - 0.5, 0, (rng() - 0.5) * 0.4).normalize();

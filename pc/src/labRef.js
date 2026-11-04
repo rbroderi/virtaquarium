@@ -19,6 +19,7 @@ export function installReference(lab) {
   let active = false, refs = [], cur = null, img = null, pix = null;   // pix: the photo's ImageData
   let view = { s: 1, tx: 0, ty: 0 };   // photo px -> CSS px
   let edge = null, spots = [], dirty = true, drag = null, loadedFor = null;   // spots: where the render was sampled
+  let lastRows = [];   // last measure's patches in linear RGB (for calibration from the console)
   const W = () => cv.clientWidth, H = () => cv.clientHeight;
   const say = (msg) => { out.textContent = msg; };
   const redraw = () => { dirty = true; };
@@ -280,6 +281,7 @@ export function installReference(lab) {
       const ref = rows.find((x) => x.p.name.startsWith('band') && colourKind(linearToLab(x.a)) === 'white');
       const norm = (c, w) => c.map((x, i) => (0.9 * x) / Math.max(1e-4, w[i]));
       if (ref) html += `\nwhite reference: ${ref.p.name} (wr = after dividing each image by it)`;
+      lastRows = rows.map(({ p, a, b }) => ({ name: p.name, photo: a, render: b, photoWhite: ref?.a, renderWhite: ref?.b }));
       for (const { p, a, b, moved } of rows) {
         const de = ciede2000(linearToLab(a), linearToLab(b));
         const wr = ref && ref.p !== p ? ciede2000(linearToLab(norm(a, ref.a)), linearToLab(norm(b, ref.b))) : null;
@@ -400,7 +402,7 @@ export function installReference(lab) {
 
   if (params.get('ref') === '1' || params.has('refimg')) setActive(true);
   // Console/debug access.
-  lab.ref = { current: () => cur, view: () => view, align, measure, redraw };
+  lab.ref = { current: () => cur, view: () => view, align, measure, redraw, rows: () => lastRows };
 }
 
 // ---------- pixel helpers ----------

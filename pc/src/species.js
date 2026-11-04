@@ -19,6 +19,9 @@ export const SPECIES = [
     // rounded (FishBase morphology, Allen 1991; Fishes of Australia). tools/fit-anatomy.mjs fits the
     // silhouette to pc/ref/clownfish within these bounds (pc/src/anatomy/clownfish.js).
     anatomy: { bodyDepthSL: [0.42, 0.48], dorsal: { spines: 11, rays: 15 }, anal: { spines: 2, rays: 12 }, pectoralRays: 17, pelvic: { spines: 1, rays: 5 } },
+    // Linear gain on the orange (carotenoid) colours so body/white matches the reference photos (lab
+    // white-referenced patches, median of 4 photos, 2026-11-04): photos ~(1.0, 0.145, 0.003) x white.
+    albedoGain: [0.91, 0.6, 0.125],
     body: { len: 0.8, depth: 0.42, width: 0.42, m: 0.4, headP: 0.7, tailP: 1.3, ped: 0.45 },
     eye: { u: 0.12, v: -0.28, r: 0.045, iris: '#f08a2a' },
     pattern: [

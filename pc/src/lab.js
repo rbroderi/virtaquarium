@@ -22,14 +22,20 @@ scene.add(backdrop);
 scene.fog = new THREE.FogExp2(INSCATTER_DAY.clone(), 1.0);
 scene.environment = makeEnvironment(renderer);
 scene.environmentIntensity = 0.35;
+const CENTRE = new THREE.Vector3(0, 5, 2.2);   // just behind the front glass, mid-water
 const sun = new THREE.DirectionalLight(0xfff2dc, 2.6);
 sun.position.set(3, 22, 7);
+sun.target.position.copy(CENTRE);
+// Shadows as in the tank (main.js), on a tight box around the fish so fins shade the flank crisply.
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -2, right: 2, top: 2, bottom: -2, near: 1, far: 60 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.01; sun.shadow.radius = 3;
 scene.add(sun, sun.target);
 const hemi = new THREE.HemisphereLight(0xdcecff, 0x8a7458, 1.0);
 scene.add(hemi);
 
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 120);
-const CENTRE = new THREE.Vector3(0, 5, 2.2);   // just behind the front glass, mid-water
 await loadCustomModels(SPECIES);
 
 // compare=1: procedural fish (left) next to its generated model in pc/models/fish/<id>.glb (right).
@@ -59,6 +65,7 @@ async function show(id) {
     const r = Math.floor(i / cols), c = i % cols, rows = Math.ceil(list.length / cols);
     m.position.copy(CENTRE).add(list.length === 1 ? new THREE.Vector3() : new THREE.Vector3((c - (cols - 1) / 2) * 1.25, ((rows - 1) / 2 - r) * 0.9, 0));
     m.userData.len = L;
+    m.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });   // as in the tank (fish.js)
     scene.add(m);
     return m;
   });
@@ -97,7 +104,7 @@ const setLight = (l = level) => {
 // Sun direction in degrees relative to the view: az 0 = from the camera side, el 90 = straight down.
 const setLightDir = (az = 23, el = 70) => {
   const a = THREE.MathUtils.degToRad(az), e = THREE.MathUtils.degToRad(el);
-  sun.position.set(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)).multiplyScalar(23);
+  sun.position.set(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)).multiplyScalar(23).add(CENTRE);
 };
 setLightDir();
 $('light').oninput = (e) => setLight(e.target.value / 100);
