@@ -4,7 +4,7 @@ import { SPECIES, FISH_NAMES } from './species.js';
 import { buildReef, loadScenery } from './reef.js';
 import { World } from './world.js';
 import { Fish } from './fish.js';
-import { loadCustomModels } from './fishModel.js';
+import { loadCustomModels, fishRender } from './fishModel.js';
 import { mulberry32, range, clamp, lerp } from './util.js';
 import {
   waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, MarineSnow, Bubbles, makeSurface,
@@ -12,8 +12,11 @@ import {
 } from './water.js';
 import { UI } from './ui.js';
 import { loadTank } from './tank.js';
+import { PhotoCamera } from './photo.js';
+import { LightRig } from './rig.js';
 
 const params = new URLSearchParams(location.search);
+fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
 const tank = await loadTank(params);
 const SEED = tank.seed;
 const CLOCK = tank.clock;              // follow local time of day (lights dim at night)
@@ -65,6 +68,10 @@ const caustics = new Caustics(renderer);
 const water = new WaterRenderer(renderer);
 const hemi = new THREE.HemisphereLight(0xdcecff, 0x8a7458, 1.0);   // white downwelling (aquarium lights) + sand bounce
 scene.add(hemi);
+const rig = new LightRig(scene, sun, params.get('rig') || 'sun');
+// ?photo=1: render through a camera model (depth of field, lens and sensor effects; see photo.js).
+const _ndc = new THREE.Vector3();   // autofocus scratch
+const photo = params.has('photo') && params.get('photo') !== '0' ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 2.8 }) : null;
 
 // Optional Tripo3D / GLB models replace procedural fish species by species.
 const customModels = await loadCustomModels(SPECIES);
@@ -125,7 +132,7 @@ let light = daylight();
 function applyLight(l) {
   world.light = l;
   const k = 0.12 + 0.88 * l;
-  sun.intensity = 2.6 * l + 0.05;
+  rig.apply(l);
   hemi.intensity = 1.0 * k;
   hemi.color.setRGB(lerp(0.30, 0.86, l), lerp(0.45, 0.92, l), 1.0);   // moonlight is bluer
   scene.environmentIntensity = 0.35 * k;
@@ -151,7 +158,7 @@ function frame() {
   requestAnimationFrame(frame);
   fitCanvas();
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (paused) { water.render(scene, camera, sun); return; }
+  if (paused) { present(); return; }
   t += dt;
   waterUniforms.uTime.value = t;
 
@@ -176,9 +183,28 @@ function frame() {
     camera.lookAt(LOOK);
   }
   ui.update(dt);
-  water.render(scene, camera, sun);
+  if (photo) autofocus(dt);
+  present();
 }
 frame();
+
+function present() {
+  if (!photo) { water.render(scene, camera, sun); return; }
+  water.render(scene, camera, sun, photo.begin());
+  photo.finish(water.target.depthTexture, camera, t);
+}
+
+// Autofocus on the fish nearest the middle of the frame, as a camera's centre AF point would.
+function autofocus(dt) {
+  let best = null, bd = Infinity;
+  for (const f of world.fish) {
+    _ndc.copy(f.pos).project(camera);
+    const d = Math.hypot(_ndc.x, _ndc.y * 0.8);
+    if (_ndc.z < 1 && d < bd) { bd = d; best = f; }
+  }
+  const s = best ? camera.position.distanceTo(best.pos) : camera.position.distanceTo(LOOK);
+  photo.focus = lerp(photo.focus, s, Math.min(1, dt * 3));
+}
 
 // Track the canvas size every frame (window moves between monitors, panes resize without events).
 function fitCanvas() {

@@ -1048,6 +1048,11 @@ export function posePectoral(p, ph, open, flap) {
   fin.scale.y = 1 - 0.25 * rec;
 }
 
+// finDepth: fins write depth (and cut out below 15% alpha, under the faintest fringe), set before building fish. The photo camera
+// needs it so translucent fins focus with the body; otherwise fins don't write depth, which avoids
+// sorting artefacts between overlapping membranes.
+export const fishRender = { finDepth: false };
+
 // opts.model: a model from loadFishModel; opts.procedural: ignore models.json for this species.
 export function buildFishModel(sp, opts = {}) {
   if (opts.model) return buildCustomModel(sp, opts.model);
@@ -1062,13 +1067,13 @@ export function buildFishModel(sp, opts = {}) {
     iridescence: sp.iridescent ? 1.0 : 0.35, iridescenceIOR: 1.8, iridescenceThicknessRange: [180, 420],   // guanine platelet stacks
   }), uniforms, { kind: 'body', sizeMM: sp.size * 125 });
   const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
-    map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01, ior: IN_WATER_IOR,
+    map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport.
   const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -9 }, uXGill: { value: 9 }, uVent: { value: 0 } };
   const pectMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
-    map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01, ior: IN_WATER_IOR,
+    map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), still, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
 
   const group = new THREE.Group();

@@ -2,11 +2,14 @@
 // URL: lab.html?sp=clownfish&yaw=30&swim=0   or   lab.html?sp=all   or   lab.html?sp=clownfish&compare=1
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
-import { buildFishModel, loadCustomModels, loadFishModel, posePectoral } from './fishModel.js';
+import { buildFishModel, loadCustomModels, loadFishModel, posePectoral, fishRender } from './fishModel.js';
 import { installReference } from './labRef.js';
+import { PhotoCamera } from './photo.js';
+import { LightRig } from './rig.js';
 import { installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, waterUniforms } from './water.js';
 
 const params = new URLSearchParams(location.search);
+fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
 const $ = (id) => document.getElementById(id);
 const canvas = $('lab');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
@@ -89,13 +92,11 @@ $('compare').checked = compare; $('compare').onchange = (e) => { compare = e.tar
 $('yaw').value = yaw; $('yaw').oninput = (e) => (yaw = Number(e.target.value));
 // Light presets: 'sun' is the tank's single key light; 'led' previews an aquarium LED bar
 // (soft key from above-front plus two unshadowed fills along the bar).
-const fills = [-1, 1].map((s) => { const l = new THREE.DirectionalLight(0xf4f6ff, 0); l.position.set(s * 6, 20, 6); scene.add(l); return l; });
-let level = 1, preset = params.get('rig') || 'sun';
+const rig = new LightRig(scene, sun, params.get('rig') || 'sun');
+let level = 1;
 const setLight = (l = level) => {
   level = l;
-  const led = preset === 'led';
-  sun.intensity = (led ? 1.5 : 2.6) * l + 0.05;
-  for (const f of fills) f.intensity = led ? 0.7 * l : 0;
+  rig.apply(l);
   hemi.intensity = 0.12 + 0.88 * l; waterUniforms.uCaustic.value = l;
   scene.fog.color.copy(INSCATTER_DAY).multiplyScalar(0.06 + 0.94 * l);
   backdrop.material.uniforms.uBase.value.copy(scene.fog.color);
@@ -108,7 +109,7 @@ const setLightDir = (az = 23, el = 70) => {
 };
 setLightDir();
 $('light').oninput = (e) => setLight(e.target.value / 100);
-$('rig').value = preset; $('rig').onchange = (e) => { preset = e.target.value; setLight(); };
+$('rig').value = rig.preset; $('rig').onchange = (e) => { rig.preset = e.target.value; setLight(); };
 const TONE = { aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, none: THREE.NoToneMapping };
 const setTone = (k) => { renderer.toneMapping = TONE[k] ?? TONE.aces; for (const m of fish) m.traverse((o) => { if (o.material) [].concat(o.material).forEach((x) => (x.needsUpdate = true)); }); };
 $('tone').value = params.get('tone') || 'aces'; $('tone').onchange = (e) => setTone(e.target.value);
@@ -142,7 +143,16 @@ function frame() {
       else posePectoral(p, -Math.PI / 2, 0.5, 0);   // glide pose: half open, flat
     }
   }
+  present();
+}
+// ?photo=1: through the camera model (photo.js), focused on the fish.
+const photo = params.has('photo') && params.get('photo') !== '0' ? new PhotoCamera(renderer, { depth: true, fNumber: Number(params.get('fstop')) || 2.8 }) : null;
+function present() {
+  if (!photo) { renderer.render(scene, camera); return; }
+  photo.focus = camera.position.distanceTo(CENTRE);
+  renderer.setRenderTarget(photo.begin());
   renderer.render(scene, camera);
+  photo.finish(photo.target.depthTexture, camera, t);
 }
 frame();
 window.lab = {

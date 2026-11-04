@@ -452,7 +452,8 @@ export class WaterRenderer {
     this._size = new THREE.Vector2();
   }
 
-  render(scene, camera, sun) {
+  // output: render target for the composited frame (e.g. PhotoCamera.begin()), or null for the screen.
+  render(scene, camera, sun, output = null) {
     const r = this.renderer;
     r.getDrawingBufferSize(this._size);
     if (this.target.width !== this._size.x || this.target.height !== this._size.y) this.target.setSize(this._size.x, this._size.y);
@@ -464,7 +465,9 @@ export class WaterRenderer {
     u.uViewInv.value.copy(camera.matrixWorld);
     u.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
     u.uSunColor.value.copy(sun.color).multiplyScalar(sun.intensity);
+    r.setRenderTarget(output);
     r.render(this.scene, this.camera);
+    r.setRenderTarget(null);
   }
 }
 
