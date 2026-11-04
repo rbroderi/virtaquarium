@@ -278,7 +278,7 @@ function paintSkin(sp, prof) {
   // Mouth: the gape is lined dark (the inside of the mouth); the jaw seam in the body mesh stretches
   // over this lining when the lower jaw drops. The lips (raised in the mesh) are a little darker.
   {
-    const M = mouthOf(sp), lw = (M.lining ?? 0.05) * TH / 2;
+    const M = mouthOf(sp), lw = (M.lining ?? 0.03) * TH / 2;
     g.globalCompositeOperation = 'multiply';
     g.strokeStyle = 'rgba(170,150,145,0.55)'; g.lineWidth = lw * 3.2; g.lineCap = 'round';
     g.beginPath(); g.moveTo(U(-0.01), V(M.v0)); g.lineTo(U(M.u), V(M.v)); g.stroke();
@@ -1213,12 +1213,13 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
       shader.vertexShader = 'attribute float aJaw;\nuniform float uGape;\nuniform vec2 uHinge;\n' + shader.vertexShader;
     }
     if (tissue?.cover) {
-      // The gill opening (aSlit: the wall under the cover's margin): dark red gill chamber.
+      // Inside the mouth and the gill opening (aSlit): the skin texture carried in, in shadow and
+      // reddened (blood-rich lining and gills), so it reads as a cavity rather than a hole.
       shader.defines = { ...shader.defines, FISH_COVER: '' };
       shader.vertexShader = 'attribute float aSlit;\nvarying float vSlit;\n' + shader.vertexShader
         .replace('vec3 transformed = p0;', 'vec3 transformed = p0;\n        vSlit = aSlit;');
       shader.fragmentShader = 'varying float vSlit;\n' + shader.fragmentShader
-        .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.06, 0.012, 0.014), vSlit);');
+        .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.2, 0.1, 0.1) + vec3(0.03, 0.006, 0.008), vSlit);');
     }
   };
   base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') : 'plain');
@@ -1294,7 +1295,9 @@ function bodyGeometry(prof, sp) {
   // gill opening) and, GAP behind and a little sunk, the body's (the opening's far side, then skin).
   const ringOf = (u0, scale = 1, capX = null, seam = null) => {
     const mouthRing = (seam ? G.u : u0) < M.u;
-    const put = (a, jw, sl) => {
+    // dv: texture offset for the lips' inner faces, so the inside of the mouth maps the skin just above
+    // and below the gape (shown darkened, FISH_COVER) rather than one stretched row of it.
+    const put = (a, jw, sl, dv = 0) => {
       const v = -Math.cos(thAt(a));   // which part of the gill margin this vertex sits on
       const u = seam ? (seam.back ? backU(v) : G.edge(v)) : capX != null ? u0 : bendU(u0, v);
       const th = angle(a, u), cy = Math.cos(th), vv = -cy;
@@ -1304,7 +1307,7 @@ function bodyGeometry(prof, sp) {
       const k = 1 + (relief(x, y) + lips(u, vv, h)) / Math.max(Math.hypot(y - yc, z), 2 * mw, 1e-3);
       y = yc + (y - yc) * k; z *= k;
       pos.push(x, y, Math.sign(Math.sin(th)) * z);
-      uv.push(capX != null ? 0 : u, (1 + cy) / 2);
+      uv.push(capX != null ? 0 : u, clamp((1 + cy) / 2 + dv, 0, 1));
       thick.push(2 * z);   // tissue a backlight has to pass through
       jaw.push(jw);
       // How much of the breathing flare (fish.js) a point takes: most at the cover's margin.
@@ -1312,22 +1315,31 @@ function bodyGeometry(prof, sp) {
       cov.push(c * c);
       slit.push(sl);
     };
-    const gs = seam?.slit ? 1 : 0;
+    // The lower jaw's share of the swing eases off over the last 30% before the corner, so the chin
+    // and throat skin stretch smoothly there instead of creasing against the head behind.
+    const wj = mouthRing ? 1 - smooth01((u0 - 0.7 * M.u) / (0.3 * M.u)) : 0;
+    const gs = seam?.slit ? 1 : 0, mi = mouthRing ? 1 : gs, mj = wj, MV = mouthRing ? 0.05 : 0;
     for (let a = 0; a < NA; a++) {
-      const lower = mouthRing && a > iL && a < NA - iL ? 1 : 0;
+      const lower = a > iL && a < NA - iL ? wj : 0;
       if (a === iL) {
-        // Down the +z side: upper lip, its inner face, the lower lip's inner face, the lower lip.
-        put(a, 0, gs); put(a, 0, mouthRing ? 1 : gs); put(a, mouthRing ? 1 : 0, mouthRing ? 1 : gs); put(a, mouthRing ? 1 : 0, gs);
+        // Down the +z side: upper lip, its inner face, the lower lip's inner face, the lower lip
+        // (texture v rises dorsally).
+        put(a, 0, gs); put(a, 0, mi, MV); put(a, mj, mi, -MV); put(a, mj, gs);
       } else if (a === NA - iL) {
         // Back up the -z side: lower lip first.
-        put(a, mouthRing ? 1 : 0, gs); put(a, mouthRing ? 1 : 0, mouthRing ? 1 : gs); put(a, 0, mouthRing ? 1 : gs); put(a, 0, gs);
+        put(a, mj, gs); put(a, mj, mi, -MV); put(a, 0, mi, MV); put(a, 0, gs);
       } else put(a, lower, gs);
     }
   };
   const tip = () => { thick.push(0); jaw.push(0); cov.push(0); slit.push(0); };
   // Rounded nose cap: rings shrinking on a quarter ellipse ahead of u = 0.
   const capLen = Math.min(prof.half(0), prof.width(0)) * 0.55;
-  pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, 0.5); tip();
+  // The snout tip, four times over: for the upper jaw's skin, the lower jaw's (it moves with it), and
+  // the inner faces of each, which close the front of the open mouth.
+  for (const [jw, sl] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+    pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, 0.5); tip();
+    jaw[jaw.length - 1] = jw; slit[slit.length - 1] = sl;
+  }
   let rings = 0;
   for (let k = CAP; k >= 1; k--, rings++) {
     const phi = (k / (CAP + 1)) * Math.PI / 2;
@@ -1347,8 +1359,15 @@ function bodyGeometry(prof, sp) {
   }
   const tailIdx = pos.length / 3;
   pos.push(prof.x(1) - 0.004, prof.centre(1), 0); uv.push(1, 0.5); tip();
-  const ring = (i) => 1 + i * R;
-  for (let a = 0; a < R; a++) idx.push(0, ring(0) + ((a + 1) % R), ring(0) + a);
+  const ring = (i) => 4 + i * R;
+  // Fan from the tip: upper-jaw pairs to the upper tip, lower-jaw pairs to the lower, and a pair that
+  // spans the gape (an inner face of each lip) to both inner tips.
+  for (let a = 0; a < R; a++) {
+    const p = ring(0) + a, q = ring(0) + ((a + 1) % R), jp = jaw[p] > 0, jq = jaw[q] > 0;
+    if (jp === jq) idx.push(jp ? 1 : 0, q, p);
+    else if (jq) idx.push(3, q, p, 3, p, 2);   // down the +z side: upper (p) to lower (q)
+    else idx.push(2, q, p, 2, p, 3);           // back up the -z side
+  }
   for (let i = 0; i < rings - 1; i++) {
     for (let a = 0; a < R; a++) {
       const a1 = (a + 1) % R;
@@ -1373,6 +1392,7 @@ function bodyGeometry(prof, sp) {
   // them have no width: take a neighbour's, along the ring and then across the gill margin.
   const n = g.attributes.normal, bad = (i) => Math.hypot(n.getX(i), n.getY(i), n.getZ(i)) < 0.5;
   const copy = (i, j) => n.setXYZ(i, n.getX(j), n.getY(j), n.getZ(j));
+  for (const i of [1, 2, 3]) if (bad(i)) copy(i, 0);   // the tip's copies
   slitRings.forEach((r, k) => { for (let a = 0; a < R; a++) if (bad(ring(r) + a)) copy(ring(r) + a, ring(k ? r + 1 : r - 1) + a); });
   for (let i = 0; i < rings; i++) {
     for (let a = 0; a < R; a++) if (bad(ring(i) + a)) copy(ring(i) + a, ring(i) + ((a + R - 1) % R));

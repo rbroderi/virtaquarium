@@ -125,7 +125,7 @@ export const SPECIES = [
     albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
     body: { len: 0.78, depth: 0.27, width: 0.6, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35 },
     eye: { u: 0.17, v: -0.35, r: 0.03, iris: '#b05a3a', irisR: 0.98, pupil: 0.42, fleck: '#5a2010', fleckR: 0.8 },
-    mouth: { u: 0.13, v: 0.3, v0: 0.02, lining: 0.06 },   // large and oblique, the lower jaw projecting
+    mouth: { u: 0.13, v: 0.3, v0: 0.02, lining: 0.04 },   // large and oblique, the lower jaw projecting
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
       // From just behind the snout tip: run to the tip, where the body closes to a point, the stripes turn
