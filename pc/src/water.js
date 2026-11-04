@@ -2,7 +2,7 @@
 // drifting particles ("marine snow"), bubble column and the shimmering surface.
 import * as THREE from 'three';
 import { makeCanvas, range, mulberry32 } from './util.js';
-import { reefLightUniforms, REEF_LIGHT_GLSL, REEF_LIGHT_APPLY } from './reefLight.js';
+import { reefLightUniforms, REEF_LIGHT_GLSL, REEF_LIGHT_EVAL, REEF_LIGHT_APPLY } from './reefLight.js';
 
 export const waterUniforms = {
   uTime: { value: 0 },
@@ -302,7 +302,7 @@ function refractDir(I, eta) {
 // the BRDF stay correct. Chains with an existing onBeforeCompile (swim shader, tissue light).
 const LIGHTS_WITH_CAUSTICS = THREE.ShaderChunk.lights_fragment_begin.replace(
   'getDirectionalLightInfo( directionalLight, directLight );',
-  'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= causticAt( vCW );');
+  'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= causticAt( vCW ) * rlSunFor( directionalLight.direction );');
 
 export function addCaustics(mat) {
   const prev = mat.onBeforeCompile;
@@ -318,9 +318,10 @@ export function addCaustics(mat) {
         #endif
         vCW = (modelMatrix * cw).xyz;
       }`);
-    // ...and the baked reef light (reefLight.js) takes away the ambient water light a point cannot see.
+    // ...and the baked reef light (reefLight.js): soft sun shadows of the reef, the share of the water's
+    // ambient light a point can see, and the light the reef reflects onto it.
     shader.fragmentShader = 'varying vec3 vCW;\n' + CAUSTIC_LOOKUP_GLSL + REEF_LIGHT_GLSL
-      + shader.fragmentShader.replace('#include <lights_fragment_begin>', LIGHTS_WITH_CAUSTICS)
+      + shader.fragmentShader.replace('#include <lights_fragment_begin>', REEF_LIGHT_EVAL + LIGHTS_WITH_CAUSTICS)
         .replace('#include <aomap_fragment>', REEF_LIGHT_APPLY);
   };
   mat.customProgramCacheKey = () => (prevKey ? prevKey() : '') + '|caustic';

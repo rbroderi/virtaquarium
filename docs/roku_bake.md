@@ -17,53 +17,81 @@ so anything that changes the PC lighting or layout has to be mirrored in `bake.j
 | Item | `main.js` | `bake.js` today |
 |---|---|---|
 | Reef layout | `buildReef(scene, TANK_W, SEED, scenery)` | same call ✓ |
-| Baked reef light | `bakeReefLight(renderer, reef)` right after `buildReef` | **missing**: add it (see below) |
+| Baked reef light | `bakeReefLight(renderer, reef, {...})` right after `buildReef` (options below) | **missing**: add it |
 | Hemisphere light | `0.75 × k` with the reef light on (`1.0` without) | `1.0`: change to `0.75` |
 | Environment intensity | `0.35 × 0.75 × k` with the reef light on | `0.35`: change to `0.2625` |
-| Sun | `DirectionalLight(0xfff2dc, 2.65)` at `(3, 22, 7)`, 2048² PCF soft shadows | same ✓ |
+| Sun | `DirectionalLight(0xfff2dc, 2.65)` at `(3, 22, 7)` | same ✓ |
+| Sun shadows | reef shadows baked; live map (VSM, radius 6) has the fish only | PCF soft with the reef: fine until the bake call is added (the call turns reef `castShadow` off) |
 
 `k = 1` at full daylight.
 
-## Baked reef light (`pc/src/reefLight.js`, added 2026-11-04)
+## Baked reef light (`pc/src/reefLight.js`, updated 2026-11-04)
 
 The reef used to look cut out, like a bad blue screen. Rocks and corals were lit almost evenly from every
-side, so nothing darkened in crevices, under overhangs or where things meet the sand. The sun shadows were
-there, but the flat ambient light washed them out.
+side, so nothing darkened in crevices, under overhangs or where things meet the sand.
 
-`bakeReefLight(renderer, reef)` fixes this by ray casting the static reef's view of the open water.
-- **Grid:** a 3D grid of points every 0.1 units covers the reef.
-- **Rays:** each point casts rays in 256 directions (a Fibonacci sphere). For each direction the reef is
-  drawn once into a depth map, which tests every point's ray at once.
-- **Stored data:** each point keeps the fraction of rays that reach open water and the mean open direction
-  (L1 spherical harmonics). That gives the visibility for any surface normal, weighted by the angle the light
-  arrives at.
-- **Who uses it:** every lit material that goes through `addCaustics` (`water.js`) multiplies its ambient
-  light (hemisphere and environment) by that visibility. That covers the reef, the sand and the fish, so fish
-  also darken under overhangs.
-- **Bounce:** rock that blocks a ray still returns 18% (`uRLBounce`).
-- **Sun:** keeps its real-time shadow map.
-- **Cost:** about 150 ms on the GPU, with no read-back. The result is a half-float atlas of z slices in
-  `reefLightUniforms`.
-- **Toggles:** `?reeflight=0` turns it off, and `L` toggles it live for A/B comparison.
+The reef doesn't move, so it's lit once at load by ray casting on the GPU, and the live renderer only adds
+what the fish change. For each ray direction the reef is drawn into depth maps looking back along it, which
+tests every point's ray at once. Three terms are baked:
+
+- **Sun:** soft shadows from a light of finite size. 64 directions over a 0.1 rad cone around the sun are
+  averaged, so shadows are sharp where a rock meets the sand and soften with distance.
+- **Sky:** the share of the water's diffuse light (hemisphere and environment) each point can see, weighted
+  by the angle it arrives at for that point's normal (256 directions).
+- **Bounce:** light the reef reflects onto each point, in colour, two bounces deep (192 directions per
+  bounce). For every ray that hits rock, the baker finds the face looking back along the ray (a back-face
+  depth map), its albedo (an albedo render), and how brightly that face is lit (its own sky and sun terms,
+  plus the previous bounce).
+
+Each term is stored twice:
+
+- **Per pixel from the camera's rest view** (2048 wide, field of view 15% wider than the camera's). Reef
+  fragments find their pixel by projecting into the rest view. Where the camera's drift reveals something the
+  bake didn't see, a depth check fails and the grid is used instead.
+- **In a 3D grid** every 0.1 units around the reef (L1 spherical harmonics, so any normal can look it up).
+  Fish use the grid: they darken, and pick up reef colour, under ledges and in caves.
+
+Live, every material that goes through `addCaustics` applies:
+- sun visibility on the key light only (the LED rig's fills stay unshadowed);
+- sky visibility on the ambient light;
+- the bounce on top;
+- specular occlusion (80% of the sky term on reflections).
+
+A half-resolution screen-space AO pass, built from the previous frame's depth with a depth-aware blur, adds
+fine contact shading between fish and rock and between fish, on ambient light only.
+
+- **Cost:** the bake takes about a second.
+- **Toggles:** `?reeflight=0` turns it off. `L` toggles it live for A/B comparison (off brings back the live
+  reef shadows).
+- **Debug views:** set `reefLightUniforms.uRLDebug` to 1, 2 or 3 to show the sun, sky or bounce term on its
+  own.
 
 ### To get it in the Roku backdrop
 
-In `bakeScenery`, straight after `buildReef(...)`:
+The per-pixel bake is made from the camera you pass in. Pass the bake's camera, and the backdrop gets
+per-pixel soft shadows, ambient occlusion and bounce light: as close to path traced as this approach gets.
 
 ```js
 import { bakeReefLight } from './reefLight.js';
 // ...
 const reef = buildReef(scene, TANK_W, seed, await loadScenery());
-bakeReefLight(renderer, reef);
+bakeReefLight(renderer, reef, {
+  sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
+  sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(0.75),
+  ground: new THREE.Color(0x8a7458).multiplyScalar(0.75),
+  camera,   // the backdrop camera: (0, 4.6, 15) looking at (0, 3.9, 0)
+});
 ```
 
 Then set the hemisphere light to `0.75` and the environment to `0.35 * 0.75`, as in the table above.
 
 - `reefLightUniforms` is module-global, so the last call wins. Call it once per scenery, before that
-  scenery's renders. The foreground pass reuses the same grid, which is fine because hiding meshes doesn't
+  scenery's renders. The foreground pass reuses the same bake, which is fine because hiding meshes doesn't
   change what was baked.
-- The fish sprite bake has no reef, so it needs no grid. With `uRLOn` at 0 the lookup returns 1, so sprites
-  are unaffected.
+- The fish sprite bake has no reef. With `uRLOn` at 0 every lookup returns "unoccluded", so sprites are
+  unaffected.
+- The baker sets the reef's `castShadow` to false afterwards, because its shadows are now baked. The water
+  frames (`bakeWater`) still get the fish-free scene, so nothing else changes.
 - Check that `renderer.capabilities.maxTextureSize` is at least 2048 in the bake browser. The baker makes the
   grid coarser if the atlas wouldn't fit.
 
@@ -116,5 +144,7 @@ are exported. If the Roku side has its own copy of the height field, regenerate 
 
 ## Log
 
+- 2026-11-04: baked reef light v2: soft area-light sun shadows, coloured two-bounce light and a per-pixel
+  rest-view bake; the bake call now takes options (see above).
 - 2026-11-04: baked reef light added (PC). Bake needs `bakeReefLight` plus the light changes above. Rock
   order fixed, so rebake. Moray caves added to the layout, then moved to sites the camera can see into.

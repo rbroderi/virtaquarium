@@ -14,7 +14,7 @@ import { UI } from './ui.js';
 import { loadTank } from './tank.js';
 import { PhotoCamera } from './photo.js';
 import { LightRig } from './rig.js';
-import { bakeReefLight, reefLightUniforms } from './reefLight.js';
+import { bakeReefLight, reefLightUniforms, ScreenAO } from './reefLight.js';
 
 const params = new URLSearchParams(location.search);
 fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
@@ -82,8 +82,21 @@ if (customModels.length) console.info('Using GLB models for:', customModels.join
 const scenery = await loadScenery();
 if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
 const reef = buildReef(scene, TANK_W, SEED, scenery, CAM_BASE);
-// Ray-cast the static reef's view of the open water once (?reeflight=0 to compare; L toggles it).
-if (params.get('reeflight') !== '0') bakeReefLight(renderer, reef);
+// Light the static reef once by ray casting (reefLight.js): soft sun shadows, ambient occlusion and
+// coloured bounce light, per pixel from the camera's rest view and in a grid for the fish.
+// ?reeflight=0 to compare; L toggles it.
+const ao = new ScreenAO(renderer);
+if (params.get('reeflight') !== '0') {
+  rig.apply(1);   // baked at full daylight; the live light level scales it
+  bakeReefLight(renderer, reef, {
+    sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
+    sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(0.75), ground: hemi.groundColor.clone().multiplyScalar(0.75),
+    camera,
+  });
+  // Only the fish cast live shadows now; soft ones, as from a broad light through moving water.
+  renderer.shadowMap.type = THREE.VSMShadowMap;
+  sun.shadow.radius = 6; sun.shadow.blurSamples = 12;
+}
 const snow = new MarineSnow(scene, TANK_W * 1.4, rng);
 const bubbles = new Bubbles(scene, reef.bubbler, rng);
 const surface = makeSurface(TANK_W);
@@ -148,6 +161,7 @@ function applyLight(l) {
   // and let the shadows read (without the bake, the old balance).
   const amb = reefLightUniforms.uRLOn.value ? 0.75 : 1.0;
   hemi.intensity = amb * k;
+  reefLightUniforms.uRLLight.value = k;
   hemi.color.setRGB(lerp(0.30, 0.86, l), lerp(0.45, 0.92, l), 1.0);   // moonlight is bluer
   scene.environmentIntensity = 0.35 * amb * k;
   waterUniforms.uCaustic.value = l;
@@ -166,7 +180,10 @@ let t = 0, nextFeed = FEED_MIN > 0 ? 45 : Infinity, paused = false;
 window.addEventListener('keydown', (e) => {
   if (e.key === ' ') paused = !paused;
   if (e.key === 'n' || e.key === 'N') light = light > 0.5 ? 0 : 1;
-  if ((e.key === 'l' || e.key === 'L') && reefLightUniforms.uRLRes.value.x > 1) reefLightUniforms.uRLOn.value ^= 1;
+  if ((e.key === 'l' || e.key === 'L') && reefLightUniforms.uRLRes.value.x > 1) {
+    const on = (reefLightUniforms.uRLOn.value ^= 1);
+    reef.group.traverse((o) => { if (o.isMesh) o.castShadow = !on; });   // off: live reef shadows again
+  }
 });
 
 function frame() {
@@ -204,9 +221,12 @@ function frame() {
 frame();
 
 function present() {
-  if (!photo) { water.render(scene, camera, sun); return; }
-  water.render(scene, camera, sun, photo.begin());
-  photo.finish(water.target.depthTexture, camera, t);
+  if (!photo) water.render(scene, camera, sun);
+  else {
+    water.render(scene, camera, sun, photo.begin());
+    photo.finish(water.target.depthTexture, camera, t);
+  }
+  if (reefLightUniforms.uRLOn.value) ao.update(water.target.depthTexture, camera);   // read by the next frame
 }
 
 // Autofocus on the fish nearest the middle of the frame, as a camera's centre AF point would.
