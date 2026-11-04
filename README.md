@@ -76,7 +76,21 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
 - **Fins**: each fin is a 3D membrane meshed along its rays and fan-folded, with rays on alternate ridges and valleys. That gives real relief and broken-up highlights. The membrane is a thin pigmented film, and its jointed rays are more opaque than the membrane. Pectorals are pleated and slightly cupped.
 - **Eyes**: iris stroma, limbal ring and lens pupil under a clear cornea. They are baked into fish space so they move with the swimming head.
 
-Inspect any species up close at <http://localhost:8080/pc/lab.html?sp=clownfish>. Use `sp=all` for a lineup, and `yaw` or `swim=0` to pose it.
+Inspect any species up close at <http://localhost:8080/pc/lab.html?sp=clownfish>. Use `sp=all` for a lineup, and `yaw` or `swim=0` to pose it. The toolbar also switches the light rig (`rig=sun|led`) and tone mapping (`tone=aces|neutral|agx|none`), and **screenshot** saves what is on screen as a PNG.
+
+### Comparing against reference photos
+
+Tick **reference** (or use `&ref=1`) to lay a real photo over the render and measure the difference. This is phase 0 of [docs/photoreal-fish-plan.md](docs/photoreal-fish-plan.md).
+
+1. Drop a side-on photo onto the lab page, or try any image with `&refimg=<url>`. Tick **mirror** if the fish faces left.
+2. Match the pose: **yaw** in the main bar, plus **pitch**, **fov** and the sun direction (**az**/**el**, relative to the view).
+3. Pick the **outline** tool and click around the fish (Backspace removes a point). Pick **patch** to mark named colour samples, such as body, band or fin margin.
+4. Click **align** to scale and move the photo so its outline matches the render's silhouette, then **measure**:
+   - **silhouette IoU** (target ≥ 0.97), mean and max boundary distance, and how much of the render lies outside the photo and vice versa. The render's edge is drawn in cyan, the traced outline in yellow.
+   - **CIEDE2000** for each colour patch, photo vs render, both in the colours on screen (target ≤ 5). The render is sampled at the same anatomical spot: the same fraction of length from the snout and of the local top-to-bottom height. The sample then snaps to the nearest area of the same kind (white band, black margin or colour), so a misplaced band is compared as a band. How far it had to move is reported separately, as a percentage of length. Dashed cyan circles show where the render was sampled.
+5. Click **save** to copy the photo and `refs.json` into `pc/ref/<species>/`. Next time, `&ref=1` reloads them and aligns automatically.
+
+The render's silhouette is a coverage mask: the scene is drawn over black and over white, so translucent fins count only where they hide at least half the background. **wipe**, **blend**, **photo** and **render** choose how the photo is shown. Drag to pan the photo and use the mouse wheel to zoom.
 
 ## Using Tripo3D models (studio.tripo3d.ai)
 

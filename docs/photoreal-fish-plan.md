@@ -1,0 +1,134 @@
+# Photoreal Fish Plan
+
+Goal: every fish in the tank reads as the real species in shape, colour and motion, so a still frame could pass for an underwater photo. This plan is grounded in what the code does today; line references are to the tree as of 2026-11-03 (`pc/src/...`).
+
+## 0. Summary and recommendation
+
+- **Asset strategy: hybrid, procedural-first.** Keep the procedural pipeline as the single source of truth, but drive it from *measured anatomy* (a per-species landmark/meristic file) and *photo-derived colour*. Use Tripo (image/multiview-to-model) as a sculpt reference and, where a species' head is too complex to loft (lionfish, triggerfish), as a body-only mesh that is straightened and re-fitted to the measured landmarks while fins, eyes and skin shading stay procedural. Reasons in section 2.
+- **No skeletal rig.** Replace the z-shear in `swimDisp` (`fishModel.js:599-608`) with a uniform-driven *spine-curve deformation* (rotated cross-sections, arc-length preserved) plus a per-fin deformation shader. This keeps `bake.js:50-62 pose()` working (it only sets uniforms and pectoral pivots) and works for GLB bodies too.
+- **The biggest single visual wins, in order:** (1) silhouette from landmarks, (2) fin membranes/rays/margins, (3) specular model corrected for *in-water* Fresnel (today's clearcoat/sheen is the main reason the fish look like painted plastic), (4) eye construction, (5) colour pipeline (albedo from photos, Neutral tone mapping, caustics on fish), (6) motion (spine curve, caudal pitch, pectoral feathering).
+- **Honest ceiling:** real-time WebGL raster will not fool a close-up at lab zoom. "Indistinguishable" is attainable for a *full-tank 1080p frame* where a fish is 100-300 px long, and for the lab at moderate magnification. Plan the validation around those framings.
+- **Pilot:** clownfish (reference photos abundant, simple pattern, labriform + hovering, already has a Tripo comparison). Then chromis (12 of them on screen, forked tail, iridescence) and yellow tang (disc body, tall fins).
+
+## 1. Gap assessment, ranked by visual impact
+
+What the code does today vs what a photo shows. Ranked by how much each item contributes to "that is not a real fish".
+
+| # | Area | Today (code) | Why it fails the photo test | Impact |
+|---|---|---|---|---|
+| 1 | **Silhouette / proportions** | `makeProfile` (`fishModel.js:12-32`) builds the side outline from two power curves (`sin^headP` head, `cos^tailP` tail) symmetric about a midline plus a `hump` sine (`:28-29`). Width is `half(u) * width * (1.15 - 0.55u)` (`:26`). Cross-section is a superellipse with small bumps for gill cover and eye socket (`bodyGeometry`, `:696-707`). | Real fish outlines are not symmetric power curves: the clownfish has a convex nape rising steeply to the dorsal origin, a nearly straight dorsal fin base, a deeper belly line, a concave snout profile above the mouth, a distinct caudal peduncle, and a head that is wider than the parameterised width taper. The egg shape is a direct consequence of `half(u)` being the same for top and bottom. Species params (`species.js:15`, `:36`, ...) are eyeballed, not measured. | Highest |
+| 2 | **Fins: translucency, rays, margins** | One midline sheet for dorsal/anal/caudal painted at 1024 px (`paintFins`, `:323-455`), membrane alpha ~0.9 (`:374-376`), 10-20 rays regardless of species (`:383`), margin stroke `(edgeW\|\|0.02)*0.6` clipped to the inside so only ~0.0065 units (~0.5 mm on an 8 cm fish) shows (`:395-403`). Pectoral is a 256x128 blob with 10 straight rays (`paintPectoral`, `:457-502`) on a flat plane (`pectoralGeometry`, `:536-549`). Pelvic fins are not paired (clownfish "bottom" fin at `species.js:26` is on the midline). Custom GLB fins are opaque, part of the body mesh (`buildCustomModel`, `:839-860`). | Real fins: species-specific ray counts (clownfish D XI,15-17; A II,11-13; P 16-18), rays branch distally, membrane between rays is thinner and more transparent towards the margin, the clownfish black margin is ~2-3% TL wide (4x what is drawn), pectorals/pelvics are paired and fan-shaped with their own ray fans. | High |
+| 3 | **Skin specular / mucus / scales** | `MeshPhysicalMaterial` with `roughness 0.42, clearcoat 0.5, clearcoatRoughness 0.35, sheen 0.3, iridescence 0.35` for every species (`:876-881`); GLB gets `clearcoat 0.45` (`:851`). | The fish is *in water*. The mucus/water interface has n 1.33 -> ~1.38, so F0 ~ 0.0003: surface specular on a submerged fish is almost nil. What reads as "shine" in underwater photos is guanine iridophore reflection (directional, in scale rows) and the odd strobe hotspot. three.js computes Fresnel for air (F0 = 4% at IOR 1.5, plus clearcoat 4%), so the fish gets a milky, plastic sheen that desaturates the orange. This is the single most physically wrong thing in the material. | High |
+| 4 | **Eye** | Radius 0.045 TL (`species.js:16`) which is actually close to the real ED/SL ~0.10-0.12. The cartoon look comes from construction: a 256 px bright iris disc with radial fibres and a 44% pupil (`paintEye`, `:555-573`), eyeball protruding ~0.4r from the flank (`eyeGeometry`, `:580-585`, z-scale 0.45 at surface*0.97), an orbit shadow ring at 1.5r (`:184-192`), a socket bulge 1.6r wide (`:704-705`), and clearcoat 1 / IOR 1.38 in-air Fresnel (`:914-916`). | Real clownfish eye: pupil ~55-65% of visible eye, dark; iris a narrow orange/gold ring; cornea flush with the head with a slight bulge; no dark halo; highlight only from the lamp. | High (eyes are where viewers look first) |
+| 5 | **Colour under underwater light** | Albedo from hand-picked hex ops (`species.js:18` clownfish `#f06e12 -> #f7a050`), then multiply countershading + screen belly + 70 mottling blobs (`:141-158`), then ACES tone mapping (`main.js:25`), underwater white balance `UW_WB = exp(KD*7)` (`water.js:85`), env 0.35. No caustic light on fish (`addCaustics` is only used by `reef.js:82`). Fish `castShadow` only, never `receiveShadow` (`fish.js:38`). | Peach colour = pastel belly stop + screen lightening + sheen + ACES desaturation of saturated orange. Photos show saturated orange all over, slightly darker dorsally, with caustic ripples and the dorsal fin's shadow on the flank. | Medium-High |
+| 6 | **Body wave kinematics** | `swimDisp` (`:599-608`): z += uAmp * (0.025 + s^2*0.16) * sin(uPhase + 5.5x); nothing moves for x > 0.3 (nose fixed), wavelength 2pi/5.5 = 1.14 BL, pure shear (no rotation of cross-sections, no length preservation, caudal blade does not pitch), turn bend is a quadratic shear (`:606`). Frequencies from Strouhal are good (`fish.js:131-135`). | Carangiform/subcarangiform: wavelength ~0.9-1.0 BL, head yaw (recoil) 0.02-0.04 BL at the snout, amplitude envelope quadratic from ~0.03 at head to 0.1 BL at tail tip (0.2 BL peak-to-peak), caudal fin lags the peduncle by ~30-60 deg and pitches with the local tangent. Shearing without rotation makes the tail look like a flag, not a blade. | Medium |
+| 7 | **Pectoral / fin kinematics** | Pectorals are rigid planes rotated about a pivot (`fish.js:156-167`): yaw open/close + roll cos; same shape on power and recovery stroke. Median fins "flutter" is a sine on the sheet (`:605`). Hover mode in the brain (`brain.js:334-343`) only changes speed; the body still idles the tail (`fish.js:134-138`). | Labriform rowing (pomacentrids): fin abducts broadside on the power stroke, feathers (chord aligned, rays bent) on recovery; chord-wise bending wave base to tip; 1.5-4 Hz; at hover, alternating sculling with pelvic fanning and no tail beat. Balistiform: dorsal/anal travelling wave of ~1 fin-base wavelength, 2-6 Hz. | Medium |
+| 8 | **Camera / water / lens** | Perspective 40 deg (`main.js:41`), single sun + hemi + PMREM env, PCF shadows, ACES, no DOF, no grain, no lens effects. Lab uses 30 deg (`lab.js:30`). | Aquarium photos have a shallow-ish DOF, slight sensor noise, LED bar lighting from the top (soft terminator, no hard sun), caustics, backscatter. The clean, noise-free, infinitely sharp raster is itself a tell. | Medium (cheap to fix) |
+| 9 | **Head detail** | Mouth is a painted line (`:175-183`), no lips/nostril/operculum geometry beyond a 4.5% overhang (`:702-703`). | Photos show the operculum edge, preopercle, lips, and a nostril. At tank framing these are 1-3 px and matter little; at lab zoom they matter. | Low-Medium |
+
+## 2. Asset strategy decision
+
+**A. Pure procedural, better tuned.** Keeps everything deterministic, tiny on disk, bake-safe, 12 species x N individuals cheaply. Ceiling: a loft from analytic curves cannot reproduce head topology; species like lionfish (spine fans, tentacles) and triggerfish (ridged head) would stay cartoonish.
+
+**B. Fully generated/captured meshes (Tripo).** Better colour out of the box and some anatomical detail, but (observed) twisted bodies, opaque blob fins, eyes wrong, inconsistent UVs, no fin separation, no control over proportions, and the swim shader can only shear an unrigged mesh. Photo-fidelity of textures is actually a *downside*: baked lighting/noise that cannot be relit. Also ~650 credits = ~20 models; no iteration budget.
+
+**C. Hybrid (recommended).**
+- *Mesh:* procedural loft driven by a per-species **anatomy file** (landmarks, outlines, meristics). Replace `makeProfile`'s two power curves with separate dorsal and ventral outline splines sampled from the anatomy file, and a measured width profile; keep `bodyGeometry`'s ring loft. This fixes item 1 for every species at once.
+- *Colour:* albedo painted from a **reference photo projected into the body UV** (the skin UV is already cylindrical `u` along the body and `v` around the section, `fishModel.js:715`; a side-on photo maps onto `v in [-1,1]` by the landmarked outline), then procedural layers (scales, lateral line, countershading) over it. Keep the op list as fallback.
+- *Fins, eyes, mucus/specular, tissue:* procedural (they are the parts generation gets worst, and they must be separate meshes for motion and transmission).
+- *Tripo:* use **image-to-model / multiview-to-model** from the same reference photos as a 3D sculpt reference in the lab (`compare=1`), and as an optional body source for hard heads, after a **de-twist** step added to `normaliseModel` (`:815-837`): slice the mesh along x, compute per-slice centroid and principal axis, fit a smooth low-order curve and subtract it, so the body is straight before the swim shader bends it.
+
+Trade-offs: C costs the most code in `fishModel.js` but gives one pipeline that renders identically in `main.js`, `lab.js` and `bake.js`, needs no rig, and scales to the Roku bake unchanged (`bake.js:65` calls the same `buildFishModel`). The unrigged-GLB limitation stays a limitation: only use GLB bodies when fins are cut off (Blender) or masked at load.
+
+## 3. Reference data and how to encode it
+
+### 3.1 Sources
+- **FishBase** (fishbase.se): per species "Morphometrics" (SL/TL, HL, body depth, eye diameter, pre-dorsal/pre-anal/pre-pelvic lengths as fractions of SL) and "Meristics" (fin ray formulae). Approximate formulae to seed the files — **verify on FishBase before use**: clownfish D X-XI,15-17 / A II,11-13 / P 16-18 (rounded caudal); blue tang D IX,19-20 / A III,18-19; yellow tang D V,23-26 / A III,19-22; Moorish idol D VII,39-43 / A III,31-37; lionfish D XIII,10-11 / A III,6-7 / P 14; copperband D IX,28-30 / A III,19-21; royal gramma D XII,10 / A III,10; clown trigger D III + 25-27 / A 21-23; emperor angel D XIV,20-22 / A III,20; longnose D XII,22-24 / A III,17-18; chromis D XII,9-11 / A II,9-11; coral beauty D XIV,16-18 / A III,17-18.
+- **Monographs with lateral outlines and measurements:** Allen 1991 *Damselfishes of the World* (Amphiprion, Chromis); Randall 2005 *Reef and Shore Fishes of the South Pacific*; Fautin & Allen *Anemonefishes*; Michael *Reef Fishes* vol. 1-3; Kuiter *Butterflyfishes/Angelfishes*. Landmark-based morphometrics papers (e.g. on anemonefish shape) give landmark schemes.
+- **Colour:** Marshall 2000 (Phil. Trans. R. Soc. B 355) reflectance spectra of reef fish colours, including Amphiprion orange and white. For practical targets use 5-10 reference photographs per species with a stated or inferable white balance (aquarium LED, or a grey card where possible); prefer own photos with a ColorChecker in the tank if possible.
+- **Kinematics:** Videler 1993 *Fish Swimming*; Bainbridge 1958 (A = 0.2 L); Taylor, Nudds & Thomas 2003 (St 0.2-0.4); Videler & Hess 1984 (amplitude envelope); Walker & Westneat 1997/2002 (rowing vs flapping, labriform pectoral kinematics); Drucker & Lauder 1999-2003 (pectoral wake, stroke phases); Fulton 2007 (labriform gait transitions on reefs); Blake 1983 (balistiform); Standen & Lauder 2005 (dorsal/anal fin use); Lauder & Madden 2007 (fin-ray bending); Webb 1984 (modes).
+
+### 3.2 Per-species anatomy file (new: `pc/anatomy/<id>.json`)
+```jsonc
+{
+  "SL_over_TL": 0.82,
+  "head":   { "HL_over_SL": 0.34, "ED_over_HL": 0.30, "eye_u": 0.11, "eye_v": -0.30, "snout_over_HL": 0.25, "mouth_v": 0.06 },
+  "body":   { "BD_over_SL": 0.53, "BW_over_BD": 0.45, "ped_depth_over_SL": 0.14 },
+  "outline": { "dorsal": [[u,v],...], "ventral": [[u,v],...], "width": [[u,w],...] },   // digitised at ~2% SL spacing from a side-on and a dorsal photo
+  "fins": {
+    "dorsal":   { "origin_u": 0.33, "end_u": 0.95, "spines": 11, "rays": 16, "height": [[t,h],...], "margin": { "color": "#111", "width_TL": 0.025 } },
+    "anal":     { "origin_u": 0.62, "end_u": 0.94, "spines": 2, "rays": 12, "height": [...] },
+    "pectoral": { "u": 0.31, "v": 0.12, "rays": 17, "len_over_SL": 0.26, "shape": "fan" },
+    "pelvic":   { "u": 0.36, "v": 0.70, "spines": 1, "rays": 5, "len_over_SL": 0.20 },
+    "caudal":   { "shape": "rounded", "rays": 15, "len_over_SL": 0.22, "spread_over_SL": 0.30 }
+  },
+  "scales":  { "lateral_line": 34, "type": "ctenoid" },
+  "pattern": { "photo": "ref/clownfish/side_01.jpg", "landmarks_px": [...], "ops": [...] }
+}
+```
+`species.js` keeps temperament and swim mode; `body/eye/fins/caudal/pectoral` there become derived from the anatomy file (or the file wins when present). Landmarks map to the existing `(u, v)` body-space convention documented at `species.js:3-5`.
+
+## 4. Rendering upgrades (three.js r170, WebGL2)
+
+1. **In-water specular.** In `buildFishModel` (`fishModel.js:876-881`): `clearcoat` 0 (or <=0.08), `sheen` 0, `specularIntensity` ~0.05, `roughness` map (scale centres smoother than margins). Move the shine into `iridescence` driven by the existing `iridTex` with `iridescenceThicknessRange` per species, and add `anisotropy` (`MeshPhysicalMaterial.anisotropy`/`anisotropyMap`) aligned with scale rows so guanine highlights streak along the flank. Same for GLB bodies (`:851`) and the eye (`:914-916`: clearcoat off, highlight from the light only).
+2. **Albedo pipeline.** New `paintSkinFromPhoto(sp, prof, photo, landmarks)` that warps the reference photo into the 2048x1024 skin canvas (`TW/TH`, `:41`) by landmark correspondence (piecewise-affine warp between the photo's outline and `prof.top/bot`), mirrors to the far side, inpaints the dorsal ridge from the dorsal photo, then applies the existing scale/lateral-line passes (`:194-234`). Convert photo sRGB to linear and divide out an estimated shading term (render the current model with a white albedo under a matching light and divide) to get a de-lit albedo. Keep `pattern` ops for species without photos.
+3. **Tone mapping and WB.** Switch `main.js:25`, `lab.js:13`, `bake.js:34` to `THREE.NeutralToneMapping` (hue-preserving; saturated orange survives) or `AgXToneMapping`; tune `UW_WB` (`water.js:85`) against the reference photos' white band.
+4. **Caustics and shadows on fish.** Chain `addCaustics` (`water.js:30-61`) onto the body material (it wraps an existing `onBeforeCompile` and cache key, `:32-33, :59`), with strength ~0.6 and the caustic coordinate taken after the swim displacement (`fishModel.js:677-679`). Set `receiveShadow = true` on body and fins in `fish.js:38` so the dorsal fin shadows the flank; raise `sun.shadow.normalBias` for the thin fins if acne appears.
+5. **Fins.** Fin sheet to 2048 wide (`:330`); rays from the anatomy file with dichotomous branching after ~55% of ray length; membrane alpha profile from base (0.85) to margin (0.45) for pigmented fins, 0.35 to 0.15 for clear fins; margin width from `margin.width_TL`; use `alphaToCoverage: true` with MSAA instead of `alphaTest 0.01` (`:883, :889`) for clean edges; keep `TISSUE_GLSL` transmission (`:617-644`) which already gives backlit glow. Add paired **pelvic** meshes (same code path as pectorals with their own pivots). Pectoral/pelvic geometry meshed on rays like `finMesh` (`:509-533`) instead of a `PlaneGeometry` (`:539`), so ray count, fan angle and cupping come from data.
+6. **Eyes.** Rebuild `paintEye` (`:555-573`): pupil 0.6 of the visible disc, iris a thin ring with the species colour, no radial fibre overlay stronger than 5%; `eyeGeometry` (`:576-587`) flush with the flank (centre at surface - 0.1r, z-scale ~0.6, corneal bulge only), remove the orbit shadow ring (`:184-192`) and shrink the socket bulge (`:704-705`) to 1.1r. Eye texture 512 px. Optional: separate clear cornea sphere with `transmission` only in the lab.
+7. **Lighting rig.** Aquarium LED bar: replace the single sun with a shadow-casting key from above-front plus two non-shadow directionals along the bar (or a `RectAreaLight` for the gradient), so the terminator is soft and the belly is lit by sand bounce (hemi already). Expose the rig as a preset in both `main.js:48-59` and `lab.js:24-28` so they match.
+8. **Camera response (cheap, large effect).** `EffectComposer` + `BokehPass` (in `three/examples/jsm/postprocessing/`) with a focal distance at the fish and small aperture; a final pass adding ~1% luminance grain and <=0.5 px chromatic aberration; mild vignette. Keep it optional (`?photo=1`) for performance; the bake renders with it off (sprites are composited later).
+9. **Texture budget.** Skin 2048x1024 sRGB + 1024x512 normal + iridescence/roughness/anisotropy packed into one 1024x512 RGBA; fin sheet 2048xH; pectoral/pelvic 512x256; eye 512. Per species ~30 MB GPU at most; 12 species fits.
+
+## 5. Motion upgrades (biomechanics) and rig decision
+
+**No skeleton.** Replace the x-dependent shear with a *spine curve* evaluated in the vertex shader from uniforms: midline lateral offset `h(x,t) = A(x) sin(k x - omega t)` with `A(x) = a0 + a1 x' + a2 x'^2` (x' from nose), tail-tip amplitude 0.1 BL (`TAIL_AMP 0.2` peak-to-peak in `fish.js:24` is already right), head amplitude 0.02-0.04 BL, wavelength 0.9-1.0 BL for carangiform-ish bodies (clownfish, chromis, gramma), 0.7-0.8 for subcarangiform, plus a turn term that is a curvature (constant-curvature arc) rather than quadratic shear. Each vertex is moved into the local frame of the curve at its x (tangent, normal): position = curve(x) + y*N + z*B. This rotates cross-sections so the caudal blade pitches and the body keeps length. Still uniform-driven, so `bake.js pose()` keeps working (it will need the new uniform names).
+
+**Caudal fin:** separate ray-meshed fin with its own phase lag uniform (peduncle-to-fin lag ~30-60 deg) and spread that scales with tail amplitude; dorsoventral cupping on the stroke.
+
+**Pectorals (labriform):** per-fin deformation shader: stroke plane tilted ~50-70 deg, abduction/adduction sweep 60-90 deg, chord-wise bending wave base to tip, and *feathering* on recovery (rotate chord to the flow, reduce area via ray collapse). Frequency 1.5-4 Hz at cruise (keep `fish.js:153`), amplitude from thrust share. Turning: outside fin extended as a brake, inside fin folded (`fish.js:163-165` has the asymmetry hook).
+
+**Hover:** when the brain is in `hover`/`rest`/`host` with speed < 0.2 BL/s, zero body wave (remove the 0.06 idle at `fish.js:134-138`), pectorals alternate sculling at 1-2 Hz with ~20 deg amplitude, pelvics fan, dorsal/anal ripple at low amplitude, small pitch oscillation; a 1-1.5 Hz opercular ventilation (scale the gill-cover ring vertices by a uniform) and occasional mouth gape give life in a still frame.
+
+**Balistiform:** dorsal/anal travelling wave with wavelength ~ fin base length and 2-6 Hz (`fish.js:146-149` sets frequencies; the shader needs amplitude confined to the fin and growing towards the margin).
+
+**Pose for stills:** most reference photos are of fish gliding with the body straight and pectorals half-open; the kinematics must have a convincing *straight* state (fins not rigidly flat, slight caudal flex).
+
+Files: `fishModel.js` (`SWIM_GLSL`, `makeSwimMaterial`, fin geometry), `fish.js` (drive new uniforms), `bake.js` (`pose()` uniform names), `lab.js` (kinematics readout).
+
+## 6. Validation: measuring "indistinguishable"
+
+Add to the lab (`lab.js`, `lab.html`):
+1. **Reference panel** `&ref=1`: loads `pc/ref/<id>/<n>.jpg` plus a sidecar JSON (estimated yaw/pitch, focal length, light azimuth/elevation, outline polygon, named colour patches). Poses the camera and light rig to match, shows render and photo side by side at equal framing, with a wipe/blend slider.
+2. **Silhouette overlay**: render the fish with a flat white `MeshBasicMaterial` override to an offscreen target, compare with the traced outline: IoU and max boundary distance in px. Target IoU >= 0.97 at the reference framing.
+3. **Colour patches**: sample mean colour of named patches on both images after the same tone mapping; report CIEDE2000. Target dE <= 5 on body orange, band white, fin margin, eye.
+4. **Kinematics readout**: on-screen tail-beat Hz, tail-tip amplitude/BL, pectoral Hz, Strouhal computed from the model, compared to the literature ranges per mode.
+5. **Blind A/B page** `pc/ab.html`: random pairs of 512 px crops (render vs photo, both down-scaled and lightly blurred to equalise sharpness), records guesses; target <= 60% correct over 40 trials for the user and one other person.
+6. **Bake check**: the clownfish bake must still produce a sheet; add a lab option to show one baked frame next to the live render.
+
+## 7. Phased roadmap (clownfish first)
+
+| Phase | What | Files | Effort |
+|---|---|---|---|
+| 0 Lab tooling — **done (2026-11-03)**, see `pc/src/labRef.js` and README "Comparing against reference photos". Clownfish references: 5 Commons photos in `pc/ref/clownfish/` with first-pass outlines and patches. Render-side patches are mapped by anatomical position and snapped to the nearest same-kind feature, so colour error and pattern-placement error are reported separately. Baseline (procedural clownfish): silhouette IoU 0.62-0.82; body orange dE 7-13 on the well-balanced photos; white bands render pinkish-grey (dE 11-26) and the head band sits 6-10% of length from the photo's | reference loader, overlay/wipe, silhouette IoU, colour patches, tonemap/light presets, screenshot export | `pc/src/lab.js`, `pc/lab.html`, new `pc/ref/clownfish/*` | 1-2 days |
+| 1 Anatomy-driven shape | `pc/anatomy/clownfish.json`; `makeProfile` -> spline outlines (dorsal/ventral/width) with landmark-derived head, nape, peduncle; eye size/placement from ED/HL; fins from ray counts/positions; paired pelvics; caudal from data | `fishModel.js` (`:12-32`, `:258-289`, `:687-749`), `species.js`, new anatomy file | 3-4 days |
+| 2 Skin and colour | in-water specular (clearcoat/sheen off, iridescence + anisotropy), photo-projected albedo tool in the lab, soft band edges, countershading toned down, caustics on fish, `receiveShadow`, Neutral tone mapping, WB check | `fishModel.js` (`:43-254`, `:876-881`), `main.js:25`, `lab.js:13`, `bake.js:34`, `fish.js:38` | 2-3 days |
+| 3 Fins and eyes | 2048 fin sheet, data-driven rays with branching, alpha profile, correct margin width, ray-meshed pectoral/pelvic, alphaToCoverage; eye rebuild | `fishModel.js` (`:323-502`, `:509-587`) | 2-3 days |
+| 4 Motion | spine-curve deformation shader, caudal lag/pitch, pectoral deformation with feathering, hover state, ventilation; update `pose()` | `fishModel.js` (`:592-683`), `fish.js`, `bake.js:50-62`, `brain.js` (hover/rest speed hints) | 3-5 days |
+| 5 Camera/post | DOF, grain, CA, vignette behind `?photo=1`; LED bar light rig preset shared by main and lab | `main.js`, `lab.js`, `water.js` | 1-2 days |
+| 6 Tripo hybrid (optional) | `tools/tripo.mjs`: add image/multiview-to-model (upload endpoint + `image_to_model`), de-twist in `normaliseModel`, fin masking at load; use for lionfish/trigger heads | `tools/tripo.mjs`, `fishModel.js` (`:815-860`) | 2-3 days, ~40-80 credits |
+| 7 Roll-out | anatomy files + photo albedo for the other 11 species; rebake Roku | anatomy files, `species.js` | 0.5-1 day per species |
+| 8 Validation gate | A/B page, IoU/dE targets, bake regression | `pc/ab.html`, `lab.js` | 1 day |
+
+Order rationale: 0 first so every later step is measurable; 1-3 give the still-frame wins; 4 is the biggest code change and benefits from the fins already being separate meshes with data-driven rays.
+
+## 8. Risks and open questions
+
+- **Reference photos and licensing:** the plan needs ~5-10 side-on, top and three-quarter photos per species with usable white balance. Own photos (with a grey card), or CC-licensed ones? Photo-projected albedo inherits the photo's lighting unless de-lit; budget time for that.
+- **Realism ceiling:** real-time WebGL will not match a macro photo at lab zoom. Agree the target framing (full tank at 1080p, fish 100-300 px) before investing in head micro-detail.
+- **Performance:** `MeshPhysicalMaterial` with iridescence + anisotropy + caustics + shadows on 20-30 fish, plus a DOF pass, may not hold 60 fps on integrated GPUs; keep the photo pass optional and profile after phase 2.
+- **Bake on SwiftShader:** heavier shaders bake slower; sprite resolution 144 px/unit (`bake.js:18`) discards most of the new detail anyway, so the Roku gain is mostly silhouette and colour.
+- **Alpha sorting:** more translucent fin meshes per fish (pectorals, pelvics, caudal) overlapping between fish will show sorting artefacts; `alphaToCoverage` mitigates, `transmission` does not scale.
+- **Tripo image-to-model** quality for fins/eyes remains poor; treat it as a reference, not a deliverable. Credits (~650) allow ~15-20 generations total.
+- **Scope:** do all 12 species need photo albedo, or is data-driven shape plus retuned ops enough for the small ones (chromis, gramma)?
+- **three.js version:** stay on r170/WebGL2 (TSL/WebGPU would allow nicer fin transmission but means rewriting every custom shader in `water.js` and `fishModel.js`).

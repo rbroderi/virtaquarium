@@ -1,8 +1,9 @@
 // Fish lab: inspect one species (or all of them) up close under the tank's lighting and water.
-// URL: lab.html?sp=clownfish&yaw=30&swim=0   or   lab.html?sp=all
+// URL: lab.html?sp=clownfish&yaw=30&swim=0   or   lab.html?sp=all   or   lab.html?sp=clownfish&compare=1
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
-import { buildFishModel, loadCustomModels } from './fishModel.js';
+import { buildFishModel, loadCustomModels, loadFishModel } from './fishModel.js';
+import { installReference } from './labRef.js';
 import { installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, waterUniforms } from './water.js';
 
 const params = new URLSearchParams(location.search);
@@ -39,6 +40,7 @@ async function generatedModel(id) {
 }
 
 let fish = [], yaw = Number(params.get('yaw') || 0), spin = params.get('spin') === '1', swim = params.get('swim') !== '0';
+let pitch = Number(params.get('pitch') || 0);   // camera elevation, degrees (positive looks down on the fish)
 let compare = params.get('compare') === '1', showing = 0;
 async function show(id) {
   const n = ++showing;
@@ -60,8 +62,13 @@ async function show(id) {
     scene.add(m);
     return m;
   });
-  const span = list.length === 1 ? list[0].size * 1.5 : cols * 1.3;
-  camera.position.copy(CENTRE).add(new THREE.Vector3(0, 0, span / (2 * Math.tan(THREE.MathUtils.degToRad(15))) * 0.9));
+  span = list.length === 1 ? list[0].size * 1.5 : cols * 1.3;
+  frameCamera();
+}
+let span = 1;
+function frameCamera() {
+  camera.updateProjectionMatrix();
+  camera.position.copy(CENTRE).add(new THREE.Vector3(0, 0, span / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 0.9));
   camera.lookAt(CENTRE);
 }
 
@@ -71,16 +78,36 @@ sel.value = params.get('sp') || 'clownfish';
 sel.onchange = () => show(sel.value);
 $('swim').checked = swim; $('swim').onchange = (e) => (swim = e.target.checked);
 $('spin').checked = spin; $('spin').onchange = (e) => (spin = e.target.checked);
+$('compare').checked = compare; $('compare').onchange = (e) => { compare = e.target.checked; show(sel.value); };
 $('yaw').value = yaw; $('yaw').oninput = (e) => (yaw = Number(e.target.value));
-const setLight = (l) => {
-  sun.intensity = 2.6 * l + 0.05; hemi.intensity = 0.12 + 0.88 * l; waterUniforms.uCaustic.value = l;
+// Light presets: 'sun' is the tank's single key light; 'led' previews an aquarium LED bar
+// (soft key from above-front plus two unshadowed fills along the bar).
+const fills = [-1, 1].map((s) => { const l = new THREE.DirectionalLight(0xf4f6ff, 0); l.position.set(s * 6, 20, 6); scene.add(l); return l; });
+let level = 1, preset = params.get('rig') || 'sun';
+const setLight = (l = level) => {
+  level = l;
+  const led = preset === 'led';
+  sun.intensity = (led ? 1.5 : 2.6) * l + 0.05;
+  for (const f of fills) f.intensity = led ? 0.7 * l : 0;
+  hemi.intensity = 0.12 + 0.88 * l; waterUniforms.uCaustic.value = l;
   scene.fog.color.copy(INSCATTER_DAY).multiplyScalar(0.06 + 0.94 * l);
   backdrop.material.uniforms.uBase.value.copy(scene.fog.color);
   renderer.toneMappingExposure = 1.25 * (0.45 + 0.55 * l);
 };
+// Sun direction in degrees relative to the view: az 0 = from the camera side, el 90 = straight down.
+const setLightDir = (az = 23, el = 70) => {
+  const a = THREE.MathUtils.degToRad(az), e = THREE.MathUtils.degToRad(el);
+  sun.position.set(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)).multiplyScalar(23);
+};
+setLightDir();
 $('light').oninput = (e) => setLight(e.target.value / 100);
+$('rig').value = preset; $('rig').onchange = (e) => { preset = e.target.value; setLight(); };
+const TONE = { aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, none: THREE.NoToneMapping };
+const setTone = (k) => { renderer.toneMapping = TONE[k] ?? TONE.aces; for (const m of fish) m.traverse((o) => { if (o.material) [].concat(o.material).forEach((x) => (x.needsUpdate = true)); }); };
+$('tone').value = params.get('tone') || 'aces'; $('tone').onchange = (e) => setTone(e.target.value);
+setTone($('tone').value);
 setLight(1);
-show(sel.value);
+await show(sel.value);
 
 const clock = new THREE.Clock();
 let t = 0;
@@ -92,4 +119,29 @@ function frame() {
   }
   const dt = Math.min(clock.getDelta(), 0.05);
   t += dt;
-  waterUniforms.uTi
+  waterUniforms.uTime.value = t;
+  if (spin) yaw = ((yaw + dt * 20 + 180) % 360) - 180;
+  for (const m of fish) {
+    m.rotation.set(THREE.MathUtils.degToRad(pitch), THREE.MathUtils.degToRad(yaw), 0);
+    const u = m.userData.uniforms;
+    u.uPhase.value = swim ? t * Math.PI * 2 * 2.2 : 0;
+    u.uFinPhase.value = swim ? t * Math.PI * 2 * 3 : 0;
+    u.uAmp.value = swim ? 0.6 : 0;
+    u.uFlutter.value = swim ? 0.6 : 0;
+    for (const p of m.userData.pects) {
+      const s = p.userData.side;
+      p.rotation.set(0, s * (m.userData.fan ? 0.9 : 0.5 + (swim ? 0.3 * Math.sin(t * 9) : 0)), 0);
+    }
+  }
+  renderer.render(scene, camera);
+}
+frame();
+window.lab = {
+  THREE, scene, camera, renderer, canvas, backdrop, show, fish: () => fish, species: () => sel.value,
+  setYaw: (v) => { yaw = v; $('yaw').value = v; }, setPitch: (v) => (pitch = v),
+  setSwim: (v) => { swim = v; $('swim').checked = v; }, setSpin: (v) => { spin = v; $('spin').checked = v; },
+  setFov: (v) => { camera.fov = v; frameCamera(); }, setLight, setLightDir, setTone,
+  // Render one frame now (e.g. right before reading pixels), with the pose applied.
+  render: () => { for (const m of fish) m.rotation.set(THREE.MathUtils.degToRad(pitch), THREE.MathUtils.degToRad(yaw), 0); renderer.render(scene, camera); },
+};
+installReference(window.lab);

@@ -1,3 +1,4 @@
 node_modules/
 *.key
 pc/models/scenery/src/
+pc/models/fish/src/

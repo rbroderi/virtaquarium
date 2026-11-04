@@ -9,7 +9,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || process.argv[2] || 8080);
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml',
+  '.json': 'application/json', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.svg': 'image/svg+xml',
 };
 
 export function startServer(port = PORT, onEvent = () => {}) {
@@ -19,8 +20,8 @@ export function startServer(port = PORT, onEvent = () => {}) {
     if (req.method === 'POST' && url.pathname === '/__save') {
       const rel = url.searchParams.get('path') || '';
       const dest = path.resolve(ROOT, rel);
-      // Only allow writing generated Roku assets and imported fish models.
-      const allowed = [path.join(ROOT, 'roku'), path.join(ROOT, 'pc', 'models')].some((d) => dest.startsWith(d + path.sep));
+      // Only allow writing generated Roku assets, imported fish models and lab reference photos.
+      const allowed = [path.join(ROOT, 'roku'), path.join(ROOT, 'pc', 'models'), path.join(ROOT, 'pc', 'ref')].some((d) => dest.startsWith(d + path.sep));
       if (!allowed) { res.writeHead(403).end(); return; }
       const chunks = [];
       req.on('data', (c) => chunks.push(c));
