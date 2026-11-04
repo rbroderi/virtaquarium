@@ -1,0 +1,48 @@
+{
+  "refs": [
+    {
+      "file": "bourjon_immature.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chelonia_mydas_immature.jpg",
+      "author": "Philippe Bourjon",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "immature, true side view swimming, all flippers; wild, Reunion"
+    },
+    {
+      "file": "hoobin_florida.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Sea_turtle_(Chelonia_mydas)_pool_in_Florida_Aquarium_Sea_Turtle_Rehab_Center,_Apollo_Beach,_Florida,_US,_on_21_March_2024_(07).jpg",
+      "author": "MatthewHoobin",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "small juvenile, side view in a rehab pool; turtle ~1/3 of frame, cyan water"
+    },
+    {
+      "file": "fallabrino_top.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Tortugaverde2.jpg",
+      "author": "Alejandro Fallabrino",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "juvenile, top view of carapace scutes, flippers spread"
+    },
+    {
+      "file": "linares_veracruz.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:SeaTurtleVeracruz.JPG",
+      "author": "AlejandroLinaresGarcia",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "top-down view in a tank, scutes and 4 flippers; cyan cast; age not stated"
+    }
+  ]
+}

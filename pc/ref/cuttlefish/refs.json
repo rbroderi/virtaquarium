@@ -1,0 +1,48 @@
+{
+  "refs": [
+    {
+      "file": "carvalho_side.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:HPIM1795.JPG",
+      "author": "João Carvalho",
+      "license": "CC BY-SA 2.5",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "true side view on black: body, mantle fin, arms, zebra pattern"
+    },
+    {
+      "file": "marrone_night.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:A_Cuttlefish_on_a_night_hunt.jpg",
+      "author": "AlessioMarrone",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side view on black, arms forward, fin edge; warm night lighting"
+    },
+    {
+      "file": "delso_arrabida.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Sepia_común_(Sepia_officinalis),_Parque_natural_de_la_Arrábida,_Portugal,_2021-09-09,_DD_33.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "top view of mantle pattern and fin over sand"
+    },
+    {
+      "file": "delso_tenerife.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Sepia_común_(Sepia_officinalis),_franja_marina_Teno-Rasca,_Tenerife,_España,_2022-01-09,_DD_18.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "top view, full mantle pattern and fin margin, grey sand"
+    }
+  ]
+}

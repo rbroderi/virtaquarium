@@ -1,0 +1,59 @@
+{
+  "refs": [
+    {
+      "file": "brosens_walking.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Octopus_cyanea_484774501.jpg",
+      "author": "Dimitri Brosens",
+      "license": "CC0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "whole animal walking, side view, arms spread under the mantle"
+    },
+    {
+      "file": "jacobson_swimming.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Octopus_cyanea_251606691.jpg",
+      "author": "Pauline Walsh Jacobson",
+      "license": "CC BY 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "swimming side view over sand, arms trailing; slight cyan cast, small watermark"
+    },
+    {
+      "file": "rahman_maldives.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Octopus_cyanea_Maldives.JPG",
+      "author": "Ahmed Abdul Rahman",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "whole animal, side/above, arms spread on reef; red colour phase"
+    },
+    {
+      "file": "jacobson_eye.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Octopus_cyanea_251606700.jpg",
+      "author": "Pauline Walsh Jacobson",
+      "license": "CC BY 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "mantle and eye close-up; small watermark"
+    },
+    {
+      "file": "carusoturiello_skin.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Octopus_cyanea_415087431.jpg",
+      "author": "cello caruso-turiello",
+      "license": "CC BY 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "tight close-up of mantle skin, papillae and eye"
+    }
+  ]
+}

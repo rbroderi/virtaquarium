@@ -1,0 +1,48 @@
+{
+  "refs": [
+    {
+      "file": "viatour.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Aurelia_aurita_(Cnidaria)_Luc_Viatour_(cropped).jpg",
+      "author": "Luc Viatour",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side view of bell, oral arms and marginal tentacles on black; lighting gives a slight greenish-white false colour"
+    },
+    {
+      "file": "losada_finisterrae.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Aurelia_aurita.001_-_Aquarium_Finisterrae.JPG",
+      "author": "Fernando Losada Rodríguez",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "side view of bell and oral arms, dark aquarium background, neutral colour"
+    },
+    {
+      "file": "mos810_gdynia.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Aurelia_aurita_Gdynia_(2).jpg",
+      "author": "MOs810",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "view from below/above, 4 gonad rings, radial canals, oral arms"
+    },
+    {
+      "file": "perezmontes_madrid.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Aurelia_aurita_Atlantis_Aquarium_Madrid_2019.jpg",
+      "author": "Javier Perez Montes",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "two jellies at an angle on black; gonad rings and canals"
+    }
+  ]
+}

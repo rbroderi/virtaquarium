@@ -1,0 +1,48 @@
+{
+  "refs": [
+    {
+      "file": "bialon_czerwone.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_-_M.Czerwone.jpg",
+      "author": "Dariusz Białoń",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "whole body stretched out laterally over seagrass and sand, wild"
+    },
+    {
+      "file": "ffish_juvenile.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:クモウツボ若魚.jpg",
+      "author": "Ffish.asia",
+      "license": "CC BY 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "juvenile, whole body stretched laterally on black, colour chart in corner"
+    },
+    {
+      "file": "bentley_head.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Snowflake_Moray_Eel_(8180784914).jpg",
+      "author": "Michael Bentley",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "head and front half close-up, dark background; skin pattern"
+    },
+    {
+      "file": "karelj_prague.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_Prague_2011_2.jpg",
+      "author": "Karelj",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "aquarium, two eels, front halves side-on on white sand"
+    }
+  ]
+}
