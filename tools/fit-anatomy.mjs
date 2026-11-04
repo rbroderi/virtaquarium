@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeProfile, finOutline, caudalOutline } from '../pc/src/fishModel.js';
+import { makeProfile, finOutline, caudalOutline, pelvicOutline } from '../pc/src/fishModel.js';
 import { SPECIES } from '../pc/src/species.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -111,6 +111,7 @@ function silhouette(sp) {
   polys.push(body);
   for (const f of sp.fins) { const o = finOutline(sp, prof, f); polys.push([...o.base, ...o.outer.slice().reverse()]); }
   polys.push(caudalOutline(sp, prof).map(([x, y]) => [x, prof.centre(1) + y]));
+  if (sp.pelvic) polys.push(pelvicOutline(sp, prof).outline);   // paired, but splayed only slightly: side view
   return normalise(polys);
 }
 const score = (sp) => { const m = raster(silhouette(sp)); return photos.reduce((s, p) => s + bestIoU(m, p.mask), 0) / photos.length; };
@@ -133,6 +134,10 @@ base.fins.forEach((f, fi) => {
   (f.pts || []).forEach((_, pi) => add((s) => s.fins[fi].pts[pi][1], (s, v) => { s.fins[fi].pts[pi][1] = v; }, 0, 0.35));
 });
 add((s) => s.caudal.spread, (s, v) => { s.caudal.spread = v; }, 0.08, 0.4);
+if (base.pelvic) {
+  const pk = (k, lo, hi) => add((s) => s.pelvic[k], (s, v) => { s.pelvic[k] = v; }, lo, hi);
+  pk('u', Math.max(0.1, base.pelvic.u - 0.1), base.pelvic.u + 0.1); pk('len', 0.06, 0.25); pk('angle', 10, 70);
+}
 
 // ---------- coordinate descent ----------
 let sp = clone(base);
@@ -218,6 +223,7 @@ const fit = {
   body: Object.fromEntries(['depth', 'm', 'headP', 'tailP', 'ped', 'hump'].map((k) => [k, r3(sp.body[k])])),
   fins: sp.fins.map((f) => ({ u0: r3(f.u0), u1: r3(f.u1), sweep: r3(f.sweep ?? 0), pts: f.pts?.map(([t, h]) => [t, r3(h)]) })),
   caudal: { spread: r3(sp.caudal.spread) },
+  ...(sp.pelvic ? { pelvic: { u: r3(sp.pelvic.u), len: r3(sp.pelvic.len), angle: Math.round(sp.pelvic.angle) } } : {}),
 };
 console.log(`  body depth ${(fit.body.depth / sp.body.len).toFixed(3)} SL (published ${bdLo}-${bdHi})`);
 const atBound = P.filter((p) => { const v = p.get(sp); return v <= p.lo + 1e-6 || v >= p.hi - 1e-6; }).length;

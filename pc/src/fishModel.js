@@ -202,12 +202,13 @@ function paintSkin(sp, prof) {
     g.fillStyle = lip; g.fillRect(0, 0, U(0.07), TH);
     g.globalCompositeOperation = 'source-over';
   }
-  // Orbit: soft shadow ring where the eyeball sits in its socket.
+  // Orbit: only a faint shading where the skin rolls into the socket (photos show a soft rim, not a
+  // dark ring).
   {
-    const ex = U(e.u), ey = V(e.v), rx = (e.r / len) * TW * 1.5;
+    const ex = U(e.u), ey = V(e.v), rx = (e.r / len) * TW * 1.3;
     g.save(); g.translate(ex, ey); g.scale(1, ((e.r / prof.half(e.u)) * TH / 2) / ((e.r / len) * TW));
-    const o = g.createRadialGradient(0, 0, rx * 0.6, 0, 0, rx);
-    o.addColorStop(0, 'rgba(0,0,0,0.35)'); o.addColorStop(1, 'rgba(0,0,0,0)');
+    const o = g.createRadialGradient(0, 0, rx * 0.75, 0, 0, rx);
+    o.addColorStop(0, 'rgba(0,0,0,0.1)'); o.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = o; g.beginPath(); g.arc(0, 0, rx, 0, Math.PI * 2); g.fill();
     g.restore();
   }
@@ -349,7 +350,8 @@ function paintFins(sp, prof) {
   for (const f of fins) for (const p of f.outer) ymax = Math.max(ymax, Math.abs(p[1]) + 0.03);
   const tail = caudalOutline(sp, prof);
   for (const p of tail) ymax = Math.max(ymax, Math.abs(p[1]) + 0.03);
-  const xmin = -0.52, xmax = 0.52, W = 1024, H = Math.ceil((W * (2 * ymax)) / (xmax - xmin));
+  if (sp.pelvic) for (const p of pelvicOutline(sp, prof).outline) ymax = Math.max(ymax, Math.abs(p[1]) + 0.03);
+  const xmin = -0.52, xmax = 0.52, W = 2048, H = Math.ceil((W * (2 * ymax)) / (xmax - xmin));
   const c = makeCanvas(W, H), g = c.getContext('2d');
   const k = W / (xmax - xmin);
   g.setTransform(k, 0, 0, -k, -xmin * k, ymax * k);
@@ -357,7 +359,7 @@ function paintFins(sp, prof) {
   const rng = mulberry32(sp.id.length * 31 + 5);
 
   const meshes = [];   // { rays, n }: ray field per fin, for the 3D membrane
-  const drawFin = (spec, outlinePts, rays, rayOrigin) => {
+  const drawFin = (spec, outlinePts, rays, mer = {}, marginPts = null) => {
     g.save();
     g.beginPath(); smoothPath(g, outlinePts, true);
     const xs = outlinePts.map((p) => p[0]);
@@ -392,45 +394,77 @@ function paintFins(sp, prof) {
       if (spec.spot.ring) { g.fillStyle = spec.spot.ring; g.beginPath(); g.arc(px, py, spec.spot.r * 1.35, 0, Math.PI * 2); g.fill(); }
       g.fillStyle = spec.spot.color; g.beginPath(); g.arc(px, py, spec.spot.r, 0, Math.PI * 2); g.fill();
     }
-    // Membrane: a thin pigmented film, so most of the light behind it passes through.
+    // Ray count: from the species' meristics (spines + soft rays) when known, else by fin size.
+    const n = mer.n ?? Math.round(clamp(10 + (Math.max(...xs) - Math.min(...xs)) * 18, 10, 20));
+    const spines = mer.spines || 0;
+    // Membrane: a thin pigmented film, densest at the base and thinning towards the free margin, so
+    // more of the light behind it passes through near the edge.
+    let bc = [0, 0], oc = [0, 0];
+    for (let i = 0; i <= 8; i++) { const [a, b] = rays(i / 8); bc = [bc[0] + a[0] / 9, bc[1] + a[1] / 9]; oc = [oc[0] + b[0] / 9, oc[1] + b[1] / 9]; }
+    const a0 = Math.min(0.95, (spec.alpha ?? 0.9) + 0.05);
     g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = `rgba(0,0,0,${1 - Math.min(0.92, spec.alpha ?? 0.9)})`;
-    g.fillRect(-1, -1, 2, 2);
-    // Thinner membrane towards the free margin.
-    g.globalAlpha = 0.4; g.strokeStyle = '#000'; g.lineWidth = 0.012;
-    g.beginPath(); smoothPath(g, outlinePts, true); g.stroke();
-    g.globalAlpha = 1;
+    const mg = g.createLinearGradient(bc[0], bc[1], oc[0], oc[1]);
+    for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${1 - a0 * (1 - 0.38 * (s / 4) ** 2)})`);
+    g.fillStyle = mg; g.fillRect(-1, -1, 2, 2);
+    // Spiny fins: the membrane is incised between the spine tips, which stand free.
+    g.fillStyle = '#000';
+    for (let i = 0; i < spines - 1 && i < n; i++) {
+      const [ba, ta] = rays(i / n), [bb, tb] = rays((i + 1) / n);
+      const deep = [lerp(lerp(ta[0], tb[0], 0.5), lerp(ba[0], bb[0], 0.5), 0.3), lerp(lerp(ta[1], tb[1], 0.5), lerp(ba[1], bb[1], 0.5), 0.3)];
+      const out = (t, b) => [t[0] + (t[0] - b[0]) * 0.3, t[1] + (t[1] - b[1]) * 0.3];
+      g.beginPath(); g.moveTo(...ta); g.lineTo(...out(ta, ba)); g.lineTo(...out(tb, bb)); g.lineTo(...tb); g.lineTo(...deep); g.closePath(); g.fill();
+    }
     g.globalCompositeOperation = 'source-over';
-    // Lepidotrichia: jointed bony rays, more opaque than the membrane, each with a lit edge.
-    const nRays = Math.round(clamp(10 + (Math.max(...xs) - Math.min(...xs)) * 18, 10, 20));
-    g.setLineDash([0.035, 0.0012]);   // soft-ray joints
-    for (let i = 0; i <= nRays; i++) {
-      const [a, b] = rays(i / nRays);
-      g.strokeStyle = spec.rays || 'rgba(35,20,5,0.13)'; g.lineWidth = 0.0026;
-      g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-      g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 0.0012;
-      g.beginPath(); g.moveTo(a[0] + 0.0015, a[1]); g.lineTo(b[0] + 0.0015, b[1]); g.stroke();
+    // Fin rays, more opaque than the membrane, each with a lit edge. Spines are single, stiff and
+    // unjointed; soft rays (lepidotrichia) are jointed and branch towards the margin (the outermost
+    // principal caudal rays stay simple).
+    const rayCol = spec.rays || 'rgba(35,20,5,0.13)';
+    const line = (a, b, w, col) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); };
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, [a, b] = rays(t), lit = (p) => [p[0] + 0.0015, p[1]];
+      if (i < spines) {
+        g.setLineDash([]);
+        line(a, b, 0.0045, rayCol); line(lit(a), lit(b), 0.0016, 'rgba(255,255,255,0.18)');
+        continue;
+      }
+      g.setLineDash([0.035, 0.0012]);   // soft-ray joints
+      const simple = mer.simpleEnds && (i === 0 || i === n);
+      const m = simple ? b : [lerp(a[0], b[0], 0.55), lerp(a[1], b[1], 0.55)], q = [lerp(a[0], b[0], 0.2), lerp(a[1], b[1], 0.2)];
+      g.globalAlpha = 0.35;   // rays crowd together at the base; they read fainter there
+      line(a, q, 0.0026, rayCol);
+      g.globalAlpha = 1;
+      line(q, m, 0.0026, rayCol); line(lit(q), lit(m), 0.0012, 'rgba(255,255,255,0.14)');
+      if (!simple) for (const s of [-1, 1]) line(m, rays(clamp(t + (s * 0.22) / n, 0, 1))[1], 0.0018, rayCol);
     }
     g.setLineDash([]);
     g.restore();
-    meshes.push({ rays, n: nRays });
+    meshes.push({ rays, n });
     if (spec.edge) {
-      // Pigmented margin (e.g. the clownfish's black fin edges): real but only ~1 mm wide.
+      // Pigmented margin (e.g. the clownfish's black submarginal band), edgeW wide, optionally with
+      // a narrow translucent unpigmented fringe outside it. Only the free margin, not the base.
+      const ew = spec.edgeW || 0.006, fw = spec.fringe ? spec.fringeW || 0.008 : 0;
       g.save();
       g.beginPath(); smoothPath(g, outlinePts, true); g.clip();
-      g.globalAlpha = 0.9;
-      g.strokeStyle = spec.edge; g.lineWidth = (spec.edgeW || 0.02) * 0.6;
-      g.beginPath(); smoothPath(g, outlinePts, true); g.stroke();
+      g.beginPath(); smoothPath(g, marginPts || outlinePts, !marginPts);
+      g.globalAlpha = 0.95;
+      g.strokeStyle = spec.edge; g.lineWidth = 2 * (ew + fw); g.stroke();
+      if (fw) {
+        g.globalAlpha = 1; g.lineWidth = 2 * fw;
+        g.globalCompositeOperation = 'destination-out'; g.stroke();
+        g.globalCompositeOperation = 'source-over'; g.strokeStyle = spec.fringe; g.stroke();
+      }
       g.restore();
     }
   };
+  const meristics = (name) => { const m = sp.anatomy?.[name]; return m ? { spines: m.spines || 0, n: (m.spines || 0) + m.rays - 1 } : {}; };
 
   // Caudal fin first (behind the body).
   {
     const xp = prof.xPed + 0.02;
     const edge = tail.slice(1, -1);
     const rays = (t) => [[xp, lerp(prof.half(1) * 0.8, -prof.half(1) * 0.8, t)], along(edge, t)];
-    drawFin(sp.caudal, tail, rays);
+    // 17 principal caudal rays (9 + 8, the outer two unbranched) in nearly all spiny-rayed fishes.
+    drawFin(sp.caudal, tail, rays, { n: (sp.anatomy?.caudalRays ?? 17) - 1, simpleEnds: true }, tail);
   }
 
   sp.fins.forEach((spec, i) => {
@@ -470,56 +504,128 @@ function paintFins(sp, prof) {
       const o = [lerp(f.outer[j][0], f.outer[j + 1][0], tt), lerp(f.outer[j][1], f.outer[j + 1][1], tt)];
       return [along(f.base, t), o];
     };
-    drawFin(spec, outline, rays);
+    drawFin(spec, outline, rays, meristics(spec.meristic), f.outer);
   });
+
+  if (sp.pelvic) {
+    // Paired pelvic fins: painted once in side view, meshed twice and splayed out from the belly.
+    const pv = pelvicOutline(sp, prof);
+    drawFin(sp.pelvic, pv.outline, pv.rays, meristics('pelvic'), pv.outline.slice(1, -1));   // distal margin, not the spine
+    meshes[meshes.length - 1].xforms = pv.xforms;
+  }
 
   return { canvas: c, xmin, xmax, ymax, meshes };
 }
 
+// Pelvic fin in side view: inserted on the belly just behind the pectoral base, the spine as its leading
+// edge, rays fanning back and down. sp.pelvic: { u, len (TL), angle (deg below backwards), base, splay }.
+export function pelvicOutline(sp, prof) {
+  const p = sp.pelvic, len = sp.body.len, base = p.base ?? 0.03;
+  const belly = (x) => { const u = (0.5 - x) / len; return prof.centre(u) - prof.half(u) * 0.9; };
+  const x0 = prof.x(p.u);
+  const b = (t) => { const x = x0 - t * base; return [x, belly(x)]; };
+  // Ray direction and length across the fin: the spine is steep and shorter, the longest ray about a
+  // third of the way back, the last rays shallow and short.
+  const ang = (t) => THREE.MathUtils.degToRad(lerp(p.angle + 22, p.angle - 18, t));
+  const rlen = (t) => p.len * (0.7 + 1.3725 * t - 1.4725 * t * t);
+  const tip = (t) => { const o = b(t), a = ang(t), r = rlen(t); return [o[0] - Math.cos(a) * r, o[1] - Math.sin(a) * r]; };
+  const outer = [];
+  for (let i = 0; i <= 12; i++) outer.push(tip(i / 12));
+  const outline = [b(0), ...outer, b(1)];
+  const xforms = [1, -1].map((side) => {
+    const by = b(0.5)[1], z = side * prof.width(p.u) * 0.35;
+    return new THREE.Matrix4().makeTranslation(0, by, z)
+      .multiply(new THREE.Matrix4().makeRotationX(-side * (p.splay ?? 0.35)))
+      .multiply(new THREE.Matrix4().makeTranslation(0, -by, 0));
+  });
+  return { outline, rays: (t) => [b(t), tip(t)], xforms };
+}
+
+// Pectoral planform: 'fan' (lionfish wings), 'round' (broad paddle) or the default narrow blade.
+// spread: angle the rays cover; yk: vertical squash of the ray fan on the texture.
+function pectShape(p) {
+  const fan = p.kind === 'fan', round = p.kind === 'round';
+  return { fan, round, spread: fan ? 2.3 : round ? 1.7 : 0.9, yk: fan ? 0.5 : round ? 0.6 : 1 };
+}
+// Pectoral ray count: from the species' meristics when known.
+const pectoralRays = (sp) => (sp.anatomy?.pectoralRays ?? (sp.pectoral.kind === 'fan' ? 17 : 11)) - 1;
+
 function paintPectoral(sp) {
-  const p = sp.pectoral, fan = p.kind === 'fan';
-  const W = 256, H = fan ? 256 : 128;
+  const p = sp.pectoral, { fan, round, spread, yk } = pectShape(p);
+  const W = 512, H = fan || round ? 512 : 256, K = W / 256;   // widths below were tuned at 256 px
   const c = makeCanvas(W, H), g = c.getContext('2d');
-  // Base at left-centre; fin extends to the right.
+  // Base at left-centre; fin extends to the right. The free margin is traced separately from the base
+  // so a pigmented edge follows only the margin.
   g.translate(0, H / 2);
-  g.beginPath();
-  if (fan) {
-    g.moveTo(0, -H * 0.06);
-    for (let i = 0; i <= 16; i++) {
-      const a = -1.15 + (2.3 * i) / 16;
-      const r = W * (0.85 + 0.12 * Math.sin(i * 1.7));
-      g.lineTo(Math.cos(a) * r, Math.sin(a) * r * 0.5);
+  // Rounded paddle (damselfishes): the rays' tips lie on a broad arc; the outer rays are shorter.
+  const arc = (first) => {
+    for (let i = 0; i <= 24; i++) {
+      const a = -spread / 2 + (spread * i) / 24, r = W * (0.97 - 0.14 * (a / (spread / 2)) ** 2);
+      g[i || !first ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r * yk);
     }
-    g.lineTo(0, H * 0.06);
-  } else {
-    g.moveTo(0, -H * 0.18);
-    g.bezierCurveTo(W * 0.4, -H * 0.5, W * 0.95, -H * 0.2, W * 0.98, 0);
-    g.bezierCurveTo(W * 0.9, H * 0.2, W * 0.4, H * 0.35, 0, H * 0.18);
-  }
-  g.closePath();
-  g.globalAlpha = Math.min(0.7, p.alpha ?? 0.6);
+  };
+  const margin = (free = false) => {
+    if (round) {
+      if (free) { arc(true); return; }
+      g.moveTo(0, -H * 0.07); arc(false); g.lineTo(0, H * 0.07);
+    } else if (fan) {
+      g.moveTo(0, -H * 0.06);
+      for (let i = 0; i <= 16; i++) {
+        const a = -1.15 + (2.3 * i) / 16;
+        const r = W * (0.85 + 0.12 * Math.sin(i * 1.7));
+        g.lineTo(Math.cos(a) * r, Math.sin(a) * r * 0.5);
+      }
+      g.lineTo(0, H * 0.06);
+    } else {
+      g.moveTo(0, -H * 0.18);
+      g.bezierCurveTo(W * 0.4, -H * 0.5, W * 0.95, -H * 0.2, W * 0.98, 0);
+      g.bezierCurveTo(W * 0.9, H * 0.2, W * 0.4, H * 0.35, 0, H * 0.18);
+    }
+  };
+  g.beginPath(); margin(); g.closePath();
   g.fillStyle = p.fill; g.fill();
   g.save(); g.clip();
-  g.globalAlpha = 1;
-  g.lineWidth = fan ? 3 : 1.5;
-  const n = fan ? 16 : 10;
+  // Membrane thinning from base to margin, as on the median fins.
+  const a0 = Math.min(0.85, (p.alpha ?? 0.6) + 0.05);
+  g.globalCompositeOperation = 'destination-out';
+  const mg = g.createRadialGradient(0, 0, 0, 0, 0, W);
+  for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${1 - a0 * (1 - 0.38 * (s / 4) ** 2)})`);
+  g.fillStyle = mg; g.fillRect(0, -H / 2, W, H);
+  g.globalCompositeOperation = 'source-over';
+  const n = pectoralRays(sp), a0r = -spread / 2, span = spread;
+  const dir = (a, r) => [Math.cos(a) * r, Math.sin(a) * r * yk];
   for (let i = 0; i <= n; i++) {
-    const a = (fan ? -1.15 : -0.45) + ((fan ? 2.3 : 0.9) * i) / n;
+    const a = a0r + (span * i) / n;
     if (fan && p.stripes) {
+      g.lineWidth = 3 * K;
       for (let q = 0; q < 8; q++) {
         g.strokeStyle = q % 2 ? p.fill : p.stripes;
         g.beginPath();
-        g.moveTo(Math.cos(a) * W * q / 8, Math.sin(a) * W * 0.5 * q / 8);
-        g.lineTo(Math.cos(a) * W * (q + 1) / 8, Math.sin(a) * W * 0.5 * (q + 1) / 8);
+        g.moveTo(...dir(a, (W * q) / 8)); g.lineTo(...dir(a, (W * (q + 1)) / 8));
         g.stroke();
       }
     } else {
-      g.strokeStyle = 'rgba(0,0,0,0.2)';
-      g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(a) * W, Math.sin(a) * W); g.stroke();
+      // Jointed soft rays (the first is simple), branching at about half their length.
+      g.setLineDash([0.12 * W, 0.006 * W]);
+      g.strokeStyle = 'rgba(0,0,0,0.2)'; g.lineWidth = 1.5 * K;
+      const br = i > 0 ? 0.5 : 1;
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(...dir(a, W * br)); g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 0.7 * K;
+      g.beginPath(); g.moveTo(0, 1.2 * K); g.lineTo(...dir(a, W * br).map((v, k) => v + k * 1.2 * K)); g.stroke();
+      if (br < 1) {
+        g.strokeStyle = 'rgba(0,0,0,0.16)'; g.lineWidth = 1.1 * K;
+        for (const s of [-1, 1]) { g.beginPath(); g.moveTo(...dir(a, W * br)); g.lineTo(...dir(a + (s * 0.22 * span) / n, W)); g.stroke(); }
+      }
+      g.setLineDash([]);
     }
   }
+  if (p.edge) {
+    // edgeW in body lengths (TL), like the median fins; drawn on the free margin only.
+    const ew = ((p.edgeW ?? 0.006 * p.len) / p.len) * W;
+    g.globalAlpha = 0.95; g.strokeStyle = p.edge; g.lineWidth = 2 * ew;
+    g.beginPath(); margin(true); g.stroke();
+  }
   g.restore();
-  if (p.edge) { g.globalAlpha = 0.85; g.strokeStyle = p.edge; g.lineWidth = 3; g.stroke(); }
   return c;
 }
 
@@ -556,14 +662,14 @@ function finMesh({ rays, n }, sheet) {
 
 // Pectoral fin: rays fan out from the base; pleated like the median fins and slightly cupped.
 function pectoralGeometry(sp) {
-  const p = sp.pectoral, fan = p.kind === 'fan';
-  const pw = p.len, ph = fan ? p.len : p.len * 0.5, n = fan ? 16 : 10;
+  const p = sp.pectoral, { fan, round, spread, yk } = pectShape(p);
+  const pw = p.len, ph = fan || round ? p.len : p.len * 0.5, n = pectoralRays(sp);
   const g = new THREE.PlaneGeometry(pw, ph, 28, 18);
   g.translate(pw / 2, 0, 0);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), y = pos.getY(i), r = Math.hypot(x, y) / pw, a = Math.atan2(y, Math.max(1e-4, x));
-    const spread = fan ? 2.3 : 0.9;   // angular range the painted rays cover
+    // a: the ray angle as painted (the texture squashes the fan vertically by yk).
+    const x = pos.getX(i), y = pos.getY(i), r = Math.hypot(x, y) / pw, a = Math.atan2(y / yk, Math.max(1e-4, x));
     pos.setZ(i, 0.03 * pw * r * Math.cos(Math.PI * (a / spread + 0.5) * n) + 0.12 * pw * r * r);
   }
   g.computeVertexNormals();
@@ -572,25 +678,38 @@ function pectoralGeometry(sp) {
 
 // ---------- eyes ----------
 
-// Front view of the eye (planar UV): iris stroma with radial fibres and a dark limbal ring, a large
-// round pupil showing the spherical lens, and a faint silvery tapetum ring.
+// Front view of the eye (planar UV): iris stroma with radial fibres, a round pupil about two thirds of
+// the iris diameter (the spherical lens fills it), and a faint silvery ring at the pupil margin.
+// sp.eye: pupil (radius / eyeball radius), irisR (iris radius / eyeball radius; outside it the eyeball
+// shows the iris colour fading into the orbit skin rather than a dark limbus), fleck (melanophores
+// around the pupil, e.g. the clownfish's dark inner iris).
 function paintEye(sp) {
-  const N = 256, c = makeCanvas(N, N), g = c.getContext('2d'), R = N / 2;
-  const rng = mulberry32(sp.id.length * 131 + 7), iris = sp.eye.iris;
-  g.fillStyle = shade(iris, -0.55); g.fillRect(0, 0, N, N);
-  const gr = g.createRadialGradient(R, R, R * 0.3, R, R, R * 0.98);
-  gr.addColorStop(0, shade(iris, 0.25)); gr.addColorStop(0.55, iris); gr.addColorStop(0.85, shade(iris, -0.3)); gr.addColorStop(1, shade(iris, -0.7));
-  g.fillStyle = gr; g.beginPath(); g.arc(R, R, R * 0.98, 0, Math.PI * 2); g.fill();
+  const N = 512, c = makeCanvas(N, N), g = c.getContext('2d'), R = N / 2, K = N / 256;
+  const e = sp.eye, rng = mulberry32(sp.id.length * 131 + 7), iris = e.iris;
+  const ir = e.irisR ?? 0.98, pr = e.pupil ?? 0.44;
+  g.fillStyle = shade(iris, -0.15); g.fillRect(0, 0, N, N);
+  const gr = g.createRadialGradient(R, R, R * pr * 0.7, R, R, R * ir);
+  gr.addColorStop(0, shade(iris, 0.2)); gr.addColorStop(0.55, iris); gr.addColorStop(0.9, shade(iris, -0.2)); gr.addColorStop(1, shade(iris, -0.35));
+  g.fillStyle = gr; g.beginPath(); g.arc(R, R, R * ir, 0, Math.PI * 2); g.fill();
+  if (e.fleck) {
+    const fr = e.fleckR ?? pr + (ir - pr) * 0.75;
+    for (let i = 0; i < 900; i++) {
+      const a = rng() * Math.PI * 2, r = R * (pr + (fr - pr) * rng() ** 1.3);
+      g.fillStyle = e.fleck; g.globalAlpha = 0.25 + rng() * 0.5;
+      g.beginPath(); g.arc(R + Math.cos(a) * r, R + Math.sin(a) * r, (0.8 + rng() * 2) * K, 0, Math.PI * 2); g.fill();
+    }
+    g.globalAlpha = 1;
+  }
   for (let i = 0; i < 160; i++) {
-    const a = rng() * Math.PI * 2, r0 = R * (0.42 + rng() * 0.1), r1 = R * (0.75 + rng() * 0.2);
-    g.strokeStyle = rng() < 0.5 ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.12)'; g.lineWidth = 1 + rng() * 1.5;
+    const a = rng() * Math.PI * 2, r0 = R * (pr + rng() * 0.08), r1 = R * ir * (0.75 + rng() * 0.2);
+    g.strokeStyle = rng() < 0.5 ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.1)'; g.lineWidth = (1 + rng() * 1.5) * K;
     g.beginPath(); g.moveTo(R + Math.cos(a) * r0, R + Math.sin(a) * r0); g.lineTo(R + Math.cos(a + 0.05) * r1, R + Math.sin(a + 0.05) * r1); g.stroke();
   }
-  g.strokeStyle = 'rgba(220,235,240,0.25)'; g.lineWidth = 3;   // guanine ring around the pupil
-  g.beginPath(); g.arc(R, R, R * 0.47, 0, Math.PI * 2); g.stroke();
-  const pu = g.createRadialGradient(R * 0.94, R * 0.92, 0, R, R, R * 0.45);
-  pu.addColorStop(0, '#0b1418'); pu.addColorStop(0.8, '#020406'); pu.addColorStop(1, '#000');
-  g.fillStyle = pu; g.beginPath(); g.arc(R, R, R * 0.44, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(220,235,240,0.25)'; g.lineWidth = 2.5 * K;   // guanine ring at the pupil margin
+  g.beginPath(); g.arc(R, R, R * (pr + 0.025), 0, Math.PI * 2); g.stroke();
+  const pu = g.createRadialGradient(R * 0.94, R * 0.92, 0, R, R, R * pr);
+  pu.addColorStop(0, '#0d1820'); pu.addColorStop(0.8, '#03060a'); pu.addColorStop(1, '#000');
+  g.fillStyle = pu; g.beginPath(); g.arc(R, R, R * pr, 0, Math.PI * 2); g.fill();
   return c;
 }
 
@@ -601,9 +720,11 @@ function eyeGeometry(prof, sp, side) {
   for (let i = 0; i < p.count; i++) uv.setXY(i, 0.5 - p.getX(i) * 0.5, 0.5 + p.getY(i) * 0.5);   // planar, looking along +z
   const ex = prof.x(e.u), ey = prof.centre(e.u) - e.v * prof.half(e.u);
   const ez = prof.width(e.u) * Math.sqrt(Math.max(0.05, 1 - e.v * e.v));
-  const m = new THREE.Matrix4().makeTranslation(ex, ey, side * ez * 0.97)
+  // The cornea sits nearly flush with the head (only the lens bulges a little), so the eyeball is a
+  // shallow cap just proud of the socket.
+  const m = new THREE.Matrix4().makeTranslation(ex, ey, side * ez * 0.96)
     .multiply(new THREE.Matrix4().makeRotationY(side > 0 ? 0 : Math.PI))
-    .multiply(new THREE.Matrix4().makeScale(e.r, e.r, e.r * 0.45));
+    .multiply(new THREE.Matrix4().makeScale(e.r, e.r, e.r * 0.3));
   geo.applyMatrix4(m);
   return geo;
 }
@@ -791,7 +912,10 @@ function speciesAssets(sp) {
     t.anisotropy = 4;
     return t;
   };
-  const finGeo = mergeGeometries(fins.meshes.map((m) => finMesh(m, fins)));
+  const finGeo = mergeGeometries(fins.meshes.flatMap((m) => {
+    const geo = finMesh(m, fins);
+    return m.xforms ? m.xforms.map((x) => geo.clone().applyMatrix4(x)) : [geo];
+  }));
   const pectGeo = pectoralGeometry(sp);
   const a = {
     prof,

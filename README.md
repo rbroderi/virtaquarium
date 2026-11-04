@@ -75,8 +75,12 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   - Light that passes through tissue follows Beer–Lambert by thickness in mm. Red survives longest, so the dorsal ridge, peduncle and fins glow when backlit, with a forward-scattering lobe.
   - Subsurface diffusion softens the terminator (wrapped Lambert, wider for red).
   - Ambient light from behind passes through thin parts.
-- **Fins**: each fin is a 3D membrane meshed along its rays and fan-folded, with rays on alternate ridges and valleys. That gives real relief and broken-up highlights. The membrane is a thin pigmented film, and its jointed rays are more opaque than the membrane. Pectorals are pleated and slightly cupped.
-- **Eyes**: iris stroma, limbal ring and lens pupil under a clear cornea. They are baked into fish space so they move with the swimming head.
+- **Fins**: each fin is a 3D membrane meshed along its rays and fan-folded, with rays on alternate ridges and valleys. That gives real relief and broken-up highlights.
+  - Ray counts come from the species' published meristics (`anatomy` in `species.js`, e.g. clownfish D XI,15; caudal fins default to the 17 principal rays of spiny-rayed fishes).
+  - Spines are stiff and unjointed, and the membrane is incised between their tips. Soft rays are jointed and branch towards the margin.
+  - The membrane is a thin pigmented film that thins from base to margin. Pigmented margins (`edgeW`, in body lengths) follow only the free edge and can have a translucent fringe outside them.
+  - Pelvic fins (`sp.pelvic`) are paired and splay out from the belly. Pectorals are pleated and slightly cupped; `kind: 'round'` gives the damselfish paddle.
+- **Eyes**: iris stroma and a lens pupil under a nearly flush cornea, with no dark limbal ring. Pupil and iris size and the melanophore flecks around the pupil can be set per species (`sp.eye`). The eyes are baked into fish space so they move with the swimming head.
 
 Inspect any species up close at <http://localhost:8080/pc/lab.html?sp=clownfish>. Use `sp=all` for a lineup, and `yaw` or `swim=0` to pose it. The toolbar also switches the light rig (`rig=sun|led`) and tone mapping (`tone=aces|neutral|agx|none`), and **screenshot** saves what is on screen as a PNG.
 

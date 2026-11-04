@@ -19,7 +19,8 @@ function gainColours(sp, gain) {
   const g = (h) => (typeof h === 'string' && h[0] === '#' ? gainHex(h, gain) : h);
   for (const p of sp.pattern) { if (p.color) p.color = g(p.color); if (p.stops) p.stops = p.stops.map(([v, c]) => [v, g(c)]); }
   for (const f of sp.fins) f.fill = Array.isArray(f.fill) ? f.fill.map(([t, c]) => [t, g(c)]) : g(f.fill);
-  sp.caudal.fill = g(sp.caudal.fill); sp.pectoral.fill = g(sp.pectoral.fill);
+  sp.caudal.fill = g(sp.caudal.fill); sp.pectoral.fill = g(sp.pectoral.fill); sp.eye.iris = g(sp.eye.iris);
+  if (sp.pelvic) sp.pelvic.fill = g(sp.pelvic.fill);
 }
 
 export function applyFitted(species) {
@@ -31,6 +32,7 @@ export function applyFitted(species) {
     Object.assign(sp.body, f.body);
     f.fins.forEach((fin, i) => { if (sp.fins[i]) Object.assign(sp.fins[i], fin); });
     Object.assign(sp.caudal, f.caudal);
+    if (f.pelvic && sp.pelvic) Object.assign(sp.pelvic, f.pelvic);
     for (const b of f.bands || []) if (sp.pattern[b.index]?.op === 'band') Object.assign(sp.pattern[b.index], { u: b.u, w: b.w });
     sp.fitted = true;
   }
