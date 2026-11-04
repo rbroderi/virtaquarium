@@ -34,6 +34,75 @@ const _lat = new THREE.Vector3(), _flow = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
+// A damped spring (semi-implicit Euler, substepped so a frame hitch can't blow it up): s = { x, v }
+// is pulled towards `target` at natural frequency hz with damping ratio zeta. Real reef-fish bodies
+// are stiff (an overshoot of a few percent), fins much softer.
+function spring(s, target, hz, zeta, dt) {
+  const w = 2 * Math.PI * hz, n = Math.ceil(dt * hz * 8), h = dt / n;
+  for (let i = 0; i < n; i++) {
+    s.v += (w * w * (target - s.x) - 2 * zeta * w * s.v) * h;
+    s.x += s.v * h;
+  }
+  return s.x;
+}
+const springState = (x = 0) => ({ x, v: 0 });
+
+// The moray's body as a chain of point masses (position-based dynamics): the head node is carried by
+// the fish, the rest follow through distance constraints, resist bending (stiffer near the head),
+// lose their momentum to the water, and lie on the rock. The shader bends the body through the chain's
+// offsets from the straight body axis (uSpine), so the body traces the path the head took, swings
+// wide out of a sharp turn, and drapes over a ledge.
+const SPINE_N = 12;
+const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+class SpineChain {
+  constructor() {
+    this.p = Array.from({ length: SPINE_N }, () => new THREE.Vector3());
+    this.prev = Array.from({ length: SPINE_N }, () => new THREE.Vector3());
+    this.ready = false;
+  }
+  update(dt, fish, world, stiff) {
+    const L = fish.size, seg = L / (SPINE_N - 1), P = this.p;
+    const head = _a.copy(fish.pos).addScaledVector(fish.dir, 0.5 * L);
+    if (!this.ready) {
+      for (let i = 0; i < SPINE_N; i++) { P[i].copy(head).addScaledVector(fish.dir, -seg * i); this.prev[i].copy(P[i]); }
+      this.ready = true;
+    }
+    const drag = Math.exp(-2.5 * dt);
+    for (let i = 1; i < SPINE_N; i++) {
+      _b.subVectors(P[i], this.prev[i]).multiplyScalar(drag);   // carried momentum, damped by the water
+      this.prev[i].copy(P[i]);
+      P[i].add(_b);
+    }
+    P[0].copy(head); this.prev[0].copy(head);
+    for (let it = 0; it < 4; it++) {
+      for (let i = 1; i < SPINE_N; i++) {
+        // Bending stiffness: pull towards the straight continuation of the two nodes ahead.
+        const ahead = i === 1 ? _b.copy(P[0]).addScaledVector(fish.dir, -seg) : _b.subVectors(P[i - 1], P[i - 2]).add(P[i - 1]);
+        P[i].lerp(ahead, stiff * (1 - (i / SPINE_N) * 0.6));
+        // Length.
+        _b.subVectors(P[i], P[i - 1]);
+        const d = _b.length() || 1e-6;
+        P[i].copy(P[i - 1]).addScaledVector(_b, seg / d);
+        // Rock and sand: the body lies over a ledge a little below the head. Rock well above the head is
+        // the crevice the eel is in (the height field is the rock's top), so that doesn't lift it.
+        const floor = world.reefHeight(P[i].x, P[i].z) - 0.05;
+        if (P[i].y < floor && floor < P[0].y + 0.15 * L) P[i].y = floor;
+      }
+    }
+  }
+  // Offsets from the straight body axis in the fish's own frame, in body lengths.
+  write(arr, fish, up, side) {
+    const L = fish.size;
+    for (let i = 0; i < SPINE_N; i++) {
+      const x = 0.5 - i / (SPINE_N - 1);
+      _b.copy(fish.pos).addScaledVector(fish.dir, x * L);
+      _a.subVectors(this.p[i], _b);
+      arr[i * 2] = clamp(_a.dot(side) / L, -0.35, 0.35);
+      arr[i * 2 + 1] = clamp(_a.dot(up) / L, -0.25, 0.25);
+    }
+  }
+}
+
 export class Fish {
   constructor(sp, name, rng) {
     this.sp = sp;
@@ -64,6 +133,11 @@ export class Fish {
     this.turnSign = 0;   // remembered direction while reversing, so a U-turn doesn't dither
     this.bend = 0;
     this.gulp = 0;
+    // Secondary motion springs: body bend (front, and the tail behind it), tail amplitude, median fin
+    // fold, caudal cup; each pectoral gets its own (opening, stroke roll).
+    this.sBend = springState(); this.sBendTail = springState(); this.sAmp = springState(0.1);
+    this.sFold = springState(); this.sCup = springState();
+    this.spine = sp.swim.mode === 'anguilliform' ? new SpineChain() : null;
     this.brain = new Brain(this, rng);
   }
 
@@ -176,12 +250,32 @@ export class Fish {
     this.phase += back ? -dt * Math.PI * 2 * (0.8 + back * 4) : dt * Math.PI * 2 * Math.max(fTail * tailShare, 1.2);
     const u = this.model.userData.uniforms;
     u.uPhase.value = this.phase;
-    u.uAmp.value = Math.max(tailAmp, idle, back ? 0.5 : 0) + this.gulp;
+    // Amplitude eases in and out of a burst (a kick builds over a beat) rather than jumping.
+    u.uAmp.value = Math.max(0, spring(this.sAmp, Math.max(tailAmp, idle, back ? 0.5 : 0) + this.gulp, 2.5, 0.9, dt));
 
-    // Body bends with path curvature (kappa = omega / U), stronger in sharp, slow turns.
+    // Body bends with path curvature (kappa = omega / U), stronger in sharp, slow turns. The bend is a
+    // stiff damped spring (a little overshoot as the turn ends), and the rear half follows it on a
+    // softer one, so the tail lags into a turn and swings past straight coming out of it.
     const kappa = this.turnRate / Math.max(U, 0.25 * L);
-    this.bend = lerp(this.bend, clamp(kappa * L * 0.12, -0.25, 0.25), Math.min(1, dt * 6));
-    u.uBend.value = this.bend;
+    const bendT = clamp(kappa * L * 0.12, -0.25, 0.25);
+    this.bend = clamp(spring(this.sBend, bendT, 1.6, 0.55, dt), -0.3, 0.3);
+    const tail = clamp(spring(this.sBendTail, this.bend, 1.0, 0.45, dt), -0.32, 0.32);
+    // Caudal cup: the blade flexes further behind the peduncle while the fish accelerates.
+    const cup = clamp(spring(this.sCup, clamp(af / (L * 3), -0.2, 0.6), 2.0, 0.6, dt), -0.25, 0.7);
+    // Median fins: erect when slow or turning (stability), folded down and back at speed.
+    const foldT = smoothstep(0.35, 0.9, U / (sw.burstBL * L)) * (1 - clamp(Math.abs(this.yawRate) * 0.8, 0, 0.8));
+    u.uFold.value = clamp(spring(this.sFold, foldT, 1.2, 0.8, dt), 0, 1);
+    u.uCup.value = cup;
+    if (this.spine) {
+      // The moray's chain does the bending; the analytic bend is off. Braced in its crevice, the body is stiff.
+      this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12);
+      this.spine.write(u.uSpine.value, this, _up, _side);
+      u.uSpineOn.value = 1;
+      u.uBend.value = u.uBendTail.value = 0;
+    } else {
+      u.uBend.value = this.bend;
+      u.uBendTail.value = tail;
+    }
 
     // Ventilation: the gill covers flare at ~1-1.5 Hz at rest, faster when working hard.
     this.ventPhase += dt * Math.PI * 2 * this.ventHz * (1 + 0.5 * clamp(blEq / sw.maxBL, 0, 1));
@@ -215,7 +309,14 @@ export class Fish {
         // Asymmetric stroke when turning: the outside fin works harder.
         const turnBias = 1 + clamp(-s * this.turnRate * 0.3, -0.4, 0.4);
         const ph = this.pectPhase + (s > 0 ? 0 : 0.2);
-        posePectoral(p, ph, 0.2 + pectAmp * turnBias * (0.5 + 0.5 * Math.sin(ph)), 0.2 + 0.25 * Math.cos(this.pectPhase));
+        // At speed a BCF swimmer tucks its pectorals back against the body. The fin is flexible: it
+        // follows the stroke on a soft spring, so it lags the reversals and flicks past them.
+        const tuck = tailShare * smoothstep(0.4, 1.0, U / (sw.maxBL * L));
+        const ud = p.userData;
+        ud.sOpen ??= springState(0.3); ud.sFlap ??= springState(0.2);
+        const open = spring(ud.sOpen, (0.2 + pectAmp * turnBias * (0.5 + 0.5 * Math.sin(ph))) * (1 - 0.75 * tuck), 7, 0.5, dt);
+        const flap = spring(ud.sFlap, (0.2 + 0.25 * Math.cos(this.pectPhase)) * (1 - 0.5 * tuck), 7, 0.5, dt);
+        posePectoral(p, ph, open, flap);
       }
     }
   }

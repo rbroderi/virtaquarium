@@ -31,6 +31,13 @@ export const CRITTER_SPECIES = [
 const UP = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YZX');
 
+// A damped spring, s = { x, v } pulled towards target (natural frequency hz, damping ratio zeta).
+function spring(s, target, hz, zeta, dt) {
+  const w = 2 * Math.PI * hz, n = Math.ceil(dt * hz * 8), h = dt / n;
+  for (let i = 0; i < n; i++) { s.v += (w * w * (target - s.x) - 2 * zeta * w * s.v) * h; s.x += s.v * h; }
+  return s.x;
+}
+
 function canvasTexture(c, srgb = true) {
   const t = new THREE.CanvasTexture(c);
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
@@ -184,6 +191,8 @@ export class Cuttlefish {
     const body = new THREE.Mesh(mantle, mantleMat);
     body.castShadow = true;
     this.model.add(body);
+    this.mantle = body;
+    this.sArmY = { x: 0, v: 0 }; this.sArmZ = { x: 0, v: 0 }; this.sSqueeze = { x: 0, v: 0 };
     // Head and eyes.
     const headMat = skin({ color: 0x8a5e46, roughness: 0.5 }, 'cuttle-head');
     const head = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), headMat);
@@ -295,8 +304,16 @@ export class Cuttlefish {
     else if (this.mode === 'cruise') speed = this.reverse ? -0.3 : 0.4;
     else if (this.mode === 'rest') speed = this.pos.distanceTo(this.target) > 0.3 ? 0.25 : 0;
     else speed = 0.05;
+    const yaw0 = b.yaw, pitch0 = b.pitch;
     b.steer(dt, world, this.target, { turn: 0.9, speed, accel: this.mode === 'jet' ? 6 : 1.2, clearance: cl, reverse: speed < 0 });
     if (this.mode === 'rest' && this.pos.distanceTo(this.target) < 0.4) b.pitch = lerp(b.pitch, 0, dt);
+    // Secondary motion: the arm bundle swings behind a turn or a pitch change and settles (soft
+    // springs), and the mantle squeezes as it jets.
+    const yawRate = wrapAngle(b.yaw - yaw0) / Math.max(dt, 1e-4), pitchRate = (b.pitch - pitch0) / Math.max(dt, 1e-4);
+    const armY = spring(this.sArmY, clamp(yawRate * 0.5, -0.35, 0.35), 1.2, 0.35, dt);
+    const armZ = spring(this.sArmZ, clamp(-pitchRate * 0.4, -0.3, 0.3), 1.2, 0.35, dt);
+    const squeeze = spring(this.sSqueeze, this.mode === 'jet' ? this.jet : 0, 3, 0.4, dt);
+    this.mantle.scale.set(1 + 0.04 * squeeze, 1 - 0.14 * squeeze, 1 - 0.05 * squeeze);   // fins sit on the edge: keep the width
 
     // Skin: passing clouds while hunting, mottled at rest, pale in a jet.
     const U = this.u;
@@ -306,7 +323,7 @@ export class Cuttlefish {
     // Arms: sway together; the two tentacles flick out on a strike.
     this.strike = Math.max(0, (this.strike || 0) - dt);
     const t = U.uTime.value;
-    this.crown.rotation.set(0, Math.sin(t * 0.9) * 0.06, -0.22 + Math.sin(t * 1.3) * 0.05 + (this.mode === 'jet' ? 0.2 : 0));
+    this.crown.rotation.set(0, Math.sin(t * 0.9) * 0.06 + armY, -0.22 + Math.sin(t * 1.3) * 0.05 + (this.mode === 'jet' ? 0.2 : 0) + armZ);
     this.arms.forEach((a, i) => {
       a.scale.x = i < 2 && this.strike > 0 ? 1 + 2.5 * Math.sin((this.strike / 0.4) * Math.PI) : 1;
     });
@@ -379,6 +396,7 @@ class ArmTube {
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
     this.pts = Array.from({ length: n }, () => new THREE.Vector3());
+    this.prevW = [];   // last frame's world positions (Octopus.update tows them)
   }
   // pts in the octopus's local frame; 'down' is the local direction of the ground.
   build(down) {
@@ -555,11 +573,18 @@ export class Octopus {
         p.addScaledVector(dir, seg);
         // Keep the chain above the reef (in world space).
         world_.copy(p).applyMatrix4(this.model.matrixWorld);
+        // Soft arms: each point is towed through the water towards its pose rather than placed there,
+        // more loosely towards the tip, so the arms trail a jet, swing after a turn and settle.
+        const pw = (arm.prevW[i] ??= world_.clone());
+        pw.lerp(world_, 1 - Math.exp(-dt * lerp(20, 2.5, s)));
+        world_.copy(pw);
+        p.copy(world_).applyMatrix4(this._m);
         // Under the den's roof the height field is the rock above it, so there the floor is the den's own.
         const g0 = this.tuck > 0.5 && Math.hypot(world_.x - this.den.x, world_.z - this.den.z) < 1.6 ? this.den.y - 0.1 * M : world.reefHeight(world_.x, world_.z);
         const floor = Math.max(g0, 0) + lerp(arm.r0, arm.r1, s) * 0.9;
         gap = world_.y - floor;
         if (gap < 0) { world_.y = floor; gap = 0; p.copy(world_).applyMatrix4(this._m); dir.y = Math.max(dir.y, 0); }
+        pw.copy(world_);
       }
       arm.build(this._down);
     }

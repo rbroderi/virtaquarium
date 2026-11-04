@@ -171,7 +171,22 @@ For Roku each needs its own sprite set:
   read well enough. A jet pose has the arms trailing.
 - **Turtle:** a 12-frame flipper stroke at several headings, a glide frame, and a resting pose for the sand.
 
+## Secondary motion (added 2026-11-04)
+
+The swim shader has new uniforms, all defaulting to the old look, so `bake.js` renders exactly as
+before without changes: `uBendTail` (the rear half's bend), `uFold` (median fins folded), `uCup` (extra
+caudal lag), `uSpineOn`/`uSpine` (the moray's chain offsets).
+
+The springs are dynamic, so most of this is PC only. What a bake could take:
+- **Turn row (row 1):** set `uBend` to the turn's bend and `uBendTail` a step behind it (ramping in over
+  the frames), so the turn sprites bend in with the tail lagging instead of rotating a rigid fish.
+- **Fast swim:** a variant of the swim loop with `uFold` about 0.5 and `uCup` about 0.4 for bursts.
+- **Moray:** a few curved-body poses (an S and a C from `uSpine`) would read better than the straight
+  loop when it turns.
+
 ## Log
+
+- 2026-11-04: secondary-motion uniforms (`uBendTail`, `uFold`, `uCup`, `uSpine`); their defaults keep the bake unchanged.
 
 - 2026-11-04: cuttlefish, octopus and turtle (`critters.js`), PC only; not in `SPECIES`, so the bake skips them.
 

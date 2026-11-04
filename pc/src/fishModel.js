@@ -938,6 +938,16 @@ uniform float uXGill;   // x of the gill cover's rear edge
 uniform float uVent;    // opercular flare, 0..~0.04
 uniform float uAnguil;  // 1 = anguilliform (eels): the whole body undulates
 uniform float uLift;    // front of the body raised (an eel resting with its head up)
+uniform float uBendTail; // the rear half's turn bend: a damped spring behind uBend, so the tail lags into a turn and overshoots out of it
+uniform float uFold;    // dorsal and anal fins fold down and back (0 erect .. 1 folded at speed)
+uniform float uCup;     // extra caudal lag when the tail works hard (the blade flexes more)
+uniform float uSpineOn; // 1: the midline also follows uSpine, a simulated chain (the moray's body)
+uniform vec2 uSpine[12]; // chain offsets (lateral z, vertical y) at x = 0.5 .. -0.5 in 11 equal steps
+vec2 spineAt(float x) {
+  float f = clamp((0.5 - x) * 11.0, 0.0, 10.999);
+  int i = int(f);
+  return mix(uSpine[i], uSpine[i + 1], f - float(i));
+}
 // Lateral offset of the spine (the body midline) at x; x runs from +0.5 (snout) to -0.5 (tail tip).
 // Body wave h = A(s) sin(wt + kx): wavelength ~0.95 BL (carangiform-like), amplitude from a small head
 // recoil (~0.02 BL) through a minimum ~0.15 BL behind the snout to ~0.1 BL at the tail tip at cruise.
@@ -947,11 +957,12 @@ uniform float uLift;    // front of the body raised (an eel resting with its hea
 float spineH(float x) {
   float s = 0.5 - x;
   float env = mix(0.02 - 0.06 * s + 0.2 * s * s, 0.03 + 0.07 * s, uAnguil);
-  float lag = 0.8 * (1.0 - uAnguil) * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));
-  return uAmp * env * sin(uPhase + x * mix(6.6, 10.5, uAnguil) - lag) + uBend * (x - 0.05) * (x - 0.05) * 2.0;
+  float lag = (0.8 + uCup) * (1.0 - uAnguil) * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));
+  float bend = mix(uBendTail, uBend, smoothstep(-0.3, 0.2, x));
+  return uAmp * env * sin(uPhase + x * mix(6.6, 10.5, uAnguil) - lag) + bend * (x - 0.05) * (x - 0.05) * 2.0 + uSpineOn * spineAt(x).x;
 }
 // Raise the front of the body, bending up ahead of x = 0.1.
-float liftY(float x) { float d = max(0.0, x - 0.1); return uLift * d * d * 2.5; }
+float liftY(float x) { float d = max(0.0, x - 0.1); return uLift * d * d * 2.5 + uSpineOn * spineAt(x).y; }
 // Travelling wave along the dorsal/anal fins (head to tail), confined to the fins.
 float finFlutter(vec3 p) {
   float fin = smoothstep(uFinH, uFinH + 0.15, abs(p.y));
@@ -1043,11 +1054,21 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
           { float a = -uGape * aJaw, c = cos(a), s = sin(a); vec2 d = p0.xy - uHinge;
             p0.xy = uHinge + vec2(d.x * c - d.y * s, d.x * s + d.y * c); }
         #endif
+        #ifdef FISH_FIN
+          // Median fins fold: rays above the body lower and sweep back (not the caudal blade).
+          { float over = abs(p0.y) - uFinH;
+            if (over > 0.0 && p0.x > uXPed + 0.03) {
+              float k = uFold * smoothstep(0.0, 0.05, over);
+              p0.y = sign(p0.y) * (uFinH + over * (1.0 - 0.55 * k));
+              p0.x -= over * 0.35 * k;
+            } }
+        #endif
         vec3 transformed = p0;
         float swZ = p0.z * ventScale(p0) + finFlutter(p0);
         transformed.x = p0.x - swZ * swS;
         transformed.y = p0.y + liftY(p0.x);
         transformed.z = swH + swZ * swC;`);
+    if (tissue?.kind === 'fin') shader.defines = { ...shader.defines, FISH_FIN: '' };
     if (tissue?.jaw) {
       shader.defines = { ...shader.defines, FISH_JAW: '' };
       shader.vertexShader = 'attribute float aJaw;\nuniform float uGape;\nuniform vec2 uHinge;\n' + shader.vertexShader;
@@ -1244,10 +1265,18 @@ function normaliseModel(root, cfg) {
   return { parts, finH: (height / len) * (cfg.finFrac ?? 0.3) };
 }
 
-function buildCustomModel(sp, model) {
-  const uniforms = {
-    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: model.finH }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -0.3 }, uXGill: { value: 9 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 },
+// The swim shader's uniforms (SWIM_GLSL) with their resting values; every swim material needs the full set.
+function swimUniforms(over = {}) {
+  return {
+    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 },
+    uXPed: { value: -0.3 }, uXGill: { value: 9 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 },
+    uBendTail: { value: 0 }, uFold: { value: 0 }, uCup: { value: 0 }, uSpineOn: { value: 0 }, uSpine: { value: new Float32Array(24) },
+    ...over,
   };
+}
+
+function buildCustomModel(sp, model) {
+  const uniforms = swimUniforms({ uFinH: { value: model.finH }, uXPed: { value: -0.3 } });
   const group = new THREE.Group();
   for (const p of model.parts) {
     const mats = (Array.isArray(p.mat) ? p.mat : [p.mat]).map((src) => {
@@ -1299,11 +1328,11 @@ export function buildFishModel(sp, opts = {}) {
   if (opts.model) return buildCustomModel(sp, opts.model);
   if (!opts.procedural && custom.has(sp.id)) return buildCustomModel(sp, custom.get(sp.id));
   const a = speciesAssets(sp);
-  const uniforms = {
-    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: a.prof.H }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: a.prof.xPed }, uXGill: { value: a.prof.x(gillU(sp)) }, uVent: { value: 0 },
-    uAnguil: { value: sp.swim?.mode === 'anguilliform' ? 1 : 0 }, uLift: { value: 0 },
+  const uniforms = swimUniforms({
+    uFinH: { value: a.prof.H }, uXPed: { value: a.prof.xPed }, uXGill: { value: a.prof.x(gillU(sp)) },
+    uAnguil: { value: sp.swim?.mode === 'anguilliform' ? 1 : 0 },
     uGape: { value: 0 }, uHinge: { value: new THREE.Vector2(9, 9) },
-  };
+  });
   if (sp.mouth) uniforms.uHinge.value.set(a.prof.x(sp.mouth.u), a.prof.centre(sp.mouth.u) - sp.mouth.v * a.prof.half(sp.mouth.u));
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
@@ -1315,7 +1344,7 @@ export function buildFishModel(sp, opts = {}) {
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport.
-  const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -9 }, uXGill: { value: 9 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 } };
+  const still = swimUniforms({ uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 } });
   const pectMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), still, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });

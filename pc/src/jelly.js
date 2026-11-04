@@ -30,6 +30,7 @@ const COMMON = /* glsl */`
 uniform float uPulse;     // 0 relaxed .. 1 fully contracted
 uniform float uR;         // bell radius
 uniform float uTime, uSeed, uLight;
+uniform vec3 uTrail;     // bell-space sweep of the trailing parts: they drag behind the bell's motion and hang towards the world's down
 varying vec3 vView;
 varying float vDist;
 // Bell margin under contraction: s = 0 at the apex .. 1 at the margin.
@@ -101,7 +102,8 @@ void main() {
   float sweep = 0.35 + 0.5 * uPulse;
   vec3 p = dir * rim.x + vec3(0.0, rim.y, 0.0)
          + (dir * sweep * aS - vec3(0.0, aS, 0.0)) * L
-         + vec3(sin(uTime * 0.7 + a * 5.0 + uSeed), 0.0, cos(uTime * 0.6 + a * 4.0)) * 0.08 * L * aS * aS;
+         + vec3(sin(uTime * 0.7 + a * 5.0 + uSeed), 0.0, cos(uTime * 0.6 + a * 4.0)) * 0.08 * L * aS * aS
+         + uTrail * L * aS * aS;
   vec4 w = modelMatrix * vec4(p, 1.0);
   vView = cameraPosition - w.xyz;
   vDist = length(vView);
@@ -128,6 +130,7 @@ void main() {
          + vec3(0.0, -s * L, 0.0) + out_ * ruffle * w * 0.9
          + vec3(sin(uTime * 0.5 + aArm * 2.1 + uSeed), 0.0, cos(uTime * 0.43 + aArm)) * 0.12 * L * s * s;
   p.y += uPulse * 0.06 * uR * (1.0 - s);
+  p += uTrail * L * s * s;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vView = cameraPosition - wp.xyz;
   vDist = length(vView);
@@ -184,7 +187,7 @@ export class Jelly {
     this.R = range(rng, sp.size[0], sp.size[1]);
     const g = sharedGeometry();
     this.u = {
-      uPulse: { value: 0 }, uR: { value: this.R }, uTime: { value: 0 }, uSeed: { value: rng() * 10 }, uLight: { value: 1 },
+      uPulse: { value: 0 }, uTrail: { value: new THREE.Vector3() }, uR: { value: this.R }, uTime: { value: 0 }, uSeed: { value: rng() * 10 }, uLight: { value: 1 },
       uTint: { value: new THREE.Color(0.55, 0.75, 1.0) }, uGonad: { value: new THREE.Color(0.95, 0.8, 1.0) },
     };
     const mat = (v, f) => new THREE.ShaderMaterial({ uniforms: this.u, vertexShader: v, fragmentShader: f, ...additive });
@@ -212,6 +215,8 @@ export class Jelly {
     this.wanderT = 0;
     this._q = new THREE.Quaternion();
     this._f = new THREE.Vector3();
+    this.trailV = new THREE.Vector3();   // velocity of the trail spring
+    this._t = new THREE.Vector3();
   }
 
   // Bell contraction over one pulse cycle: quick (30%), then a slow relaxation.
@@ -261,6 +266,16 @@ export class Jelly {
     this.model.position.copy(this.pos);
     this.model.quaternion.copy(this._q.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, this.axis));
     this.u.uPulse.value = c;
+    // Tentacles and oral arms are soft: they trail opposite the bell's motion through the water and keep
+    // hanging towards the world's down as the bell tips, on a soft, underdamped spring (so a tilt or a
+    // bump sets them swinging slowly).
+    const inv = this._q.invert();
+    const target = this._t.copy(this.vel).multiplyScalar(-6 / this.R).add(this._f.set(0, -1, 0)).applyQuaternion(inv);
+    target.y += 1;   // the rest pose already hangs along the bell's own down
+    target.clampLength(0, 1.2);
+    const tr = this.u.uTrail.value, w = 2 * Math.PI * 0.35;
+    this.trailV.addScaledVector(this._f.subVectors(target, tr), w * w * dt).multiplyScalar(Math.exp(-2 * 0.3 * w * dt));
+    tr.addScaledVector(this.trailV, dt);
     this.u.uTime.value += dt;
     this.u.uLight.value = 0.25 + 0.75 * world.light;
   }
