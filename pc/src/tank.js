@@ -3,10 +3,16 @@
 // normalizeTank() is the single gate: anything it returns is safe to build a tank from.
 
 import { SPECIES } from './species.js';
+import { JELLY_SPECIES } from './jelly.js';
 
 export const TANK_VERSION = 1;
-export const SCENERY = ['reef'];       // layouts buildReef() knows; more to come
+export const SCENERY = ['reef'];       // layouts buildReef() knows (bake.js bakes each); more to come
+// Every tank kind: the reef layouts, and the jelly tank (jelly.js: a backlit blue kreisel, no scenery).
+export const TANK_SCENERY = [...SCENERY, 'jelly'];
 export const LIMITS = { perSpecies: 12, totalFish: 30, nameLength: 20, feedMinutes: 120 };
+// Which animals each kind of tank can hold: jellies live only in the jelly tank, and it holds only jellies.
+const HABITAT = { reef: SPECIES, jelly: JELLY_SPECIES };
+const defaultFish = (scenery) => HABITAT[scenery === 'jelly' ? 'jelly' : 'reef'].map((sp) => ({ species: sp.id, count: sp.count }));
 
 export const DEFAULT_TANK = {
   version: TANK_VERSION,
@@ -15,7 +21,7 @@ export const DEFAULT_TANK = {
   clock: false,
   feedMinutes: 4,
   drift: true,
-  fish: SPECIES.map((sp) => ({ species: sp.id, count: sp.count })),
+  fish: defaultFish('reef'),
 };
 
 const int = (v, lo, hi, fallback) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : fallback);
@@ -29,15 +35,17 @@ export function normalizeTank(raw) {
   if (raw !== undefined && src !== raw) warnings.push('tank config is not an object; using defaults');
   if (src.version !== undefined && src.version !== TANK_VERSION) warnings.push(`tank version ${src.version} != ${TANK_VERSION}`);
 
-  const scenery = SCENERY.includes(src.scenery) ? src.scenery : DEFAULT_TANK.scenery;
+  const scenery = TANK_SCENERY.includes(src.scenery) ? src.scenery : DEFAULT_TANK.scenery;
   if (src.scenery !== undefined && scenery !== src.scenery) warnings.push(`unknown scenery "${src.scenery}"`);
 
-  const known = new Map(SPECIES.map((sp) => [sp.id, sp]));
+  const habitat = scenery === 'jelly' ? 'jelly' : 'reef';
+  const known = new Map(HABITAT[habitat].map((sp) => [sp.id, sp]));
+  const elsewhere = new Set(Object.values(HABITAT).flat().map((sp) => sp.id));
   const merged = new Map();   // species id -> { count, names }, keeps first-seen order
-  const list = Array.isArray(src.fish) ? src.fish : DEFAULT_TANK.fish;
+  const list = Array.isArray(src.fish) ? src.fish : defaultFish(scenery);
   for (const entry of list) {
     const id = entry && entry.species;
-    if (!known.has(id)) { warnings.push(`unknown species "${id}"`); continue; }
+    if (!known.has(id)) { warnings.push(elsewhere.has(id) ? `"${id}" doesn't live in a ${habitat} tank` : `unknown species "${id}"`); continue; }
     const names = (Array.isArray(entry.names) ? entry.names : [])
       .filter((n) => typeof n === 'string')
       .map((n) => n.trim().slice(0, LIMITS.nameLength))
@@ -85,7 +93,10 @@ export async function loadTank(params) {
       console.warn(`tank: could not load ${url} (${e.message}); using defaults`);
     }
   }
-  raw = { ...DEFAULT_TANK, ...raw };
+  const scenery = params.get('scenery') || raw?.scenery;
+  // A jelly tank without its own fish list gets the jellies, not the reef fish.
+  raw = { ...DEFAULT_TANK, ...(scenery === 'jelly' && !raw?.fish ? { fish: defaultFish('jelly') } : {}), ...raw };
+  if (scenery) raw.scenery = scenery;
   if (params.get('seed')) raw.seed = params.get('seed');
   if (params.has('clock')) raw.clock = params.get('clock') === '1';
   if (params.get('feed')) raw.feedMinutes = params.get('feed');

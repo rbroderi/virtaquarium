@@ -142,7 +142,24 @@ The camera position is `buildReef`'s last argument. It defaults to `(0, 4.6, 15)
 layer when they're near the glass. They change the height field, which the Roku fish brains use if those
 are exported. If the Roku side has its own copy of the height field, regenerate it.
 
+## Jelly tank (added 2026-11-04)
+
+`tank.scenery` can now be `"jelly"`: moon jellies (`pc/src/jelly.js`) in a backlit deep-blue void with no
+reef, sand or surface, holding only jellies.
+
+`SCENERY` in `tank.js` is still `['reef']`, the layouts `bake.js` loops over, so the bake is unchanged. The
+new list of every tank kind is `TANK_SCENERY`.
+
+A Roku jelly tank would need:
+- **Backdrop:** the gradient from `buildJellyTank`, rendered alone.
+- **Jelly sprites:** additive (they add light and block almost none), with a short pulse cycle. A few frames
+  from bell relaxed to contracted, played at about 0.5–1 Hz, plus tilted variants.
+- **Motion:** a port of `Jelly.update`, which covers the pulse thrust, slight sinking, a preferred depth and
+  home column, the righting tendency, soft bumping between bells, and the tank's current.
+
 ## Log
+
+- 2026-11-04: jelly tank (`scenery: "jelly"`), PC only; not in `SCENERY`, so the bake skips it.
 
 - 2026-11-04: baked reef light v2: soft area-light sun shadows, coloured two-bounce light and a per-pixel
   rest-view bake; the bake call now takes options (see above).

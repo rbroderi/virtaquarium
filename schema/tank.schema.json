@@ -9,7 +9,7 @@
   "properties": {
     "version": { "const": 1 },
     "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647, "default": 7, "description": "Seeds reef layout and fish placement." },
-    "scenery": { "enum": ["reef"], "default": "reef" },
+    "scenery": { "enum": ["reef", "jelly"], "default": "reef", "description": "reef: rock, corals and reef fish. jelly: a backlit blue kreisel that holds only jellies (pc/src/jelly.js)." },
     "clock": { "type": "boolean", "default": false, "description": "Follow local time of day (lights dim at night)." },
     "feedMinutes": { "type": "integer", "minimum": 0, "maximum": 120, "default": 4, "description": "Auto-feeder interval; 0 turns it off." },
     "drift": { "type": "boolean", "default": true, "description": "Gentle camera parallax." },

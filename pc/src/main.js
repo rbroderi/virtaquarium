@@ -15,6 +15,7 @@ import { loadTank } from './tank.js';
 import { PhotoCamera } from './photo.js';
 import { LightRig } from './rig.js';
 import { bakeReefLight, reefLightUniforms, ScreenAO } from './reefLight.js';
+import { JELLY_SPECIES, Jelly, buildJellyTank } from './jelly.js';
 
 const params = new URLSearchParams(location.search);
 fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
@@ -78,15 +79,23 @@ const photo = params.has('photo') && params.get('photo') !== '0' ? new PhotoCame
 const customModels = await loadCustomModels(SPECIES);
 if (customModels.length) console.info('Using GLB models for:', customModels.join(', '));
 
-// Optional generated rocks/corals (tools/tripo.mjs) replace the procedural ones.
-const scenery = await loadScenery();
-if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
-const reef = buildReef(scene, TANK_W, SEED, scenery, CAM_BASE);
+// The jelly tank (jelly.js) is a backlit blue void with only jellies in it: no reef, sand or surface.
+const JELLY_TANK = tank.scenery === 'jelly';
+let reef;
+if (JELLY_TANK) {
+  reef = buildJellyTank(scene);
+  backdrop.visible = false;
+} else {
+  // Optional generated rocks/corals (tools/tripo.mjs) replace the procedural ones.
+  const scenery = await loadScenery();
+  if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
+  reef = buildReef(scene, TANK_W, SEED, scenery, CAM_BASE);
+}
 // Light the static reef once by ray casting (reefLight.js): soft sun shadows, ambient occlusion and
 // coloured bounce light, per pixel from the camera's rest view and in a grid for the fish.
 // ?reeflight=0 to compare; L toggles it.
 const ao = new ScreenAO(renderer);
-if (params.get('reeflight') !== '0') {
+if (!JELLY_TANK && params.get('reeflight') !== '0') {
   rig.apply(1);   // baked at full daylight; the live light level scales it
   bakeReefLight(renderer, reef, {
     sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
@@ -98,9 +107,9 @@ if (params.get('reeflight') !== '0') {
   sun.shadow.radius = 6; sun.shadow.blurSamples = 12;
 }
 const snow = new MarineSnow(scene, TANK_W * 1.4, rng);
-const bubbles = new Bubbles(scene, reef.bubbler, rng);
+const bubbles = reef.bubbler ? new Bubbles(scene, reef.bubbler, rng) : null;
 const surface = makeSurface(TANK_W);
-scene.add(surface);
+if (!JELLY_TANK) scene.add(surface);
 
 const bounds = { x0: -TANK_W / 2 + 0.9, x1: TANK_W / 2 - 0.9, y0: 0.25, y1: 9.2, z0: -3.0, z1: 2.7 };
 const world = new World(scene, reef, bounds, rng);
@@ -110,7 +119,17 @@ const speciesById = new Map(SPECIES.map((sp) => [sp.id, sp]));
 const chosen = new Set(tank.fish.flatMap((e) => e.names));
 const names = FISH_NAMES.filter((n) => !chosen.has(n));
 const homes = reef.homes.slice();
+const jellies = [];
+const jellyById = new Map(JELLY_SPECIES.map((sp) => [sp.id, sp]));
 for (const entry of tank.fish) {
+  if (jellyById.has(entry.species)) {
+    for (let i = 0; i < entry.count; i++) {
+      const j = new Jelly(jellyById.get(entry.species), rng, bounds);
+      jellies.push(j);
+      scene.add(j.model);
+    }
+    continue;
+  }
   const sp = speciesById.get(entry.species);
   for (let i = 0; i < entry.count; i++) {
     const name = entry.names[i] || (names.length ? names.splice(Math.floor(rng() * names.length), 1)[0] : sp.name);
@@ -170,13 +189,14 @@ function applyLight(l) {
   renderer.toneMappingExposure = 1.25 * (0.45 + 0.55 * l);
   surface.material.uniforms.uLight.value = l;
   surface.material.uniforms.uBase.value.copy(scene.fog.color);
+  if (reef.backdrop) reef.backdrop.material.uniforms.uLight.value = 0.08 + 0.92 * l;   // the jelly tank's light panel
 }
 applyLight(light);
 
 // ---------- loop ----------
 
 const clock = new THREE.Clock();
-let t = 0, nextFeed = FEED_MIN > 0 ? 45 : Infinity, paused = false;
+let t = 0, nextFeed = FEED_MIN > 0 && !JELLY_TANK ? 45 : Infinity, paused = false;   // jellies aren't fed flakes
 window.addEventListener('keydown', (e) => {
   if (e.key === ' ') paused = !paused;
   if (e.key === 'n' || e.key === 'N') light = light > 0.5 ? 0 : 1;
@@ -204,11 +224,12 @@ function frame() {
   }
 
   world.update(dt);
+  for (const j of jellies) j.update(dt, world, jellies);
   updateWaves(t);
-  caustics.update();
+  if (!JELLY_TANK) caustics.update();   // no surface in view: the light panel is behind the tank
   const flow = (p, out) => world.flow(p, out);
   snow.update(dt, t, flow);
-  bubbles.update(dt, t, flow, world.light);
+  if (bubbles) bubbles.update(dt, t, flow, world.light);
 
   if (DRIFT) {
     camera.position.set(CAM_BASE.x + Math.sin(t * 0.05) * 0.6, CAM_BASE.y + Math.sin(t * 0.037) * 0.15, CAM_BASE.z);
@@ -254,4 +275,4 @@ function fitCanvas() {
 }
 
 // Exposed for the Roku exporter and debugging.
-window.aquarium = { THREE, scene, camera, renderer, world, reef, SPECIES, caustics, water, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); } };
+window.aquarium = { THREE, scene, camera, renderer, world, reef, jellies, SPECIES, caustics, water, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); } };
