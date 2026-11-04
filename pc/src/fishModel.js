@@ -923,12 +923,30 @@ function paintEye(sp) {
 }
 
 // Eyeball geometry already placed in fish space (so the swim shader moves it with the head).
+// The skin's distance from the midplane at body position u and texture height v (-1 dorsal, +1
+// ventral), before relief: the body mesh's cross-section, shared with the eyes so they sit on it.
+function flankZ(sp, prof, u, v) {
+  const e = sp.eye, len = sp.body.len, g0 = gillU(sp), cy = -v;
+  // Section exponent: compressed fish (tangs, angels) have a lens-shaped section, thickest along the
+  // spine and sharp at the fin bases (> 1); round-bodied fish (gramma, lionfish) are fuller (< 1).
+  const flank = sp.body.flank ?? 1.6 - sp.body.width * 1.6;
+  const h = prof.half(u);
+  let z = Math.pow(Math.sqrt(Math.max(0, 1 - cy * cy)), flank) * prof.width(u);
+  z *= 1 - 0.25 * Math.max(0, cy) ** 4;                                  // narrow dorsal ridge (fin base)
+  z *= 1 + 0.12 * Math.max(0, -cy) * (1 - smooth01(u / 0.6));            // fuller belly over the gut
+  const op = smooth01((u - (g0 - 0.14)) / 0.13) * (1 - smooth01((u - (g0 - 0.01)) / 0.022));
+  z *= 1 + 0.045 * op * (1 - Math.abs(cy) ** 3);                         // gill cover overhangs the flank
+  const du = (u - e.u) / (e.r * 1.6 / len), dv = (v - e.v) / (e.r * 1.6 / Math.max(h, 1e-3));
+  z *= 1 + 0.07 * Math.exp(-(du * du + dv * dv));                       // eye socket
+  return z;
+}
+
 function eyeGeometry(prof, sp, side) {
   const e = sp.eye, geo = new THREE.SphereGeometry(1, 32, 20);
   const p = geo.attributes.position, uv = geo.attributes.uv;
   for (let i = 0; i < p.count; i++) uv.setXY(i, 0.5 - p.getX(i) * 0.5, 0.5 + p.getY(i) * 0.5);   // planar, looking along +z
   const ex = prof.x(e.u), ey = prof.centre(e.u) - e.v * prof.half(e.u);
-  const zAt = (u, v) => prof.width(u) * Math.sqrt(Math.max(0.05, 1 - v * v));
+  const zAt = (u, v) => flankZ(sp, prof, u, v);
   const ez = zAt(e.u, e.v);
   // The cornea sits nearly flush with the head (only the lens bulges a little), so the eyeball is a
   // shallow cap just proud of the socket, turned to the head's surface there: the head narrows towards
@@ -1127,22 +1145,12 @@ function bodyGeometry(prof, sp) {
   const fine = !!sp.ridges, NU = fine ? 160 : 110, NA = fine ? 80 : 56, CAP = 5;
   const relief = reliefOf(sp, prof);
   const e = sp.eye, len = sp.body.len, g0 = gillU(sp);
-  // Section exponent: compressed fish (tangs, angels) have a lens-shaped section, thickest along the
-  // spine and sharp at the fin bases (> 1); round-bodied fish (gramma, lionfish) are fuller (< 1).
-  const flank = sp.body.flank ?? 1.6 - sp.body.width * 1.6;
   const us = [];
   for (let i = 0; i <= NU; i++) { const t = i / NU; us.push(t * t * 0.35 + t * 0.65); }
   // Cross-section at body position u and angle th (th = 0 is the dorsal midline).
   const section = (u, th) => {
-    const h = prof.half(u), w = prof.width(u), cy = Math.cos(th), sz = Math.sin(th);
-    const v = -cy;   // texture v: -1 dorsal, +1 ventral
-    let z = Math.pow(Math.abs(sz), flank) * w;
-    z *= 1 - 0.25 * Math.max(0, cy) ** 4;                                  // narrow dorsal ridge (fin base)
-    z *= 1 + 0.12 * Math.max(0, -cy) * (1 - smooth01(u / 0.6));            // fuller belly over the gut
-    const op = smooth01((u - (g0 - 0.14)) / 0.13) * (1 - smooth01((u - (g0 - 0.01)) / 0.022));
-    z *= 1 + 0.045 * op * (1 - Math.abs(cy) ** 3);                         // gill cover overhangs the flank
-    const du = (u - e.u) / (e.r * 1.6 / len), dv = (v - e.v) / (e.r * 1.6 / Math.max(h, 1e-3));
-    z *= 1 + 0.07 * Math.exp(-(du * du + dv * dv));                       // eye socket
+    const h = prof.half(u), cy = Math.cos(th), sz = Math.sin(th);
+    let z = flankZ(sp, prof, u, -cy);   // texture v = -cos(th): -1 dorsal, +1 ventral
     let y = prof.centre(u) + cy * h;
     if (fine) {
       const yc = prof.centre(u), ry = y - yc, k = 1 + relief(prof.x(u), y) / Math.max(1e-3, Math.hypot(ry, z));
