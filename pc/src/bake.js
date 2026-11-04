@@ -7,14 +7,18 @@
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildFishModel, loadCustomModels } from './fishModel.js';
-import { buildReef } from './reef.js';
-import { waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, makeSurface } from './water.js';
+import { buildReef, loadScenery } from './reef.js';
+import {
+  waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, makeSurface,
+  Caustics, WaterRenderer, causticUniforms, updateWaves, setSunDirection,
+} from './water.js';
 import { SCENERY } from './tank.js';
 
 const params = new URLSearchParams(location.search);
 const FRAMES = Number(params.get('frames') || 12);
 const SS = 2;                       // supersampling factor
 const SCREEN = { w: 1920, h: 1080 };
+const CAUSTIC_T = 3.0;   // wave time (s) the backdrop's caustics are frozen at
 const PX_PER_UNIT = 144;            // sprite resolution: ~1.25x on-screen size at 1080p, headroom for near fish
 const YAW = 0.35;                   // swim-row angle towards the viewer (radians)
 const OUT = 'roku/assets/';
@@ -133,7 +137,8 @@ async function bakeScenery(scenery, seed) {
   sc.left = -TANK_W * 0.75; sc.right = TANK_W * 0.75; sc.top = 9; sc.bottom = -9; sc.near = 5; sc.far = 40;
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 4;
   scene.add(sun, new THREE.HemisphereLight(new THREE.Color(0.86, 0.92, 1.0), 0x8a7458, 1.0));
-  const reef = buildReef(scene, TANK_W, seed);
+  // Generated rocks and corals (pc/models/scenery.json), as in main.js; missing ones stay procedural.
+  const reef = buildReef(scene, TANK_W, seed, await loadScenery());
   const surface = makeSurface(TANK_W);
   scene.add(surface);
   waterUniforms.uCaustic.value = 1;
@@ -146,15 +151,23 @@ async function bakeScenery(scenery, seed) {
   renderer.setSize(SCREEN.w, SCREEN.h, false);
   renderer.setClearColor(0x000000, 1);
 
+  // The same simulated caustics and light shafts as the PC tank, frozen at one moment of the waves.
+  setSunDirection(sun.position);
+  updateWaves(CAUSTIC_T);
+  const caustics = new Caustics(renderer);
+  caustics.update();
+  const water = new WaterRenderer(renderer);
+
   const key = `${scenery}-${seed}`;
   const out = document.createElement('canvas');
   out.width = SCREEN.w; out.height = SCREEN.h;
   const g = out.getContext('2d');
-  renderer.render(scene, camera);
+  water.render(scene, camera, sun);
   g.drawImage(renderer.domElement, 0, 0);
   await save(`scenery/${key}.jpg`, await toBlob(out, 'image/jpeg', 0.9));
 
-  // Foreground: only reef meshes near the glass, on a transparent background.
+  // Foreground: only reef meshes near the glass, on a transparent background. Rendered without the
+  // shaft pass (which is opaque); the reef keeps its caustic lighting so it matches the backdrop.
   const FG_Z = 1.0, hidden = [];
   scene.traverse((o) => {
     if (!o.isMesh && !o.isInstancedMesh) return;
@@ -169,6 +182,8 @@ async function bakeScenery(scenery, seed) {
   await save(`scenery/${key}-fg.png`, await toBlob(out, 'image/png'));
   for (const o of hidden) o.visible = true;
   renderer.shadowMap.enabled = false;
+  // Sprites must not carry a frozen caustic pattern (fish move through it on the Roku).
+  causticUniforms.uCauOn.value = 0;
 
   // Screen-space helpers for the Roku's 2D brains: reef top line at mid depth, anemone, swim box.
   const project = (x, y, z) => {

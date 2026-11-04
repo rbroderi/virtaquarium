@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, lerp, mulberry32, makeCanvas, shade, rgba } from './util.js';
+import { addCaustics } from './water.js';
 
 // ---------- side profile ----------
 
@@ -679,7 +680,7 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         transformed.z += swimDisp(position);`);
   };
   base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind : 'plain');
-  return base;
+  return addCaustics(base);   // fish swim through the same focused light as the reef
 }
 
 // ---------- geometry ----------

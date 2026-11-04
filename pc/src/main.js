@@ -6,7 +6,10 @@ import { World } from './world.js';
 import { Fish } from './fish.js';
 import { loadCustomModels } from './fishModel.js';
 import { mulberry32, range, clamp, lerp } from './util.js';
-import { waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, GodRays, MarineSnow, Bubbles, makeSurface } from './water.js';
+import {
+  waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, MarineSnow, Bubbles, makeSurface,
+  Caustics, WaterRenderer, updateWaves, setSunDirection,
+} from './water.js';
 import { UI } from './ui.js';
 import { loadTank } from './tank.js';
 
@@ -55,6 +58,11 @@ sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.03;
 sun.shadow.radius = 4;
 scene.add(sun);
+// The fixture's light refracts through the moving surface: simulated caustics on every surface,
+// and light shafts where the focused light crosses the water.
+setSunDirection(sun.position);
+const caustics = new Caustics(renderer);
+const water = new WaterRenderer(renderer);
 const hemi = new THREE.HemisphereLight(0xdcecff, 0x8a7458, 1.0);   // white downwelling (aquarium lights) + sand bounce
 scene.add(hemi);
 
@@ -66,7 +74,6 @@ if (customModels.length) console.info('Using GLB models for:', customModels.join
 const scenery = await loadScenery();
 if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
 const reef = buildReef(scene, TANK_W, SEED, scenery);
-const rays = new GodRays(scene, TANK_W, rng);
 const snow = new MarineSnow(scene, TANK_W * 1.4, rng);
 const bubbles = new Bubbles(scene, reef.bubbler, rng);
 const surface = makeSurface(TANK_W);
@@ -127,6 +134,7 @@ function applyLight(l) {
   backdrop.material.uniforms.uBase.value.copy(scene.fog.color);
   renderer.toneMappingExposure = 1.25 * (0.45 + 0.55 * l);
   surface.material.uniforms.uLight.value = l;
+  surface.material.uniforms.uBase.value.copy(scene.fog.color);
 }
 applyLight(light);
 
@@ -143,7 +151,7 @@ function frame() {
   requestAnimationFrame(frame);
   fitCanvas();
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (paused) { renderer.render(scene, camera); return; }
+  if (paused) { water.render(scene, camera, sun); return; }
   t += dt;
   waterUniforms.uTime.value = t;
 
@@ -157,7 +165,8 @@ function frame() {
   }
 
   world.update(dt);
-  rays.update(t, world.light);
+  updateWaves(t);
+  caustics.update();
   const flow = (p, out) => world.flow(p, out);
   snow.update(dt, t, flow);
   bubbles.update(dt, t, flow, world.light);
@@ -167,7 +176,7 @@ function frame() {
     camera.lookAt(LOOK);
   }
   ui.update(dt);
-  renderer.render(scene, camera);
+  water.render(scene, camera, sun);
 }
 frame();
 
@@ -184,4 +193,4 @@ function fitCanvas() {
 }
 
 // Exposed for the Roku exporter and debugging.
-window.aquarium = { THREE, scene, camera, renderer, world, reef, SPECIES, rays, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); } };
+window.aquarium = { THREE, scene, camera, renderer, world, reef, SPECIES, caustics, water, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); } };

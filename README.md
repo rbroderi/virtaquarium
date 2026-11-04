@@ -51,6 +51,14 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   - Inscattered light fills long paths, and only the path inside the glass counts.
   - A custom white balance at reef depth is applied, as an underwater camera would.
   - The ambient environment is the underwater radiance field: Snell's window overhead, blue-green inscatter around it, sand upwelling below.
+- **Surface waves**: 24 capillary-gravity waves, 5–50 cm long, each travelling at its physical phase speed (ω² = gk + σk³/ρ). They tile every 50 cm. The caustics, the light shafts and the surface all use this one wave field.
+- **Caustics** are simulated, not painted:
+  - A fine grid on the moving surface refracts the light by Snell's law, with seawater IOR per colour channel so bright lines fringe slightly.
+  - The grid is projected to three depths. Irradiance there is the area ratio of each surface triangle to its projection, which conserves energy, times the Fresnel transmittance.
+  - Every lit surface, fish included, looks the pattern up along the refracted light ray. It multiplies only the direct light, so shadows and shading stay correct.
+  - The light source's angular size (0.35°) blurs the pattern in proportion to depth.
+- **Light shafts**: a post pass ray-marches each view ray through the water and adds single scattering: Henyey–Greenstein phase (g = 0.75), Beer–Lambert along the light path and the view path, and the caustic fluctuation as the source. Shafts brighten where the surface focuses light and dim between.
+- **Surface from below**: exact water-to-air Fresnel. Beyond the 48.6° critical angle it is a mirror of the tank (total internal reflection); waves open Snell's window onto the fixture in flickers.
 - **Water flow**: a divergence-free overturning cell from the return pump, about 1.5 cm/s and pulsing. Fish, food, bubbles and particles are all carried by it.
 - **Bubbles**: rise speed from Mendelson's wave-analogy formula, Boyle's-law growth, an oblate shape, and zig-zag above 2 mm. Shading uses Fresnel reflection with total internal reflection past the 48.8° critical angle, which gives the bright rim.
 - **Food**: flakes float on the surface film, then settle at 1–2.5 cm/s with falling-leaf flutter.
@@ -137,7 +145,7 @@ pc/src/brain.js      per-fish brain
 pc/src/fish.js       swimming physics
 pc/src/fishModel.js  procedural fish meshes/textures, swim shader, GLB loader
 pc/src/reef.js       rocks, corals, anemone, sand, reef heightfield
-pc/src/water.js      underwater light transport, caustics, rays, bubbles, particles
+pc/src/water.js      underwater light transport, waves, caustics, light shafts, surface, bubbles, particles
 pc/src/world.js      shared tank state: bounds, flow field, food, shoal goals
 pc/src/species.js    species anatomy, temperament and swimming biomechanics
 pc/models/           optional GLB models + models.json

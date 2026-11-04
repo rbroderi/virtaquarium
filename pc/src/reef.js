@@ -489,6 +489,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     const sand = new THREE.Mesh(geo, stdMat({ map: sandTex, bumpMap: sandTex, bumpScale: 1.5, roughness: 1 }, 0.55));
     sand.receiveShadow = true;
     sand.userData.noHeight = true;
+    sand.name = 'sand';
     reef.add(sand);
   }
 
@@ -543,14 +544,29 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
 
   const corals = new THREE.Group();
   reef.add(corals);
-  const top = (x, z) => hf.sample(x, z);
+  // Corals stand on the actual rock or sand surface straight below them. (The heightfield is a
+  // 0.2-unit grid: next to a steep rock face it reports the cliff top, which left stalks floating.)
+  reef.updateMatrixWorld(true);
+  const groundRay = new THREE.Raycaster(), DOWN = new THREE.Vector3(0, -1, 0), sandMesh = reef.getObjectByName('sand');
+  const groundAt = (x, z) => {
+    groundRay.set(new THREE.Vector3(x, 30, z), DOWN);
+    const hit = groundRay.intersectObjects([rocks, sandMesh], true)[0];
+    return hit ? hit.point.y : hf.sample(x, z);
+  };
+  // r: footprint radius. A colony settles to the lowest point under its base, so where it overhangs
+  // a rock edge its base reaches down into the rock instead of hanging over the drop.
+  const top = (x, z, r = 0) => {
+    let y = groundAt(x, z);
+    for (let i = 0; r > 0 && i < 8; i++) y = Math.min(y, groundAt(x + Math.cos(i * Math.PI / 4) * r, z + Math.sin(i * Math.PI / 4) * r));
+    return y;
+  };
 
   // Staghorn on the central pile
   {
     const mat = stdMat({ vertexColors: true, roughness: 0.7, bumpMap: pores, bumpScale: 1.0 }, 0.9);
     for (const [x, z, s] of [[-0.6, -1.4, 1.25], [4.6, -1.3, 0.7], [-6.0, -2.6, 0.6]]) {
       const m = new THREE.Mesh(staghorn(rng, s), mat);
-      m.position.set(x * sx, top(x * sx, z) - 0.15, z);
+      m.position.set(x * sx, top(x * sx, z, 0.3 * s) - 0.15, z);
       m.rotation.y = rng() * 6;
       m.castShadow = m.receiveShadow = true;
       corals.add(m);
@@ -560,25 +576,25 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   // White finger dome (left) and lavender cauliflower
   {
     const d1 = domeCluster(rng, 1.0, 520, '#eee8dc', '#c9c2b0', 'finger');
-    d1.position.set(-5.5 * sx, top(-5.5 * sx, -0.9) - 0.1, -0.9);
+    d1.position.set(-5.5 * sx, top(-5.5 * sx, -0.9, 0.6) - 0.1, -0.9);
     corals.add(d1);
     swapCoral(corals, d1, scenery.coral.finger);
     const d2 = domeCluster(rng, 0.75, 650, '#c9a4dc', '#9e78b8', 'ball');
-    d2.position.set(-2.4 * sx, top(-2.4 * sx, -0.3) - 0.05, -0.3);
+    d2.position.set(-2.4 * sx, top(-2.4 * sx, -0.3, 0.45) - 0.05, -0.3);
     corals.add(d2);
     swapCoral(corals, d2, scenery.coral.cauliflower);
     const d3 = domeCluster(rng, 0.55, 300, '#3b52d1', '#6070e8', 'finger');
-    d3.position.set(1.4 * sx, Math.max(0, top(1.4 * sx, 1.6)) - 0.05, 1.6);
+    d3.position.set(1.4 * sx, Math.max(0, top(1.4 * sx, 1.6, 0.3)) - 0.05, 1.6);
     corals.add(d3);
     const d4 = domeCluster(rng, 0.45, 240, '#a8c45c', '#d8e070', 'finger');
-    d4.position.set(-1.0 * sx, top(-1.0 * sx, 0.4) - 0.05, 0.4);
+    d4.position.set(-1.0 * sx, top(-1.0 * sx, 0.4, 0.25) - 0.05, 0.4);
     corals.add(d4);
   }
   // Brain coral on the sand, front-left of centre
   {
     const m = new THREE.Mesh(brainCoral(rng, noise), stdMat({ vertexColors: true, roughness: 0.8 }, 0.9));
     m.scale.setScalar(0.8);
-    m.position.set(-1.6 * sx, Math.max(0, top(-1.6 * sx, 1.2)) - 0.05, 1.2);
+    m.position.set(-1.6 * sx, Math.max(0, top(-1.6 * sx, 1.2, 0.4)) - 0.05, 1.2);
     m.castShadow = m.receiveShadow = true;
     corals.add(m);
     swapCoral(corals, m, scenery.coral.brain);
@@ -592,7 +608,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     cap.rotation.z = 0.15;
     stalk.castShadow = cap.castShadow = true; cap.receiveShadow = true;
     g.add(stalk, cap);
-    g.position.set(-4.0 * sx, top(-4.0 * sx, 1.5) - 0.1, 1.5);
+    g.position.set(-4.0 * sx, top(-4.0 * sx, 1.5, 0.3) - 0.1, 1.5);
     corals.add(g);
     swapCoral(corals, g, scenery.coral.leather);
   }
@@ -602,7 +618,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     for (let i = 0; i < 4; i++) {
       const m = new THREE.Mesh(ruffledFan(rng), mat);
       const x = (5.4 + range(rng, -1.0, 1.2)) * sx, z = range(rng, -0.6, 0.6);
-      m.position.set(x, top(x, z) - 0.15, z);
+      m.position.set(x, top(x, z, 0.2) - 0.15, z);
       m.rotation.set(range(rng, -0.4, -0.1), range(rng, -0.6, 0.6), 0);
       m.scale.setScalar(range(rng, 0.6, 0.9));
       m.castShadow = true;
@@ -628,7 +644,8 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       const cx = range(rng, -6, 6) * sx, cz = range(rng, -1, 1.8), col = cols[patch % cols.length];
       for (let i = 0; i < 60; i++, n++) {
         const x = cx + range(rng, -0.25, 0.25), z = cz + range(rng, -0.2, 0.2);
-        _m.compose(_p.set(x, top(x, z) - 0.12, z), _q.identity(), _s.setScalar(range(rng, 0.8, 1.3)));
+        // 420 polyps: the heightfield grid is close enough (and far cheaper than raycasting).
+        _m.compose(_p.set(x, hf.sample(x, z) - 0.12, z), _q.identity(), _s.setScalar(range(rng, 0.8, 1.3)));
         mesh.setMatrixAt(n, _m);
         mesh.setColorAt(n, col);
       }
@@ -640,7 +657,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   // Host anemone on a low front rock
   const anemoneSpot = new THREE.Vector3(2.9 * sx, 0, 1.3);
   addRock(anemoneSpot.x, anemoneSpot.z, 1.1, 0.7, 0.9, 0.1);
-  anemoneSpot.y = hf.sample(anemoneSpot.x, anemoneSpot.z) - 0.12;
+  anemoneSpot.y = top(anemoneSpot.x, anemoneSpot.z, 0.15) - 0.12;
   const an = anemone(rng);
   an.position.copy(anemoneSpot);
   an.traverse((o) => (o.userData.noHeight = true));

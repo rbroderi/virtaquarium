@@ -1,64 +1,12 @@
 // Water atmosphere: backdrop gradient, fog, caustic light on surfaces, god rays,
 // drifting particles ("marine snow"), bubble column and the shimmering surface.
 import * as THREE from 'three';
-import { makeCanvas, range } from './util.js';
+import { makeCanvas, range, mulberry32 } from './util.js';
 
 export const waterUniforms = {
   uTime: { value: 0 },
   uCaustic: { value: 1 },
 };
-
-// Tileable water caustic (after joltz0r's well-known shader).
-export const CAUSTIC_GLSL = /* glsl */`
-float caustic(vec2 uv, float time) {
-  vec2 p = mod(uv * 6.28318, 6.28318) - 250.0;
-  vec2 i = vec2(p);
-  float c = 1.0;
-  float inten = 0.005;
-  for (int n = 0; n < 4; n++) {
-    float t = time * (1.0 - (3.5 / float(n + 1)));
-    i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
-    c += 1.0 / length(vec2(p.x / (sin(i.x + t) / inten), p.y / (cos(i.y + t) / inten)));
-  }
-  c /= 4.0;
-  c = 1.17 - pow(c, 1.4);
-  return pow(abs(c), 8.0);
-}
-`;
-
-// Adds animated caustic light to any lit material (chains with an existing onBeforeCompile).
-export function addCaustics(mat, strength = 1) {
-  const prev = mat.onBeforeCompile;
-  const prevKey = mat.customProgramCacheKey ? mat.customProgramCacheKey.bind(mat) : null;
-  mat.onBeforeCompile = (shader, renderer) => {
-    if (prev) prev(shader, renderer);
-    shader.uniforms.uTime = waterUniforms.uTime;
-    shader.uniforms.uCaustic = waterUniforms.uCaustic;
-    shader.uniforms.uCStrength = { value: strength };
-    shader.vertexShader = 'varying vec3 vCW;\nvarying vec3 vCN;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
-      {
-        vec4 cw = vec4(transformed, 1.0);
-        vec3 cn = objectNormal;
-        #ifdef USE_INSTANCING
-          cw = instanceMatrix * cw;
-          cn = mat3(instanceMatrix) * cn;
-        #endif
-        cw = modelMatrix * cw;
-        vCW = cw.xyz;
-        vCN = normalize(mat3(modelMatrix) * cn);
-      }`);
-    shader.fragmentShader = 'uniform float uTime;\nuniform float uCaustic;\nuniform float uCStrength;\nvarying vec3 vCW;\nvarying vec3 vCN;\n'
-      + CAUSTIC_GLSL + shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      {
-        float up = clamp(vCN.y * 0.8 + 0.25, 0.0, 1.0);
-        float depthFade = clamp(0.45 + vCW.y / 10.0, 0.0, 1.0);
-        float c = caustic(vCW.xz * 0.16 + vec2(vCW.y * 0.04, 0.0), uTime * 0.5);
-        totalEmissiveRadiance += diffuseColor.rgb * c * up * depthFade * uCaustic * uCStrength;
-      }`);
-  };
-  mat.customProgramCacheKey = () => (prevKey ? prevKey() : '') + '|caustic' + strength;
-  return mat;
-}
 
 // ---------- underwater light transport ----------
 //
@@ -147,6 +95,231 @@ export function installUnderwaterMedium() {
 // Inscatter base radiance (linear) at full daylight: blue-green, as seen in reef water.
 export const INSCATTER_DAY = new THREE.Color(0.030, 0.20, 0.33);
 
+// ---------- surface waves ----------
+//
+// The surface is a sum of small capillary-gravity waves stirred up by the return pump. Wave
+// vectors sit on a lattice of the tile, so the field (and its caustics) repeats seamlessly every
+// WAVE_TILE units, and each wave travels at its physical phase speed:
+//   omega^2 = g k + (sigma / rho) k^3
+// Wavelengths run 5-50 cm with ~2.5% slope each (rms slope ~0.08, a lively aquarium surface).
+export const WAVE_TILE = 4.0;   // units (0.5 m)
+const NWAVES = 24;
+const waves = (() => {
+  const rng = mulberry32(911), out = [], seen = new Set();
+  while (out.length < NWAVES) {
+    const n = 1 + Math.floor(Math.pow(rng(), 1.4) * 10);
+    const a = (rng() - 0.5) * 2.4 + (rng() < 0.2 ? Math.PI : 0);   // mostly along the pump's flow (+x)
+    const nx = Math.round(n * Math.cos(a)), nz = Math.round(n * Math.sin(a));
+    if ((!nx && !nz) || seen.has(nx + ',' + nz)) continue;
+    seen.add(nx + ',' + nz);
+    const kx = (2 * Math.PI * nx) / WAVE_TILE, kz = (2 * Math.PI * nz) / WAVE_TILE, k = Math.hypot(kx, kz);
+    const km = k / METRES_PER_UNIT;
+    out.push({ kx, kz, amp: (0.025 * (0.7 + 0.6 * rng())) / k, omega: Math.sqrt(9.81 * km + 7.3e-5 * km ** 3), phi: rng() * Math.PI * 2 });
+  }
+  return out;
+})();
+
+export const waveUniforms = {
+  uWaves: { value: waves.map((w) => new THREE.Vector4(w.kx, w.kz, w.amp, w.phi)) },
+  uSunAir: { value: new THREE.Vector3(0, -1, 0) },   // direction the light travels above the surface
+};
+
+// Advance the waves (phases are wrapped in double precision on the CPU).
+export function updateWaves(t) {
+  waves.forEach((w, i) => { waveUniforms.uWaves.value[i].w = (w.phi + w.omega * t) % (Math.PI * 2); });
+}
+
+// Light set up as an underwater direction (as three.js lights are) -> the direction it travels in
+// air before refracting at the surface (inverse Snell's law).
+export function setSunDirection(dirTowardsLight) {
+  const d = dirTowardsLight.clone().normalize(), h = Math.hypot(d.x, d.z);
+  const sinAir = Math.min(0.995, h * 1.34);
+  const cosAir = Math.sqrt(1 - sinAir * sinAir), sx = h > 1e-6 ? d.x / h : 0, sz = h > 1e-6 ? d.z / h : 0;
+  waveUniforms.uSunAir.value.set(-sx * sinAir, -cosAir, -sz * sinAir);
+}
+
+const WAVE_GLSL = /* glsl */`
+#define NWAVES ${NWAVES}
+uniform vec4 uWaves[NWAVES];
+vec2 waveGrad(vec2 p) {
+  vec2 g = vec2(0.0);
+  for (int i = 0; i < NWAVES; i++) { vec4 w = uWaves[i]; g += w.z * w.xy * cos(dot(w.xy, p) - w.w); }
+  return g;
+}
+`;
+
+// ---------- caustics ----------
+//
+// Caustics are simulated, not painted: every point of a fine grid on the wave surface refracts the
+// light (Snell, per-channel IOR so the bright lines fringe slightly), the grid is projected onto a
+// horizontal plane at depth D, and irradiance there is the ratio of a triangle's area on the surface
+// to its area on the plane (energy conservation), times the Fresnel transmittance relative to flat
+// water. Three depth layers are simulated because the pattern sharpens towards a focal depth and
+// then breaks up. Surfaces look the pattern up along the flat-water refracted ray; the light
+// source's angular size blurs it in proportion to depth (a soft sun / LED fixture).
+const CAU_RES = 512;
+const SEAWATER_IOR = [1.3370, 1.3405, 1.3445];   // ~650, 550, 450 nm
+const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+white.needsUpdate = true;
+
+export const causticUniforms = {
+  uCau0: { value: white }, uCau1: { value: white }, uCau2: { value: white },
+  uCauDepth: { value: new THREE.Vector3(2.8, 6.0, 9.2) },   // simulated depths below the surface (units)
+  uCauR0: { value: new THREE.Vector3(0, -1, 0) },          // flat-water refracted light direction
+  uCauTile: { value: WAVE_TILE },
+  uCauBlur: { value: Math.tan(THREE.MathUtils.degToRad(0.35)) },   // light source angular radius (LED / halide)
+  uCauOn: { value: 0 },                                    // 0 until a simulation runs (lab, bake)
+};
+
+// Irradiance multiplier for the direct light at world point p (mean 1 over the tile).
+const CAUSTIC_LOOKUP_GLSL = /* glsl */`
+uniform sampler2D uCau0;
+uniform sampler2D uCau1;
+uniform sampler2D uCau2;
+uniform vec3 uCauDepth;
+uniform vec3 uCauR0;
+uniform float uCauTile;
+uniform float uCauBlur;
+uniform float uCauOn;
+// lodBias > 0 looks up a softer pattern (used for light scattered in the volume).
+vec3 causticAt(vec3 p, float lodBias) {
+  if (uCauOn < 0.5) return vec3(1.0);
+  float D = max(${SURFACE_Y.toFixed(2)} - p.y, 0.0);
+  vec2 uv = (p.xz - uCauR0.xz * (D / -uCauR0.y)) / uCauTile;
+  float lod = log2(max(1.0, D * uCauBlur / uCauTile * ${CAU_RES.toFixed(1)})) + lodBias;
+  vec3 a = textureLod(uCau0, uv, lod).rgb, b = textureLod(uCau1, uv, lod).rgb, c = textureLod(uCau2, uv, lod).rgb;
+  vec3 k = D < uCauDepth.y ? mix(a, b, clamp((D - uCauDepth.x) / (uCauDepth.y - uCauDepth.x), 0.0, 1.0))
+                           : mix(b, c, clamp((D - uCauDepth.y) / (uCauDepth.z - uCauDepth.y), 0.0, 1.0));
+  return mix(vec3(1.0), k, clamp(D / uCauDepth.x, 0.0, 1.0));   // focusing needs some depth
+}
+vec3 causticAt(vec3 p) { return causticAt(p, 0.0); }
+`;
+
+const CAUSTIC_SIM_VERT = WAVE_GLSL + /* glsl */`
+uniform vec3 uSunAir;
+uniform float uIor;
+uniform float uDepth;
+uniform float uTile;
+varying vec2 vOld;
+varying vec2 vNew;
+varying float vT;
+float fresnelT(vec3 I, vec3 n, vec3 T, float eta) {
+  float ci = -dot(I, n), ct = -dot(T, n);
+  float rs = (ci - eta * ct) / (ci + eta * ct), rp = (ct - eta * ci) / (ct + eta * ci);
+  return 1.0 - 0.5 * (rs * rs + rp * rp);
+}
+void main() {
+  vec2 xz = position.xz;
+  vec2 g = waveGrad(xz);
+  vec3 n = normalize(vec3(-g.x, 1.0, -g.y)), up = vec3(0.0, 1.0, 0.0);
+  vec3 r = refract(uSunAir, n, 1.0 / uIor), r0 = refract(uSunAir, up, 1.0 / uIor);
+  vec2 p = xz + r.xz * (uDepth / -r.y) - r0.xz * (uDepth / -r0.y);
+  vOld = xz;
+  vNew = p;
+  vT = fresnelT(uSunAir, n, r, uIor) / fresnelT(uSunAir, up, r0, uIor);
+  gl_Position = vec4(p / uTile * 2.0 - 1.0, 0.0, 1.0);
+}
+`;
+const CAUSTIC_SIM_FRAG = /* glsl */`
+uniform vec3 uChannel;
+varying vec2 vOld;
+varying vec2 vNew;
+varying float vT;
+float area(vec2 a, vec2 b) { return abs(a.x * b.y - a.y * b.x); }
+void main() {
+  float ratio = area(dFdx(vOld), dFdy(vOld)) / max(area(dFdx(vNew), dFdy(vNew)), 1e-12);
+  gl_FragColor = vec4(uChannel * min(ratio, 40.0) * vT, 1.0);
+}
+`;
+
+export class Caustics {
+  constructor(renderer, { grid = 288 } = {}) {
+    this.renderer = renderer;
+    this.targets = [0, 1, 2].map(() => {
+      const t = new THREE.WebGLRenderTarget(CAU_RES, CAU_RES, {
+        type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true,
+        wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+        minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+      });
+      return t;
+    });
+    // The grid covers the tile plus a margin: light refracted in from the neighbouring (periodic)
+    // tiles lands inside, and what leaves is counted by its periodic copy entering on the far side.
+    const geo = new THREE.PlaneGeometry(WAVE_TILE * 1.5, WAVE_TILE * 1.5, grid, grid);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(WAVE_TILE / 2, 0, WAVE_TILE / 2);
+    this.depth = { value: 0 };
+    this.scene = new THREE.Scene();
+    SEAWATER_IOR.forEach((ior, c) => {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          ...waveUniforms, uIor: { value: ior }, uDepth: this.depth, uTile: { value: WAVE_TILE },
+          uChannel: { value: new THREE.Vector3(c === 0 ? 1 : 0, c === 1 ? 1 : 0, c === 2 ? 1 : 0) },
+        },
+        vertexShader: CAUSTIC_SIM_VERT, fragmentShader: CAUSTIC_SIM_FRAG,
+        blending: THREE.AdditiveBlending, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const m = new THREE.Mesh(geo, mat);
+      m.frustumCulled = false;
+      this.scene.add(m);
+    });
+    this.camera = new THREE.Camera();
+    causticUniforms.uCau0.value = this.targets[0].texture;
+    causticUniforms.uCau1.value = this.targets[1].texture;
+    causticUniforms.uCau2.value = this.targets[2].texture;
+    causticUniforms.uCauOn.value = 1;
+  }
+
+  update() {
+    const r = this.renderer, prev = r.getRenderTarget(), clear = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha();
+    causticUniforms.uCauR0.value.copy(refractDir(waveUniforms.uSunAir.value, 1 / SEAWATER_IOR[1]));
+    r.setClearColor(0x000000, 0);
+    const D = causticUniforms.uCauDepth.value;
+    [D.x, D.y, D.z].forEach((d, i) => {
+      this.depth.value = d;
+      r.setRenderTarget(this.targets[i]);
+      r.clear(true, false, false);
+      r.render(this.scene, this.camera);
+    });
+    r.setRenderTarget(prev);
+    r.setClearColor(clear, alpha);
+  }
+}
+
+// Snell refraction through a flat (y-up) surface, for a downward direction.
+function refractDir(I, eta) {
+  const ci = -I.y, k = 1 - eta * eta * (1 - ci * ci);
+  return new THREE.Vector3(I.x * eta, I.y * eta - (Math.sqrt(Math.max(0, k)) - eta * ci), I.z * eta).normalize();
+}
+
+// Caustics modulate the direct (sun / fixture) light on any lit material, including the swimming fish:
+// the irradiance multiplier is applied to each directional light before it is shaded, so shadows and
+// the BRDF stay correct. Chains with an existing onBeforeCompile (swim shader, tissue light).
+const LIGHTS_WITH_CAUSTICS = THREE.ShaderChunk.lights_fragment_begin.replace(
+  'getDirectionalLightInfo( directionalLight, directLight );',
+  'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= causticAt( vCW );');
+
+export function addCaustics(mat) {
+  const prev = mat.onBeforeCompile;
+  const prevKey = mat.customProgramCacheKey ? mat.customProgramCacheKey.bind(mat) : null;
+  mat.onBeforeCompile = (shader, renderer) => {
+    if (prev) prev(shader, renderer);
+    Object.assign(shader.uniforms, causticUniforms);
+    shader.vertexShader = 'varying vec3 vCW;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      {
+        vec4 cw = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          cw = instanceMatrix * cw;
+        #endif
+        vCW = (modelMatrix * cw).xyz;
+      }`);
+    shader.fragmentShader = 'varying vec3 vCW;\n' + CAUSTIC_LOOKUP_GLSL
+      + shader.fragmentShader.replace('#include <lights_fragment_begin>', LIGHTS_WITH_CAUSTICS);
+  };
+  mat.customProgramCacheKey = () => (prevKey ? prevKey() : '') + '|caustic';
+  return mat;
+}
+
 // Background: the same inscatter function evaluated for an infinitely long path,
 // so distant objects fade seamlessly into the "open water" behind them.
 export function makeWaterBackdrop() {
@@ -200,49 +373,94 @@ export function makeEnvironment(renderer) {
   return rt.texture;
 }
 
-// ---------- god rays ----------
-
-function rayTexture() {
-  const c = makeCanvas(128, 512), g = c.getContext('2d');
-  const h = g.createLinearGradient(0, 0, 128, 0);
-  h.addColorStop(0, 'rgba(255,255,255,0)');
-  h.addColorStop(0.5, 'rgba(255,255,255,1)');
-  h.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = h; g.fillRect(0, 0, 128, 512);
-  g.globalCompositeOperation = 'destination-in';
-  const v = g.createLinearGradient(0, 0, 0, 512);
-  v.addColorStop(0, 'rgba(0,0,0,1)');
-  v.addColorStop(0.6, 'rgba(0,0,0,0.35)');
-  v.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = v; g.fillRect(0, 0, 128, 512);
-  const t = new THREE.CanvasTexture(c);
-  return t;
-}
-
-export class GodRays {
-  constructor(scene, width, rng) {
-    this.rays = [];
-    const tex = rayTexture();
-    for (let i = 0; i < 9; i++) {
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        color: new THREE.Color(0.75, 0.95, 1.0), opacity: 0.0, fog: false, side: THREE.DoubleSide,
-      });
-      const w = range(rng, 0.8, 2.6), h = 13;
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-      m.position.set(range(rng, -width * 0.55, width * 0.55), 9.5 - h / 2 + 1.5, range(rng, -3.5, 1.5));
-      m.rotation.z = range(rng, -0.25, -0.1);
-      m.userData = { phase: rng() * 10, speed: range(rng, 0.05, 0.12), base: range(rng, 0.03, 0.08), x0: m.position.x };
-      scene.add(m);
-      this.rays.push(m);
+// ---------- light shafts (volumetric single scattering) ----------
+//
+// The scene renders to an HDR target with depth; a final pass ray-marches each view ray through the
+// water (from the glass to the first surface hit) and adds light that particles scatter towards the
+// eye. Only the caustic *fluctuation* (C - 1) is added: the mean single scattering is already in the
+// medium's inscatter term, so shafts brighten where the surface focuses light and dim between.
+//   dL = b * p_HG(theta) * E_sun * exp(-c * d_light) * (C(x) - 1) * exp(-c * d_eye) * ds
+// b: particle scattering (aquarium water with fine particulates), g = 0.75 forward-peaked phase.
+const SHAFT_FRAG = /* glsl */`
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform mat4 uProjInv;
+uniform mat4 uViewInv;
+uniform vec3 uCamPos;
+uniform vec3 uSunColor;
+uniform float uScatter;
+varying vec2 vUv;
+const float PI4 = 12.566371;
+float hg(float c, float g) { float g2 = g * g; return (1.0 - g2) / (PI4 * pow(1.0 + g2 - 2.0 * g * c, 1.5)); }
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+void main() {
+  vec3 col = texture2D(tColor, vUv).rgb;
+  float d = texture2D(tDepth, vUv).x;
+  vec4 vp = uProjInv * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+  vp /= vp.w;
+  vec3 wp = (uViewInv * vp).xyz;
+  vec3 rd = normalize(wp - uCamPos);
+  float tEnd = d >= 0.99999 ? 30.0 : length(wp - uCamPos);
+  float tStart = uCamPos.z > UW_GLASS ? (UW_GLASS - uCamPos.z) / min(rd.z, -1e-4) : 0.0;
+  if (rd.y > 0.0) tEnd = min(tEnd, (UW_SURFACE - uCamPos.y) / rd.y);
+  vec3 acc = vec3(0.0);
+  if (tEnd > tStart && uCauOn > 0.5) {
+    const int N = 20;   // jittered per pixel; the scattered pattern is soft, so few samples suffice
+    float dt = (tEnd - tStart) / float(N), j = ign(gl_FragCoord.xy);
+    float cosL = max(-uCauR0.y, 0.2);
+    for (int i = 0; i < N; i++) {
+      float t = tStart + (float(i) + j) * dt;
+      vec3 p = uCamPos + rd * t;
+      float D = UW_SURFACE - p.y;
+      if (D < 0.0) continue;
+      acc += (causticAt(p, 2.0) - 1.0) * exp(-UW_C * (D / cosL + t - tStart)) * dt;
     }
+    float phase = 0.8 * hg(dot(uCauR0, -rd), 0.75) + 0.2 / PI4;
+    acc *= uScatter * phase * uSunColor;
   }
-  update(t, light) {
-    for (const r of this.rays) {
-      const u = r.userData;
-      r.material.opacity = light * u.base * (0.55 + 0.45 * Math.sin(t * u.speed * 2 + u.phase));
-      r.position.x = u.x0 + Math.sin(t * u.speed + u.phase) * 0.6;
-    }
+  gl_FragColor = vec4(max(col + acc * UW_WB, 0.0), 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
+
+export class WaterRenderer {
+  constructor(renderer, { scatterPerMetre = 0.35 } = {}) {
+    this.renderer = renderer;
+    this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+    this.target.depthTexture = new THREE.DepthTexture(1, 1);
+    this.uniforms = {
+      ...causticUniforms,
+      tColor: { value: this.target.texture }, tDepth: { value: this.target.depthTexture },
+      uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() },
+      uCamPos: { value: new THREE.Vector3() }, uSunColor: { value: new THREE.Color() },
+      uScatter: { value: scatterPerMetre * METRES_PER_UNIT },
+    };
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      uniforms: this.uniforms, depthTest: false, depthWrite: false,
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: UW_GLSL + CAUSTIC_LOOKUP_GLSL + SHAFT_FRAG,
+    }));
+    quad.frustumCulled = false;
+    this.scene = new THREE.Scene();
+    this.scene.add(quad);
+    this.camera = new THREE.Camera();
+    this._size = new THREE.Vector2();
+  }
+
+  render(scene, camera, sun) {
+    const r = this.renderer;
+    r.getDrawingBufferSize(this._size);
+    if (this.target.width !== this._size.x || this.target.height !== this._size.y) this.target.setSize(this._size.x, this._size.y);
+    r.setRenderTarget(this.target);
+    r.render(scene, camera);
+    r.setRenderTarget(null);
+    const u = this.uniforms;
+    u.uProjInv.value.copy(camera.projectionMatrixInverse);
+    u.uViewInv.value.copy(camera.matrixWorld);
+    u.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
+    u.uSunColor.value.copy(sun.color).multiplyScalar(sun.intensity);
+    r.render(this.scene, this.camera);
   }
 }
 
@@ -417,23 +635,47 @@ export class Bubbles {
 
 // ---------- surface ----------
 
+// The underside of the water surface, seen through the water. Exact Fresnel at the water-air
+// boundary: beyond the 48.6 degree critical angle it is a perfect mirror of the tank (total internal
+// reflection); inside Snell's window it shows the bright fixture above. At the shallow angles a
+// viewer looks up through the front glass, the waves' slopes open the window only in flickers,
+// which is the silvery, glinting ceiling of a real aquarium. Same waves as the caustics.
 export function makeSurface(width) {
   const mat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
-    uniforms: { uTime: waterUniforms.uTime, uLight: { value: 1 } },
-    vertexShader: 'varying vec2 vUv; varying vec3 vW; void main(){ vUv = uv; vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
-    fragmentShader: CAUSTIC_GLSL + `
-      uniform float uTime; uniform float uLight; varying vec2 vUv; varying vec3 vW;
+    side: THREE.DoubleSide, fog: false,
+    uniforms: {
+      ...waveUniforms, uLight: { value: 1 }, uBase: { value: INSCATTER_DAY.clone() },
+      uSky: { value: new THREE.Color(2.4, 2.5, 2.6) }, uFloor: { value: new THREE.Color(0.30, 0.27, 0.21) },
+    },
+    vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
+    fragmentShader: UW_GLSL + WAVE_GLSL + /* glsl */`
+      uniform float uLight; uniform vec3 uBase; uniform vec3 uSky; uniform vec3 uFloor; varying vec3 vW;
       void main(){
-        float c = caustic(vW.xz * 0.12, uTime * 0.35);
-        vec3 col = mix(vec3(0.20, 0.55, 0.80), vec3(0.85, 0.97, 1.0), c * 0.8);
-        float edge = smoothstep(0.0, 0.25, vUv.y);
-        gl_FragColor = vec4(col * (0.35 + 0.65 * uLight), (0.35 + c * 0.45) * edge);
+        vec2 g = waveGrad(vW.xz);
+        vec3 n = normalize(vec3(-g.x, 1.0, -g.y));
+        vec3 v = normalize(vW - cameraPosition);
+        float ci = max(dot(v, n), 1e-3), eta = 1.34, st2 = eta * eta * (1.0 - ci * ci);
+        float R = 1.0;
+        if (st2 < 1.0) {
+          float ct = sqrt(1.0 - st2);
+          float rs = (eta * ci - ct) / (eta * ci + ct), rp = (eta * ct - ci) / (eta * ct + ci);
+          R = 0.5 * (rs * rs + rp * rp);
+        }
+        vec3 refl = reflect(v, n);
+        // Mirror image of the tank: water radiance, plus the sunlit floor when reflected steeply down.
+        vec3 below = uwInscatter(uBase, refl, UW_SURFACE)
+          + uFloor * uLight * exp(-UW_KD * (UW_SURFACE - 1.0)) * smoothstep(-0.25, -0.9, refl.y) * 0.5;
+        vec3 col = mix(uSky * uLight, below, R);
+        vec3 T = exp(-UW_C * uwPath(vW, cameraPosition));
+        gl_FragColor = vec4((col * T + uwInscatter(uBase, v, UW_SURFACE) * (1.0 - T)) * UW_WB, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }`,
   });
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(width * 1.8, 16), mat);
+  const depth = GLASS_Z + 10;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(width * 1.8, depth), mat);
   m.rotation.x = Math.PI / 2;
-  m.position.set(0, 9.6, -2);
+  m.position.set(0, SURFACE_Y, GLASS_Z - depth / 2);
   return m;
 }
 
