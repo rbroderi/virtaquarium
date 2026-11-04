@@ -20,7 +20,7 @@
 // The fish also drifts with the water: position += (velocity relative to water + flow) * dt.
 import * as THREE from 'three';
 import { Brain } from './brain.js';
-import { buildFishModel } from './fishModel.js';
+import { buildFishModel, posePectoral } from './fishModel.js';
 import { clamp, lerp, range, wrapAngle } from './util.js';
 
 const CF = 0.9;          // axial drag coefficient (folded constants)
@@ -56,6 +56,8 @@ export class Fish {
     this.phase = rng() * 10;
     this.finPhase = rng() * 10;
     this.pectPhase = rng() * 10;
+    this.ventPhase = rng() * 10;
+    this.ventHz = range(rng, 1.0, 1.5);   // opercular breathing rate at rest
     this.roll = 0;
     this.turnRate = 0;
     this.yaw = Math.atan2(this.dir.z, this.dir.x);
@@ -159,7 +161,8 @@ export class Fish {
     // Tail: Strouhal f = St U / A. A small idle beat keeps the fish from looking frozen.
     const fTail = (ST * blEq) / TAIL_AMP;
     const tailAmp = tailShare * clamp(blEq / 1.2, 0, 1);
-    const idle = 0.06 + 0.05 * Math.abs(this.turnRate);
+    // Hovering fish hold the body still (the pectorals do the work); a slight wave only once moving.
+    const idle = 0.06 * smoothstep(0.05, 0.3, U / L) + 0.05 * Math.abs(this.turnRate);
     this.phase += dt * Math.PI * 2 * Math.max(fTail * tailShare, 1.2);
     const u = this.model.userData.uniforms;
     u.uPhase.value = this.phase;
@@ -169,6 +172,10 @@ export class Fish {
     const kappa = this.turnRate / Math.max(U, 0.25 * L);
     this.bend = lerp(this.bend, clamp(kappa * L * 0.12, -0.25, 0.25), Math.min(1, dt * 6));
     u.uBend.value = this.bend;
+
+    // Ventilation: the gill covers flare at ~1-1.5 Hz at rest, faster when working hard.
+    this.ventPhase += dt * Math.PI * 2 * this.ventHz * (1 + 0.5 * clamp(blEq / sw.maxBL, 0, 1));
+    u.uVent.value = 0.035 * (0.5 + 0.5 * Math.sin(this.ventPhase));
 
     // Median fins: balistiform swimmers undulate dorsal + anal fins for thrust; others ripple gently.
     const finDrive = sw.mode === 'balistiform' ? finShare * (0.5 + blEq * 1.5) : 0.3 + 0.2 * blEq;
@@ -189,8 +196,8 @@ export class Fish {
       } else {
         // Asymmetric stroke when turning: the outside fin works harder.
         const turnBias = 1 + clamp(-s * this.turnRate * 0.3, -0.4, 0.4);
-        const open = 0.2 + pectAmp * turnBias * (0.5 + 0.5 * Math.sin(this.pectPhase + (s > 0 ? 0 : 0.2)));
-        p.rotation.set(0, s * open, 0.2 + 0.25 * Math.cos(this.pectPhase));
+        const ph = this.pectPhase + (s > 0 ? 0 : 0.2);
+        posePectoral(p, ph, 0.2 + pectAmp * turnBias * (0.5 + 0.5 * Math.sin(ph)), 0.2 + 0.25 * Math.cos(this.pectPhase));
       }
     }
   }

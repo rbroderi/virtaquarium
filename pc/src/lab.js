@@ -2,7 +2,7 @@
 // URL: lab.html?sp=clownfish&yaw=30&swim=0   or   lab.html?sp=all   or   lab.html?sp=clownfish&compare=1
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
-import { buildFishModel, loadCustomModels, loadFishModel } from './fishModel.js';
+import { buildFishModel, loadCustomModels, loadFishModel, posePectoral } from './fishModel.js';
 import { installReference } from './labRef.js';
 import { installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, waterUniforms } from './water.js';
 
@@ -135,9 +135,11 @@ function frame() {
     u.uFinPhase.value = swim ? t * Math.PI * 2 * 3 : 0;
     u.uAmp.value = swim ? 0.6 : 0;
     u.uFlutter.value = swim ? 0.6 : 0;
+    u.uVent.value = 0.035 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * 1.2));   // breathing, even when still
     for (const p of m.userData.pects) {
-      const s = p.userData.side;
-      p.rotation.set(0, s * (m.userData.fan ? 0.9 : 0.5 + (swim ? 0.3 * Math.sin(t * 9) : 0)), 0);
+      if (m.userData.fan) p.rotation.set(0, p.userData.side * 0.9, 0);
+      else if (swim) posePectoral(p, t * 9, 0.5 + 0.3 * Math.sin(t * 9), 0.2 + 0.25 * Math.cos(t * 9));
+      else posePectoral(p, -Math.PI / 2, 0.5, 0);   // glide pose: half open, flat
     }
   }
   renderer.render(scene, camera);

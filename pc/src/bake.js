@@ -6,7 +6,7 @@
 // Open /pc/bake.html (optionally ?species=a,b&seeds=7,42&frames=12), or run `node tools/bake.mjs`.
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
-import { buildFishModel, loadCustomModels } from './fishModel.js';
+import { buildFishModel, loadCustomModels, posePectoral } from './fishModel.js';
 import { buildReef, loadScenery } from './reef.js';
 import {
   waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, makeSurface,
@@ -58,10 +58,11 @@ function pose(model, i, n) {
   u.uBend.value = 0;
   u.uFinPhase.value = a * 2;
   u.uFlutter.value = 0.4;
+  u.uVent.value = 0.035 * (0.5 + 0.5 * Math.sin(a));
   for (const p of model.userData.pects) {
     const s = p.userData.side;
     if (model.userData.fan) p.rotation.set(s * 0.25, s * (0.75 + 0.1 * Math.sin(a)), 0.35);
-    else p.rotation.set(0, s * (0.35 + 0.25 * Math.sin(a * 2)), 0.2 + 0.25 * Math.cos(a * 2));
+    else posePectoral(p, a * 2, 0.35 + 0.25 * Math.sin(a * 2), 0.2 + 0.25 * Math.cos(a * 2));
   }
 }
 

@@ -739,15 +739,28 @@ uniform float uFlutter;
 uniform float uFinH;
 uniform float uBend;
 uniform float uFinPhase;
-float swimDisp(vec3 p) {
-  float s = clamp((0.3 - p.x) / 0.8, 0.0, 1.0);
-  float env = 0.025 + s * s * 0.16;
-  float d = uAmp * env * sin(uPhase + p.x * 5.5);
+uniform float uXPed;    // x of the caudal peduncle (the caudal blade lags behind it)
+uniform float uXGill;   // x of the gill cover's rear edge
+uniform float uVent;    // opercular flare, 0..~0.04
+// Lateral offset of the spine (the body midline) at x; x runs from +0.5 (snout) to -0.5 (tail tip).
+// Body wave h = A(s) sin(wt + kx): wavelength ~0.95 BL (carangiform-like), amplitude from a small head
+// recoil (~0.02 BL) through a minimum ~0.15 BL behind the snout to ~0.1 BL at the tail tip at cruise.
+// The caudal blade trails the peduncle by ~45 deg. uBend adds the curvature of a turn.
+float spineH(float x) {
+  float s = 0.5 - x;
+  float env = 0.02 - 0.06 * s + 0.2 * s * s;
+  float lag = 0.8 * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));
+  return uAmp * env * sin(uPhase + x * 6.6 - lag) + uBend * (x - 0.05) * (x - 0.05) * 2.0;
+}
+// Travelling wave along the dorsal/anal fins (head to tail), confined to the fins.
+float finFlutter(vec3 p) {
   float fin = smoothstep(uFinH, uFinH + 0.15, abs(p.y));
-  // Travelling wave along dorsal/anal fins (head to tail), plus turn curvature of the spine.
-  d += uFlutter * fin * 0.018 * sin(uFinPhase + p.x * 14.0 + abs(p.y) * 6.0);
-  d += uBend * (p.x - 0.05) * (p.x - 0.05) * 2.0;
-  return d;
+  return uFlutter * fin * 0.018 * sin(uFinPhase + p.x * 14.0 + abs(p.y) * 6.0);
+}
+// Gill cover breathing: the rear of the operculum flares out and back.
+float ventScale(vec3 p) {
+  float m = (1.0 - smoothstep(uXGill, uXGill + 0.07, p.x)) * step(uXGill - 0.004, p.x);
+  return 1.0 + uVent * m * (1.0 - smoothstep(uFinH * 0.5, uFinH * 0.9, abs(p.y)));
 }
 `;
 
@@ -813,17 +826,21 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
     }
     shader.vertexShader = SWIM_GLSL + shader.vertexShader
       .replace('#include <beginnormal_vertex>', `
+        // Each cross-section is carried by the spine curve and turned to its tangent, so the body keeps
+        // its length and the caudal blade pitches with the wave (instead of a sideways shear).
+        float swH = spineH(position.x);
+        float swT = atan((spineH(position.x + 0.005) - swH) / 0.005);
+        float swC = cos(swT), swS = sin(swT);
         vec3 objectNormal = vec3(normal);
-        float sw0 = swimDisp(position);
-        float sw1 = swimDisp(position + vec3(0.01, 0.0, 0.0));
-        float slope = (sw1 - sw0) / 0.01;
-        objectNormal = normalize(vec3(objectNormal.x - slope * objectNormal.z, objectNormal.y, objectNormal.z));
+        objectNormal = vec3(objectNormal.x * swC - objectNormal.z * swS, objectNormal.y, objectNormal.x * swS + objectNormal.z * swC);
         #ifdef USE_TANGENT
           vec3 objectTangent = vec3(tangent.xyz);
         #endif`)
       .replace('#include <begin_vertex>', `
         vec3 transformed = vec3(position);
-        transformed.z += swimDisp(position);`);
+        float swZ = position.z * ventScale(position) + finFlutter(position);
+        transformed.x = position.x - swZ * swS;
+        transformed.z = swH + swZ * swC;`);
   };
   base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind : 'plain');
   return addCaustics(base);   // fish swim through the same focused light as the reef
@@ -988,7 +1005,7 @@ function normaliseModel(root, cfg) {
 
 function buildCustomModel(sp, model) {
   const uniforms = {
-    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: model.finH }, uBend: { value: 0 }, uFinPhase: { value: 0 },
+    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: model.finH }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -0.3 }, uXGill: { value: 9 }, uVent: { value: 0 },
   };
   const group = new THREE.Group();
   for (const p of model.parts) {
@@ -1020,13 +1037,24 @@ export async function loadFishModel(url, cfg = {}) {
 // or sheen either; the visible shine of a fish in water comes from the guanine iridophores (iridescence).
 const IN_WATER_IOR = 1.04;
 
+// Labriform pectoral stroke for one fin pivot at stroke phase `ph`: abduction (opening, sin rising) is
+// the recovery, when the fin feathers (turns its chord edge-on to the flow) and its rays partly
+// collapse; on the power stroke back towards the body it is flat and fully spread.
+// open: opening angle (rad); flap: roll of the stroke plane (rad).
+export function posePectoral(p, ph, open, flap) {
+  const s = p.userData.side, rec = Math.max(0, Math.cos(ph)), fin = p.children[0];
+  p.rotation.set(0, s * open, flap);
+  fin.rotation.x = s * 0.6 * rec;
+  fin.scale.y = 1 - 0.25 * rec;
+}
+
 // opts.model: a model from loadFishModel; opts.procedural: ignore models.json for this species.
 export function buildFishModel(sp, opts = {}) {
   if (opts.model) return buildCustomModel(sp, opts.model);
   if (!opts.procedural && custom.has(sp.id)) return buildCustomModel(sp, custom.get(sp.id));
   const a = speciesAssets(sp);
   const uniforms = {
-    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: a.prof.H }, uBend: { value: 0 }, uFinPhase: { value: 0 },
+    uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: a.prof.H }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: a.prof.xPed }, uXGill: { value: a.prof.x(gillU(sp)) }, uVent: { value: 0 },
   };
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
@@ -1038,7 +1066,7 @@ export function buildFishModel(sp, opts = {}) {
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport.
-  const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 } };
+  const still = { uPhase: { value: 0 }, uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 }, uXPed: { value: -9 }, uXGill: { value: 9 }, uVent: { value: 0 } };
   const pectMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, alphaTest: 0.01, ior: IN_WATER_IOR,
   }), still, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });

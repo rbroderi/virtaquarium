@@ -48,6 +48,10 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
     - Balistiform (triggerfish, lionfish) undulate the dorsal and anal fins.
     - Body-caudal-fin swimmers (gramma) use burst-and-coast.
   - The body wave travels head to tail with slip ratio ≈ 0.6, and the spine curves with path curvature in turns.
+    - The wave is a spine curve: each cross-section is carried along the midline and turned to its tangent, so the body keeps its length and the caudal blade pitches.
+    - Wavelength is about 0.95 body lengths. Amplitude runs from about 0.02 BL of head recoil to about 0.1 BL at the tail tip, and the caudal fin lags the peduncle by about 45°.
+  - **Pectoral stroke**: on the recovery stroke the fin feathers edge-on and its rays partly collapse (`posePectoral`). Hovering fish hold the body still and scull with the pectorals.
+  - **Breathing**: the gill covers flare at 1–1.5 Hz, faster after exertion.
 - **Water** (`water.js`): three.js fog is replaced by a per-channel Beer–Lambert medium.
   - Beam attenuation and downwelling attenuation Kd use clear reef-water coefficients.
   - Inscattered light fills long paths, and only the path inside the glass counts.
