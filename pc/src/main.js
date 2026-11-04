@@ -300,3 +300,6 @@ function fitCanvas() {
 
 // Exposed for the Roku exporter and debugging.
 window.aquarium = { THREE, scene, camera, renderer, world, reef, jellies, SPECIES, caustics, water, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); } };
+
+// ?check=critters: the critters' shape checks (critterCheck.js).
+if (params.get('check') === 'critters') import('./critterCheck.js').then((m) => m.main(window.aquarium));

@@ -30,6 +30,7 @@ export const CRITTER_SPECIES = [
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YZX');
+const _mInv = new THREE.Matrix4();
 
 // A damped spring, s = { x, v } pulled towards target (natural frequency hz, damping ratio zeta).
 function spring(s, target, hz, zeta, dt) {
@@ -228,12 +229,18 @@ export class Cuttlefish {
       const t = i / 32;
       prof.push(new THREE.Vector2(Math.max(0.002, mantleR(t) * ML), -ML + t * ML));
     }
+    // The opening's rim turns in round the head (whose section there is narrower than the rim), so
+    // the mantle closes on it rather than leaving a ring of gap.
+    prof.push(new THREE.Vector2(0.195 * ML, 0.006 * ML), new THREE.Vector2(0.165 * ML, 0.016 * ML));
     const mantle = new THREE.LatheGeometry(prof, 48);
+    const muv = mantle.attributes.uv;   // keep the texture's tail-to-head v on the mantle proper
+    for (let k = 0; k < muv.count; k++) muv.setY(k, Math.min(1, (muv.getY(k) * (prof.length - 1)) / 32));
     mantle.rotateZ(-Math.PI / 2);   // lathe axis (y) -> x: the tail at -ML, the head end at 0
     mantle.scale(1, 0.62, 1);       // flattened top to bottom
     mantle.computeVertexNormals();
     const body = new THREE.Mesh(mantle, mantleMat);
     body.castShadow = true;
+    body.name = 'mantle';
     this.model.add(body);
     this.mantle = body;
     this.sArmY = { x: 0, v: 0 }; this.sArmZ = { x: 0, v: 0 }; this.sSqueeze = { x: 0, v: 0 };
@@ -242,35 +249,33 @@ export class Cuttlefish {
     const head = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), headMat);
     head.scale.set(0.19 * ML, 0.135 * ML, 0.19 * ML);   // nearly fills the mantle opening; ~0.3 ML to the arm tips
     head.position.set(0.06 * ML, 0.005 * ML, 0);
+    head.name = 'head';
     this.model.add(head);
     const eyeMat = skin({ map: wPupilEye(rng), roughness: 0.15 }, 'cuttle-eye');
     for (const s of [1, -1]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06 * ML, 20, 14), eyeMat);
       eye.position.set(0.09 * ML, 0.065 * ML, s * 0.14 * ML);   // set high on the head
       eye.rotation.y = s > 0 ? -Math.PI / 2 : Math.PI / 2;
+      eye.name = `eye${s > 0 ? 0 : 1}`;
       this.model.add(eye);
     }
     // Arms: eight thick, tapering arms held together in a bundle, angled forward and down with the
     // tips curling under; pale below (the photos).
     const armMat = skin({ color: 0xd2bcae, roughness: 0.5 }, 'cuttle-arm');
-    // A crown on the front of the head carries them; each arm aims at a point well ahead, so the
-    // bundle stays thick to blunt tips rather than closing to a point.
+    // A crown on the front of the head carries them. The bundle bends as one (rigid in section, so
+    // the arms never cross): each arm keeps its place in a ring about the bundle's centre line, the
+    // ring narrowing with the arms' taper so neighbours stay just apart to the tips. Two of the upper
+    // arms stand in for the tentacles: on a strike they straighten and shoot out ahead, clear above
+    // the rest as those curl under.
     this.crown = new THREE.Group();
-    this.crown.position.set(0.22 * ML, -0.03 * ML, 0);
+    this.crown.position.set(0.19 * ML, -0.03 * ML, 0);
     this.model.add(this.crown);
     this.arms = [];
-    const X = new THREE.Vector3(1, 0, 0);
     for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2, L = 0.27 * ML * (i < 2 ? 0.85 : 1);
-      const g = new THREE.CylinderGeometry(0.012 * ML, 0.042 * ML, L, 10, 8);
-      g.translate(0, L / 2, 0); g.rotateZ(-Math.PI / 2);   // base at the origin, pointing +x
-      const gp = g.attributes.position;
-      for (let k = 0; k < gp.count; k++) { const f = gp.getX(k) / L; gp.setY(k, gp.getY(k) - f * f * 0.25 * L); }   // curl the tip down
-      g.computeVertexNormals();
-      const arm = new THREE.Mesh(g, armMat);
-      arm.position.set(0, Math.sin(a) * 0.045 * ML, Math.cos(a) * 0.055 * ML);
-      arm.quaternion.setFromUnitVectors(X, _v.set(L * 1.8, 0, 0).sub(arm.position).normalize());
-      arm.userData.a = a;
+      const arm = new THREE.Mesh(new THREE.BufferGeometry(), armMat);
+      arm.userData = { a: (i / 8) * Math.PI * 2, L: 0.27 * ML * (i === 1 || i === 3 ? 0.85 : 1), tentacle: i === 1 || i === 3, ext: -1 };
+      arm.name = `arm${i}`;
+      this._arm(arm, 1);
       this.crown.add(arm);
       this.arms.push(arm);
     }
@@ -280,11 +285,13 @@ export class Cuttlefish {
     this.fins = [1, -1].map((side) => {
       const g = new THREE.PlaneGeometry(1, 1, this.finN, 2);
       const mesh = new THREE.Mesh(g, skin({ map: finTex, roughness: 0.5, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false }, 'cuttle-fin'));
-      mesh.userData.side = side;
+      mesh.userData.side = side; mesh.name = `fin${side > 0 ? 0 : 1}`;
       this.model.add(mesh);
       return mesh;
     });
     this.finPhase = 0;
+    // Where parts are attached (and may run into each other): critterCheck.js.
+    this.joins = [['mantle', 'head'], ['eye*', 'head'], ['arm*', 'head'], ['fin*', 'mantle']];
 
     const B = world.bounds;
     this.body = new Swimmer(new THREE.Vector3(range(rng, B.x0 + 2, B.x1 - 2), range(rng, 1.8, 4.5), range(rng, -1, 1.5)), range(rng, -3, 3));
@@ -293,9 +300,49 @@ export class Cuttlefish {
     this.jet = 0;
   }
 
+  // (Re)build one arm as a closed tube in the crown's frame, ext times its length (a strike, for a
+  // tentacle: it straightens as it stretches).
+  _arm(arm, ext) {
+    const { a, L, tentacle } = arm.userData;
+    if (Math.abs(ext - arm.userData.ext) < 1e-3) return;
+    arm.userData.ext = ext;
+    const ML = this.ML, r0 = 0.022 * ML, r1 = 0.008 * ML, NS = 18, RAD = 10, len = L * ext;
+    const curl = 0.7 * (tentacle ? 1 - clamp((ext - 1) / 0.4, 0, 1) : 1);
+    const pos = [], idx = [], c = new THREE.Vector3(), T = new THREE.Vector3(), Nn = new THREE.Vector3(), P = new THREE.Vector3();
+    const base = new THREE.Vector3(), tip = new THREE.Vector3();   // the caps' centres
+    const rAt = (s) => lerp(r0, r1, s / len), rho = (s) => 3.4 * lerp(r0, r1, Math.min(1, s / L));
+    let th = 0;
+    for (let k = 0; k <= NS; k++) {
+      const s = (k / NS) * len;
+      if (k > 0) { const ds = len / NS; c.x += Math.cos(th) * ds; c.y -= Math.sin(th) * ds; }
+      th = curl * (Math.min(s, L) / L) ** 2;   // bends down towards the tip
+      T.set(Math.cos(th), -Math.sin(th), 0); Nn.set(Math.sin(th), Math.cos(th), 0);
+      P.copy(c).addScaledVector(Nn, rho(s) * Math.sin(a)).z += rho(s) * Math.cos(a);
+      for (let j = 0; j < RAD; j++) {
+        const b = (j / RAD) * Math.PI * 2, r = rAt(s);
+        pos.push(P.x + Nn.x * r * Math.cos(b), P.y + Nn.y * r * Math.cos(b), P.z + r * Math.sin(b));
+        if (k < NS) { const p0 = k * RAD + j, p1 = k * RAD + (j + 1) % RAD; idx.push(p0, p1, p0 + RAD, p1, p1 + RAD, p0 + RAD); }
+      }
+      if (k === 0) base.copy(P).addScaledVector(T, -0.6 * r0);
+      if (k === NS) tip.copy(P).addScaledVector(T, 0.8 * r1);
+    }
+    // Caps: a blunt tip, and a closed base (inside the head).
+    const nb = pos.length / 3; pos.push(base.x, base.y, base.z, tip.x, tip.y, tip.z);
+    for (let j = 0; j < RAD; j++) {
+      const j1 = (j + 1) % RAD;
+      idx.push(nb, j1, j, nb + 1, NS * RAD + j, NS * RAD + j1);
+    }
+    const g = arm.geometry;
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+  }
+
   _fins(dt, speed) {
     // Waves run tail-wards to go forward, head-wards to back up; amplitude and rate grow with speed.
     const ML = this.ML, dirn = speed >= 0 ? 1 : -1, a = 0.035 * ML + Math.abs(speed) * 0.03 * ML;
+    const ms = this.mantle.scale;   // the skirt's root follows the mantle as it squeezes
     this.finPhase += dt * (3 + Math.abs(speed) * 6) * dirn;
     for (const f of this.fins) {
       const p = f.geometry.attributes.position, side = f.userData.side;
@@ -307,7 +354,7 @@ export class Cuttlefish {
           // The base runs along the lower flank (a third of the way down, where the mantle is ~0.84
           // of its width) and the skirt droops, so from the side it shows as a band below the bars.
           const k = j / 2, y = Math.sin(this.finPhase + t * 9) * a * k * k;
-          p.setXYZ(j * (this.finN + 1) + i, x, y - 0.62 * 0.55 * half - 0.4 * w * k, side * (half * 0.82 + w * k));
+          p.setXYZ(j * (this.finN + 1) + i, x * ms.x, y - 0.62 * 0.55 * half * ms.y - 0.4 * w * k, side * (half * 0.82 * ms.z + w * k));
         }
       }
       p.needsUpdate = true;
@@ -376,9 +423,7 @@ export class Cuttlefish {
     this.strike = Math.max(0, (this.strike || 0) - dt);
     const t = U.uTime.value;
     this.crown.rotation.set(0, Math.sin(t * 0.9) * 0.06 + armY, -0.3 + Math.sin(t * 1.3) * 0.05 + (this.mode === 'jet' ? 0.2 : 0) + armZ);
-    this.arms.forEach((a, i) => {
-      a.scale.x = i < 2 && this.strike > 0 ? 1 + 2.5 * Math.sin((this.strike / 0.4) * Math.PI) : 1;
-    });
+    for (const a of this.arms) if (a.userData.tentacle) this._arm(a, this.strike > 0 ? 1 + 2.5 * Math.sin((this.strike / 0.4) * Math.PI) : 1);
     this._fins(dt, b.speed);
     b.place(this.model);
   }
@@ -479,7 +524,11 @@ class ArmTube {
     for (let i = 0; i < this.n; i++) {
       const a = this.pts[Math.max(0, i - 1)], b = this.pts[Math.min(this.n - 1, i + 1)];
       T.subVectors(b, a).normalize();
-      Nn.copy(down).addScaledVector(T, -down.dot(T)).normalize();   // towards the ground, across the arm
+      // Towards the ground, across the arm; where the arm hangs nearly straight down that is ill
+      // defined, so the last ring's carries on (else the ring flips over and the tube folds shut).
+      _w.copy(down).addScaledVector(T, -down.dot(T));
+      if (i > 0 && _w.lengthSq() < 0.09) _w.copy(Nn).addScaledVector(T, -Nn.dot(T));
+      Nn.copy(_w).normalize();
       if (Nn.lengthSq() < 1e-6) Nn.set(1, 0, 0);
       Bn.crossVectors(T, Nn);
       const s = i / (this.n - 1), r = lerp(this.r0, this.r1, s) * (i === this.n - 1 ? 0.3 : 1);
@@ -529,14 +578,16 @@ export class Octopus {
     const head = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), sacMat);
     head.scale.set(0.3 * M, 0.26 * M, 0.32 * M);
     head.position.set(0.05 * M, 0.18 * M, 0);
+    this.sac.name = 'sac'; head.name = 'head';
     this.model.add(this.sac, head);
     const eyeMat = skin({ map: octoEyeTex(), roughness: 0.25 }, 'octo-eye');
     for (const s of [1, -1]) {
       const turret = new THREE.Mesh(new THREE.SphereGeometry(0.1 * M, 16, 12), sacMat);
-      turret.position.set(0.08 * M, 0.36 * M, s * 0.2 * M);
+      turret.position.set(0.13 * M, 0.36 * M, s * 0.2 * M);
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.07 * M, 20, 14), eyeMat);
-      eye.position.set(0.1 * M, 0.4 * M, s * 0.24 * M);
+      eye.position.set(0.15 * M, 0.4 * M, s * 0.24 * M);
       eye.rotation.set(Math.PI / 2, -s * Math.PI / 2 + s * 0.5, 0, 'YXZ');   // bar turned horizontal, then the iris turned out and a little forward
+      turret.name = `turret${s > 0 ? 0 : 1}`; eye.name = `eye${s > 0 ? 0 : 1}`;
       this.model.add(turret, eye);
     }
     // The siphon (funnel): a muscular tube opening low on one side of the head, behind the eye.
@@ -544,6 +595,7 @@ export class Octopus {
       skin({ map: tex, bumpMap: bump, bumpScale: 2, roughness: 0.5, side: THREE.DoubleSide }, 'octo-siphon', hook));
     siph.position.set(-0.08 * M, 0.12 * M, 0.27 * M);
     siph.rotation.set(-1.1, 0, -0.9);   // pointing out, forward and a little up
+    siph.name = 'siphon';
     this.model.add(siph);
     // Arms. Proportions from octopod morphometrics: the arm width index (base width of the stoutest arm
     // over mantle length) runs ~13-23%, so with the mantle ~1.1 M long the arms are ~0.19 M across at
@@ -555,9 +607,18 @@ export class Octopus {
       tube.angle = ((i + 0.5) / 8) * Math.PI * 2;
       tube.len = 3.0 * M * range(rng, 0.85, 1.05);
       tube.curl = range(rng, 0.5, 1.5); tube.ph = rng() * 6;
+      tube.mesh.name = `arm${i}`;
       this.model.add(tube.mesh);
       this.arms.push(tube);
     }
+    // The oral disc under the head, which the arms' roots merge into (eight thick roots crowd
+    // together there, so without it they would show running into one another).
+    const disc = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12), sacMat);
+    disc.scale.set(0.32 * M, 0.11 * M, 0.32 * M);
+    disc.position.set(0, 0.02 * M, 0);
+    disc.name = 'disc';
+    this.model.add(disc);
+    this.disc = disc;
     // The interbrachial web: a membrane joining each pair of neighbouring arms over their first
     // quarter, rebuilt with the arms each frame. It is what makes the arms rise into the body as one
     // skirt instead of leaving it as separate legs.
@@ -575,9 +636,13 @@ export class Octopus {
       this.web = new THREE.Mesh(g, skin({ map: tex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, side: THREE.DoubleSide }, 'octo-web', hook));
       this.web.frustumCulled = false;
       this.web.castShadow = true;
+      this.web.name = 'web';
       this.model.add(this.web);
     }
 
+    // Where parts are attached (and may run into each other): critterCheck.js.
+    this.joins = [['sac', 'head'], ['turret*', 'head'], ['eye*', 'turret*'], ['eye*', 'head'], ['siphon', 'head'], ['siphon', 'sac'], ['arm*', 'head'], ['web', 'arm*'], ['web', 'head'], ['web', 'sac'],
+      ['disc', 'head'], ['disc', 'arm*'], ['disc', 'web'], ['disc', 'sac'], ['disc', 'siphon']];
     this.den = den.clone();
     this.pos = this.den.clone();
     this.yaw = range(rng, -Math.PI, Math.PI);
@@ -593,13 +658,7 @@ export class Octopus {
     const rng = this.rng, M = this.M;
     this.calm = (this.calm || 0) - dt;
     const threat = this.calm <= 0 && this.mode !== 'jet' ? threatNear(this, world, 1.4) : null;
-    if (threat) {
-      this.mode = 'jet'; this.modeT = 2.2; this.jet = 1; this.calm = 15;
-      // Away from the threat and a little up; under the den's roof, straight out of the mouth instead.
-      this.jetDir = this.cave && ceilingAt(world, this.pos.x, this.pos.z) < Infinity
-        ? this.cave.dir.clone().setY(0.05).normalize()
-        : _w.subVectors(this.pos, threat.pos).setY(0.4).normalize().clone();
-    }
+    if (threat) this._jet(world, threat.pos);
     let food = null;
     if (this.mode === 'den' || this.mode === 'forage') {
       for (const f of world.food) if (!f.eaten && f.resting && f.pos.distanceTo(this.pos) < 3) { food = f; break; }
@@ -616,6 +675,9 @@ export class Octopus {
     let speed = 0;
     if (this.mode === 'jet') {
       this.pos.addScaledVector(this.jetDir, 2.0 * this.jet * dt);
+      // Mantle first: it turns its sac into the jet, so the arms stream out behind it, clear of the sac.
+      const yawT = Math.atan2(-this.jetDir.z, -this.jetDir.x);
+      this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 6);
       this.jet = Math.max(0, this.jet - dt * 0.7);
       if (this.modeT <= 0) { this.mode = 'den'; this.target.copy(this.den); this.modeT = range(rng, 30, 60); }
     } else {
@@ -661,12 +723,13 @@ export class Octopus {
     for (const arm of this.arms) {
       // In the den the arms are drawn in (tucked under and round the body), not spread over the rock.
       this.tuck = lerp(this.tuck ?? 1, this.mode === 'den' ? 1 : 0, Math.min(1, dt * 0.5));
-      // In a cave the den's walls are behind and beside it, so the tucked arms spread out of the mouth.
-      const a = this.cave ? wrapAngle(arm.angle) * (1 - 0.7 * this.tuck) : arm.angle;
+      // In a cave the den's walls are behind and beside it, so the tucked arms spread out of the mouth
+      // (over half the ring: any narrower and eight arms can't lie side by side).
+      const a = this.cave ? wrapAngle(arm.angle) * (1 - 0.5 * this.tuck) : arm.angle;
       const n = arm.n, seg = arm.len * (1 - 0.55 * this.tuck) / (n - 1);
       const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
       const dir = jet
-        ? new THREE.Vector3(-1, 0, 0).addScaledVector(out, 0.25).normalize()
+        ? new THREE.Vector3(1, -0.3, 0).addScaledVector(out, 0.35).normalize()
         : out.clone().multiplyScalar(0.75).setY(lerp(-0.35, -0.8, this.stand ?? 0)).normalize();
       const p = local.set(Math.cos(a) * 0.12 * M, 0.02 * M, Math.sin(a) * 0.12 * M);
       const walk = this.mode === 'forage' || this.mode === 'pounce' ? Math.sin(this.t * 2.5 + arm.ph) : 0;
@@ -674,6 +737,7 @@ export class Octopus {
       // wave, a crawling step, and a little lift of the tip (arm tips curl up off the rock).
       const sense = arm.curl > 1 ? 1 : -1;
       let gap = 0;   // how far the last point hung above the rock: unsupported arm sags into the hollow
+      let lastY = world_.copy(p).applyMatrix4(this.model.matrixWorld).y;   // the last point's height (world)
       for (let i = 0; i < n; i++) {
         arm.pts[i].copy(p);
         const s = i / (n - 1);
@@ -682,7 +746,7 @@ export class Octopus {
           dir.applyAxisAngle(UP, turn);
           if (i > 2) dir.y = lerp(dir.y, s > 0.8 ? 0.25 * (1 - coil * 0.5) : -0.05 - clamp(gap * 3, 0, 0.8), 0.35);   // drape down, then the tip lifts
           dir.normalize();
-        } else dir.y = Math.sin(this.t * 6 + s * 3 + arm.ph) * 0.08;
+        } else dir.y = -0.3 + Math.sin(this.t * 6 + s * 3 + arm.ph) * 0.08;   // streaming out ahead of the head, away from the sac
         if (!jet && i > 1) {
           // A wall ahead (rock rising more than a step): the arm turns along it rather than standing
           // up it. Try turning either way and take the lower ground.
@@ -711,17 +775,138 @@ export class Octopus {
         const r = lerp(arm.r0, arm.r1, s);
         // Under a roof the height field is the roof's own top (it's splatted for the fishes' sake), so
         // the underside caps the floor.
-        const top = ceilingAt(world, world_.x, world_.z) - r;
-        const floor = Math.min(Math.max(floorAt(world, world_.x, world_.z), 0) + r * 0.9, top);
+        // Nor can an arm climb more than a step per segment, or above the roof over the body: past a
+        // ledge's edge, where no roof is mapped, the height field is still the ledge's top, and an arm
+        // lifted onto it would run up through the rock and the body.
+        // Under a roof the height field is the roof's top, not the floor below: there the arms lie at
+        // the level of the body's own underside (pressed up to the roof, they rose above the head).
+        // (and in a den, under its roof, they keep below the eyes rather than climb its walls: there the
+        // web between them would cut through the eye turrets)
+        const roof = ceilingAt(world, world_.x, world_.z), top = Math.min(roof, ceil, ceil < Infinity ? this.pos.y + 0.15 * M * this.squash + r : Infinity) - r;
+        const below = roof < Infinity ? this.pos.y - 0.1 * M * this.squash : Math.max(floorAt(world, world_.x, world_.z), 0);
+        const floor = Math.min(below + r * 0.9, top, lastY + 1.2 * seg);
         gap = world_.y - floor;
         if (gap < 0) { world_.y = floor; gap = 0; dir.y = Math.max(dir.y, 0); }
         if (world_.y > top) { world_.y = top; dir.y = Math.min(dir.y, 0); }
         p.copy(world_).applyMatrix4(this._m);
         pw.copy(world_);
+        lastY = world_.y;
       }
-      arm.build(this._down);
     }
+    this._untangle();
+    for (const arm of this.arms) arm.build(this._down);
     this._buildWeb();
+  }
+
+  // The arms are towed each on its own, so nothing stops them passing through one another, or the
+  // body: points of different arms nearer the other's segments than their radii are pushed apart,
+  // and segments out of the sac, the eye turrets and the eyes, each arm keeping its length. (Their
+  // roots, inside the oral disc, are left merged.) Solved by turns (position-based): the contacts,
+  // then each segment back to its length (both ends giving, the root held), until nothing touches.
+  // It corrects only what is drawn: the towing carries on from the pose. On flat arrays, with the
+  // segments binned in a coarse grid so each point meets only those near it: it runs every frame.
+  _untangle() {
+    const arms = this.arms, NA = arms.length, n = arms[0].n, N = NA * n, gap = 0.01 * this.M, D = this.disc;
+    const X = (this._ux ??= new Float64Array(N * 3)), R = (this._ur ??= new Float64Array(N));
+    const L = (this._ul ??= new Float64Array(N)), free = (this._uf ??= new Uint8Array(N));
+    for (let A = 0; A < NA; A++) {
+      const a = arms[A];
+      for (let i = 0; i < n; i++) {
+        const k = A * n + i, q = a.pts[i];
+        X[3 * k] = q.x; X[3 * k + 1] = q.y; X[3 * k + 2] = q.z;
+        R[k] = lerp(a.r0, a.r1, i / (n - 1)) * (i === n - 1 ? 0.3 : 1);
+        if (i) L[k] = Math.hypot(q.x - X[3 * k - 3], q.y - X[3 * k - 2], q.z - X[3 * k - 1]);   // segment i-1..i
+      }
+    }
+    // The obstacles are spheres in their own frames (the sac's stretched, its bumpy skin up to 9%
+    // proud): their matrices to and from the model's frame.
+    const obst = this.obstacles ??= [[this.sac, 1.1], ...this.model.children.filter((o) => /^(turret|eye)/.test(o.name)).map((o) => [o, o.geometry.parameters.radius])];
+    const OB = obst.map(([o, r]) => ({ to: _mInv.copy(o.matrix).invert().elements.slice(), from: o.matrix.elements, r, sc: Math.min(o.scale.x, o.scale.y, o.scale.z) }));
+    const reach = arms[0].r0 * 2 + gap, tol = 0.25 * gap;
+    let hits;   // contacts found this pass deeper than tol (none: settled, within the gap kept)
+    // point k against segment j..j+1 (both in X)
+    const push = (k, j) => {
+      const px = X[3 * k], py = X[3 * k + 1], pz = X[3 * k + 2], ax = X[3 * j], ay = X[3 * j + 1], az = X[3 * j + 2];
+      const ex = X[3 * j + 3] - ax, ey = X[3 * j + 4] - ay, ez = X[3 * j + 5] - az;
+      const t = clamp(((px - ax) * ex + (py - ay) * ey + (pz - az) * ez) / Math.max(ex * ex + ey * ey + ez * ez, 1e-12), 0, 1);
+      let dx = px - ax - ex * t, dy = py - ay - ey * t, dz = pz - az - ez * t;
+      const need = R[k] + R[j] + (R[j + 1] - R[j]) * t + gap, d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 >= need * need) return;
+      const d = Math.sqrt(d2);
+      if (need - d > tol) hits++;
+      if (d < 1e-9) { dx = 0; dy = 1; dz = 0; } else { dx /= d; dy /= d; dz /= d; }
+      const m = (need - d) / 2, m0 = m * (1 - t), m1 = m * t;
+      X[3 * k] += dx * m; X[3 * k + 1] += dy * m; X[3 * k + 2] += dz * m;
+      X[3 * j] -= dx * m0; X[3 * j + 1] -= dy * m0; X[3 * j + 2] -= dz * m0;
+      X[3 * j + 3] -= dx * m1; X[3 * j + 4] -= dy * m1; X[3 * j + 5] -= dz * m1;
+    };
+    const keepOut = () => {
+      for (const { to: T, from: F, r, sc } of OB) for (let A = 0; A < NA; A++) for (let i = 1; i < n; i++) {
+        // the segment's nearest point to the obstacle's centre (a segment can cut a corner its two
+        // ends keep clear of): both ends move out by what it lacks (only the far one at the root)
+        const k0 = A * n + i - 1, k1 = k0 + 1, a0 = 3 * k0, a1 = 3 * k1;
+        if (!free[k0] && !free[k1]) continue;   // the root, merged into the disc (and so the body)
+        const s0x = T[0] * X[a0] + T[4] * X[a0 + 1] + T[8] * X[a0 + 2] + T[12], s0y = T[1] * X[a0] + T[5] * X[a0 + 1] + T[9] * X[a0 + 2] + T[13], s0z = T[2] * X[a0] + T[6] * X[a0 + 1] + T[10] * X[a0 + 2] + T[14];
+        const s1x = T[0] * X[a1] + T[4] * X[a1 + 1] + T[8] * X[a1 + 2] + T[12], s1y = T[1] * X[a1] + T[5] * X[a1 + 1] + T[9] * X[a1 + 2] + T[13], s1z = T[2] * X[a1] + T[6] * X[a1 + 1] + T[10] * X[a1 + 2] + T[14];
+        const ex = s1x - s0x, ey = s1y - s0y, ez = s1z - s0z;
+        const t = clamp(-(s0x * ex + s0y * ey + s0z * ez) / Math.max(ex * ex + ey * ey + ez * ez, 1e-12), 0, 1);
+        const cx = s0x + ex * t, cy = s0y + ey * t, cz = s0z + ez * t, d = Math.hypot(cx, cy, cz);
+        const need = r + (R[k0] + (R[k1] - R[k0]) * t + gap) / sc;
+        if (d >= need || d < 1e-9) continue;
+        if ((need - d) * sc > tol) hits++;
+        const f = (need - d) / d, mx = cx * f, my = cy * f, mz = cz * f;
+        const put = (o, x, y, z) => { X[o] = F[0] * x + F[4] * y + F[8] * z + F[12]; X[o + 1] = F[1] * x + F[5] * y + F[9] * z + F[13]; X[o + 2] = F[2] * x + F[6] * y + F[10] * z + F[14]; };
+        if (i > 1) put(a0, s0x + mx, s0y + my, s0z + mz);
+        put(a1, s1x + mx, s1y + my, s1z + mz);
+      }
+    };
+    const near2 = (k, j, l) => { const dx = X[3 * k] - X[3 * j], dy = X[3 * k + 1] - X[3 * j + 1], dz = X[3 * k + 2] - X[3 * j + 2]; return dx * dx + dy * dy + dz * dz < (reach + l) ** 2; };
+    // The grid: cells a contact's reach plus a segment across, G to a side about the body.
+    let maxL = 0;
+    for (let k = 0; k < N; k++) if (k % n) maxL = Math.max(maxL, L[k]);
+    const G = 32, CS = reach + maxL, head = (this._gh ??= new Int32Array(G * G * G)), next = (this._gn ??= new Int32Array(N));
+    const cell = (v) => Math.min(G - 1, Math.max(0, Math.floor(v / CS) + G / 2));
+    for (let pass = 0; pass < 4; pass++) {
+      hits = 0;
+      head.fill(-1);
+      for (let k = 0; k < N; k++) {
+        // points within the oral disc are the merged roots: no contact counts there
+        const x = X[3 * k] / D.scale.x, y = (X[3 * k + 1] - D.position.y) / D.scale.y, z = X[3 * k + 2] / D.scale.z;
+        free[k] = x * x + y * y + z * z >= 1 ? 1 : 0;
+      }
+      for (let k = 0; k < N; k++) {   // bin each segment k..k+1 (from point 1 on) by its middle
+        const i = k % n;
+        if (i < 1 || i > n - 2 || !(free[k] || free[k + 1])) continue;
+        const c = cell((X[3 * k] + X[3 * k + 3]) / 2) + G * (cell((X[3 * k + 1] + X[3 * k + 4]) / 2) + G * cell((X[3 * k + 2] + X[3 * k + 5]) / 2));
+        next[k] = head[c]; head[c] = k;
+      }
+      for (let k = 0; k < N; k++) {
+        if (k % n < 1 || !free[k]) continue;
+        const A = Math.floor(k / n), cx = cell(X[3 * k]), cy = cell(X[3 * k + 1]), cz = cell(X[3 * k + 2]);
+        for (let z = Math.max(0, cz - 1); z <= Math.min(G - 1, cz + 1); z++) for (let y = Math.max(0, cy - 1); y <= Math.min(G - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(G - 1, cx + 1); x++)
+          for (let j = head[x + G * (y + G * z)]; j >= 0; j = next[j]) if (Math.floor(j / n) !== A && near2(k, j, L[j + 1])) push(k, j);
+      }
+      keepOut();
+      if (!hits) break;
+      for (let A = 0; A < NA; A++) for (let i = 1; i < n; i++) {
+        const k = A * n + i, a1 = 3 * k, a0 = a1 - 3;
+        const ex = X[a1] - X[a0], ey = X[a1 + 1] - X[a0 + 1], ez = X[a1 + 2] - X[a0 + 2], l = Math.hypot(ex, ey, ez);
+        const f = (l - L[k]) / Math.max(l, 1e-9), w1 = i === 1 ? f : f / 2, w0 = i === 1 ? 0 : f / 2;
+        X[a1] -= ex * w1; X[a1 + 1] -= ey * w1; X[a1 + 2] -= ez * w1;
+        X[a0] += ex * w0; X[a0 + 1] += ey * w0; X[a0 + 2] += ez * w0;
+      }
+    }
+    keepOut();
+    for (let A = 0; A < NA; A++) for (let i = 1; i < n; i++) { const k = A * n + i; arms[A].pts[i].set(X[3 * k], X[3 * k + 1], X[3 * k + 2]); }
+  }
+
+  // Startled by something at 'from': jet away (critterCheck.js calls this too).
+  _jet(world, from) {
+    this.mode = 'jet'; this.modeT = 2.2; this.jet = 1; this.calm = 15;
+    // Away from the threat and a little up; under the den's roof, straight out of the mouth instead.
+    this.jetDir = this.cave && ceilingAt(world, this.pos.x, this.pos.z) < Infinity
+      ? this.cave.dir.clone().setY(0.05).normalize()
+      : _w.subVectors(this.pos, from).setY(0.4).normalize().clone();
   }
 
   _buildWeb() {
@@ -735,6 +920,13 @@ export class Octopus {
         _v.addVectors(pl, pr).multiplyScalar(0.5);
         _w.set(0, _v.y + 0.03 * this.M, 0);
         _v.lerp(_w, 0.45 * f ** 1.5);
+        // (and clear of the eye turrets and eyes, which it would sweep through when the arms rise
+        // past the head under a roof)
+        for (const [ob, r] of this.obstacles) {
+          if (ob === this.sac) continue;
+          _w.copy(_v).sub(ob.position);
+          if (_w.lengthSq() < (r + 0.02 * this.M) ** 2) _v.copy(ob.position).addScaledVector(_w.normalize(), r + 0.02 * this.M);
+        }
         for (let c = 0; c < cols; c++) {
           const q = c === 0 ? pl : c === 2 ? pr : _v, o = (a * per + k * cols + c) * 3;
           P[o] = q.x; P[o + 1] = q.y; P[o + 2] = q.z;
@@ -832,8 +1024,15 @@ export class Turtle {
     const shellMat = skin({ map: carapaceTex(rng), roughness: 0.42, metalness: 0 }, 'turtle-shell');
     const shell = new THREE.Mesh(cg, shellMat);
     shell.castShadow = true;
-    const plast = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 10, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), skin({ color: 0xe8d8a8, roughness: 0.6 }, 'turtle-plastron'));
-    plast.scale.set(L * 0.46, L * 0.05, L * 0.34);
+    // Plastron: a shallow lower dome on the carapace's own rim, closing the shell.
+    const pg = new THREE.SphereGeometry(1, 56, 10, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), pp = pg.attributes.position;
+    for (let i = 0; i < pp.count; i++) {
+      const x = pp.getX(i), y = pp.getY(i), z = pp.getZ(i), taper = x < 0 ? 1 - 0.12 * x * x : 1;
+      pp.setXYZ(i, x * L * 0.5, y * L * 0.05, z * L * 0.4 * taper);
+    }
+    pg.computeVertexNormals();
+    const plast = new THREE.Mesh(pg, skin({ color: 0xe8d8a8, roughness: 0.6 }, 'turtle-plastron'));
+    shell.name = 'shell'; plast.name = 'plastron';
     this.model.add(shell, plast);
     // Head on a short neck.
     const scales = scaleTex(rng);
@@ -850,16 +1049,19 @@ export class Turtle {
     for (const s of [1, -1]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(L * 0.03, 12, 10), eyeMat);
       eye.position.set(L * 0.125, L * 0.035, s * L * 0.062);
+      eye.name = `eye${s > 0 ? 0 : 1}`;
       this.head.add(eye);
     }
+    head.name = 'head'; neck.name = 'neck';
     this.head.add(head, neck);
     this.head.position.set(L * 0.52, -L * 0.01, 0);
     this.model.add(this.head);
     // Soft skin filling the shell's openings: a collar round the neck at the front, shoulders at the
     // front flipper roots and a pad over the hips.
     const collar = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 14), fleshMat);
-    collar.scale.set(L * 0.12, L * 0.065, L * 0.17);
-    collar.position.set(L * 0.4, -L * 0.015, 0);
+    collar.scale.set(L * 0.1, L * 0.065, L * 0.17);
+    collar.position.set(L * 0.38, -L * 0.015, 0);
+    collar.name = 'collar';
     this.model.add(collar);
     for (const s of [1, -1]) {
       const sh = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), fleshMat);
@@ -868,6 +1070,7 @@ export class Turtle {
       const hip = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), fleshMat);
       hip.scale.set(L * 0.08, L * 0.04, L * 0.07);
       hip.position.set(-L * 0.38, -L * 0.03, s * L * 0.16);
+      sh.name = `shoulder${s > 0 ? 0 : 1}`; hip.name = `hip${s > 0 ? 0 : 1}`;
       this.model.add(sh, hip);
     }
     // Flippers: flattened, tapering paddles pivoting at the shoulder / hip.
@@ -890,12 +1093,16 @@ export class Turtle {
       front.position.set(L * 0.22, -L * 0.02, s * L * 0.3);
       const rear = new THREE.Group(), rm = new THREE.Mesh(paddle(L * 0.2, L * 0.08, L * 0.03), fleshMat);
       rm.scale.z = s; rear.add(rm);
-      rear.position.set(-L * 0.4, -L * 0.03, s * L * 0.18);
+      rear.position.set(-L * 0.4, -L * 0.045, s * L * 0.18);   // just under the plastron, clear of it as it turns
       rear.rotation.y = s * 0.9;
+      fm.name = `flipper${s > 0 ? 0 : 1}`; rm.name = `rearflipper${s > 0 ? 0 : 1}`;
       this.model.add(front, rear);
       this.flip.push({ front, rear, s });
     }
     for (const m of this.model.children) m.castShadow = true;
+    // Where parts are attached (and may run into each other): critterCheck.js.
+    this.joins = [['shell', 'plastron'], ['head', 'neck'], ['eye*', 'head'], ['neck', 'collar'], ['neck', 'shell'], ['neck', 'plastron'], ['collar', 'shell'], ['collar', 'plastron'],
+      ['shoulder*', 'shell'], ['shoulder*', 'plastron'], ['shoulder*', 'collar'], ['flipper*', 'shoulder*'], ['hip*', 'shell'], ['hip*', 'plastron'], ['rearflipper*', 'hip*']];
 
     const B = world.bounds;
     this.body = new Swimmer(new THREE.Vector3(range(rng, B.x0 + 3, B.x1 - 3), range(rng, 4, 7), range(rng, -0.5, 1.2)), rng() < 0.5 ? 0 : Math.PI);
