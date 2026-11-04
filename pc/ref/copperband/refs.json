@@ -1730,6 +1730,138 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+    },
+    {
+      "file": "denes_percoidei3.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Percoidei_-_Chelmon_rostratus_-_3.jpg",
+      "author": "Emőke Dénes",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, whole fish, plain dusky-blue rock background; slight blue cast"
+    },
+    {
+      "file": "amada44_9443.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Kupferstreifen_pinzettenfisch_9443.jpg",
+      "author": "Amada44",
+      "license": "CC BY-SA 3.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, large in frame, blurred background; tail close to the right edge"
+    },
+    {
+      "file": "undheim.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chelmon_rostratus_(6337847312).jpg",
+      "author": "Ruben Undheim",
+      "license": "CC BY-SA 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, dark plain background, very sharp"
+    },
+    {
+      "file": "mustermann_wuppertal.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Zoo_Wuppertal_2007-04-30_(000116).jpg",
+      "author": "Rolf Mustermann 2007",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside on black; a second fish's tail at the lower edge"
+    },
+    {
+      "file": "turner_hof.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chelmon_rostratus_Kupferstreifen-Pinzettfisch.jpg",
+      "author": "BS Turner Hof",
+      "license": "Public domain",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, fills the frame, blurred red background; tail fin faint"
+    },
+    {
+      "file": "pawska.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pensetnik.jpg",
+      "author": "Aneta Pawska",
+      "license": "CC BY 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, whole fish, rock background; mid-size in frame"
+    },
+    {
+      "file": "denes_percoidei5.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Percoidei_-_Chelmon_rostratus_-_5.jpg",
+      "author": "Emőke Dénes",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, whole fish, busy coral background"
+    },
+    {
+      "file": "otrebski_genova.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Genova_akwarium_26.jpg",
+      "author": "Andrzej Otrębski",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "broadside, whole fish, dark reef background"
+    },
+    {
+      "file": "fishhead_289341501.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chelmon_rostratus_289341501.jpg",
+      "author": "fishhead (iNaturalist)",
+      "license": "CC0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "wild, broadside, over sand; orange/green cast, a little soft"
+    },
+    {
+      "file": "pelletier_pacific.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Copperband_Butterflyfish_at_Aquarium_of_the_Pacific.JPG",
+      "author": "Patrick Pelletier",
+      "license": "CC BY-SA 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "near-broadside, busy background; small yellow fish at the left edge"
+    },
+    {
+      "file": "denes_percoidei4.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Percoidei_-_Chelmon_rostratus_-_4.jpg",
+      "author": "Emőke Dénes",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "slightly angled"
+    },
+    {
+      "file": "fishhead_278601435.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chelmon_rostratus_278601435.jpg",
+      "author": "fishhead (iNaturalist)",
+      "license": "CC0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "wild, slightly angled, diver's fingers at the bottom"
     }
   ]
 }

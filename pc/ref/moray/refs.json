@@ -1043,6 +1043,127 @@
       ],
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab"
+    },
+    {
+      "file": "karelj_prague1.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_Prague_2011_1.jpg",
+      "author": "Karelj",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "long stretch side-on, tail out of the left edge; a second eel's head top right; blue cast"
+    },
+    {
+      "file": "childs.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_-_Snowflake_Moray,_Clouded_Moray.jpg",
+      "author": "Steve Childs",
+      "license": "CC BY 2.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "whole eel on sand in an S-curve, from above at an angle; green cast"
+    },
+    {
+      "file": "ilyes_panama.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Snowflake_in_Panama_(2072311431).jpg",
+      "author": "Laszlo Ilyes",
+      "license": "CC BY 2.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "whole eel on red algae, oblique; warm cast"
+    },
+    {
+      "file": "delso_anilao47.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Morena_estriada_(Echidna_nebulosa),_Anilao,_Filipinas,_2023-08-25,_DD_47.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "long front half side-on among pink tunicates; very sharp"
+    },
+    {
+      "file": "donnelly_412077812.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_412077812.jpg",
+      "author": "Ryan Donnelly (iNaturalist)",
+      "license": "CC BY 4.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "whole eel free over sand, from above at an angle; soft, green-grey cast; facing unclear on the thumbnail, check when tracing"
+    },
+    {
+      "file": "kovaleva_467371216.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_467371216.jpg",
+      "author": "Валерия Ковалева (iNaturalist)",
+      "license": "CC BY 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "dead eel on its side on sand: clean outline; decomposing, pattern faded, ID less certain; facing unclear on the thumbnail, check when tracing"
+    },
+    {
+      "file": "irvine_455437852.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_455437852.jpg",
+      "author": "Thomas Irvine (iNaturalist)",
+      "license": "CC BY 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "long body over rubble, from above at an angle; small in frame; facing unclear on the thumbnail, check when tracing"
+    },
+    {
+      "file": "karelj_prague3.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_Prague_2011_3.jpg",
+      "author": "Karelj",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "head close-up in profile, very sharp; second eel behind"
+    },
+    {
+      "file": "karelj_prague4.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_Prague_2011_4.jpg",
+      "author": "Karelj",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "head profile, sharp; another eel across the top"
+    },
+    {
+      "file": "bjoertvedt_04.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Echidna_nebulosa_04.JPG",
+      "author": "Bjoertvedt",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "head and front body in profile on gravel; seagrass blades in front"
+    },
+    {
+      "file": "delso_anilao46.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Morena_estriada_(Echidna_nebulosa),_Anilao,_Filipinas,_2023-08-25,_DD_46.jpg",
+      "author": "Diego Delso",
+      "license": "CC BY-SA 4.0",
+      "mirror": true,
+      "yaw": 0,
+      "pitch": 0,
+      "fov": 30,
+      "note": "head and front third in profile, wild, very sharp, busy reef"
     }
   ]
 }
