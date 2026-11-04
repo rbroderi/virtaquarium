@@ -105,6 +105,14 @@ for (const entry of tank.fish) {
     if (sp.brain.host) {
       f.brain.home.copy(reef.anemones[0].pos);
       f.pos.copy(reef.anemones[0].pos).add(new THREE.Vector3(range(rng, -0.4, 0.4), 0.3, range(rng, -0.3, 0.3)));
+    } else if (sp.brain.lurker && reef.caves.length) {
+      // Eels take a cave (extra eels share): body inside, the front quarter out of the mouth.
+      const cave = reef.caves[world.fish.filter((o) => o.sp.brain.lurker).length % reef.caves.length];
+      f.brain.home.copy(cave.mouth).addScaledVector(cave.dir, -0.25 * f.size);
+      f.brain.lurkDir = cave.dir.clone();
+      f.pos.copy(f.brain.home);
+      f.dir.copy(cave.dir); f.yaw = Math.atan2(cave.dir.z, cave.dir.x);
+      f.brain.mode = 'lurk';
     } else {
       // Shy fish choose low homes; everyone else takes a random spot on the reef.
       homes.sort((a, b) => (sp.brain.shy ? a.y - b.y : 0) || 0);

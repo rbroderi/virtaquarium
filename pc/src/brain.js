@@ -147,7 +147,8 @@ export class Brain {
     const dark = 1 - world.light;
     const noise = () => (this.rng() - 0.5) * 0.08;
     const s = this.scores;
-    s.cruise = 0.3 + 0.25 * t.activity + (sp.nocturnal ? dark * 0.5 : 0);
+    // Eels keep to the crevice by day and roam at night.
+    s.cruise = sp.lurker ? 0.2 + dark * 0.9 : 0.3 + 0.25 * t.activity + (sp.nocturnal ? dark * 0.5 : 0);
     s.school = sp.school > 0 && this.neighbors.length ? t.sociability * (0.5 + 0.6 * d.social) : 0;
     s.forage = (sp.grazer || 0) * (0.25 + d.hunger * 0.9);
     s.feed = this.focusFood ? 0.5 + d.hunger * 1.2 + t.boldness * 0.3 : 0;
@@ -155,7 +156,7 @@ export class Brain {
     s.lurk = sp.lurker ? 0.85 + (1 - d.energy) * 0.4 - d.hunger * 0.35 - dark * 0.45 : 0;
     s.flee = sp.host ? 0 : d.fear * 1.8;
     s.patrol = (this.intruder ? t.aggression * 1.1 : t.aggression * 0.2) * (1 - this.chaseFatigue);
-    s.inspect = this.inspectDone || (sp.shy || 0) > 0.6 ? 0 : t.curiosity * d.boredom * 0.9;
+    s.inspect = this.inspectDone || (sp.shy || 0) > 0.6 ? 0 : t.curiosity * d.boredom * (sp.lurker ? 0.4 : 0.9);
     s.host = sp.host ? 0.75 + d.fear * 0.8 - d.boredom * 0.3 : 0;
     s.hover = sp.hover ? 0.7 - (sp.nocturnal ? dark * 0.4 : 0) : 0;
 
@@ -209,6 +210,8 @@ export class Brain {
     let speed = 0.4, clearance = me.size * 0.45;
     dir.set(0, 0, 0);
     this.targetTimer -= dt;
+    const backing = this.backing;
+    this.backing = 0;   // reverse swimming speed (m/s), set while an eel backs into its cave
 
     switch (this.mode) {
       case 'cruise': {
@@ -335,14 +338,24 @@ export class Brain {
         break;
       }
       case 'lurk': {
-        // Settle on the rock at home, head up and out, swaying slowly.
+        // Settle in the cave at home (main.js), facing out of its mouth, head up, swaying slowly.
         dir.subVectors(this.home, pos);
         const dist = dir.length();
         clearance = me.size * 0.04;
-        if (dist < me.size * 0.3) {
-          dir.set(Math.sin(this.modeTime * 0.25 + this.orbit) * 0.3, 0, Math.cos(this.modeTime * 0.17) * 0.2).add(me.dir);
+        _v.copy(this.home).addScaledVector(this.lurkDir || me.dir, 1.2);   // just outside the mouth
+        if (dist < 0.3 || (this.lurkDir && pos.distanceTo(_v) < 0.5) || (this.lurkDir && dist < 1.3 && backing)) {
+          // Face out with a slow sway. Morays reverse their body wave to swim backwards, so an eel
+          // that is outside the mouth backs in tail first (fish.js); at home it braces against the rock.
+          dir.copy(this.lurkDir || me.dir).multiplyScalar(2);
+          dir.x += Math.sin(this.modeTime * 0.25 + this.orbit) * 0.3; dir.z += Math.cos(this.modeTime * 0.17) * 0.2;
           speed = pace.lurk[1];
-        } else { dir.normalize(); speed = pace.lurk[0]; }
+          this.backing = this.lurkDir && dist > 0.05 ? Math.min(0.3, 0.1 + dist * 0.4) : 0;
+        } else {
+          // Coming home: head for the water just outside the mouth (the roof is not in the height field).
+          if (this.lurkDir) dir.subVectors(_v, pos);
+          const d = dir.length();
+          dir.normalize(); speed = Math.max(0.12, d < 1 ? pace.lurk[0] * d : pace.lurk[0]);
+        }
         break;
       }
       case 'hover': {
@@ -357,8 +370,10 @@ export class Brain {
       }
     }
 
-    // Always-on reflexes: personal space, walls, reef.
-    for (const o of world.fish) {
+    // Always-on reflexes: personal space, walls, reef. A lurking eel holds its crevice: other fish
+    // keep clear of it, and the reef ahead of the mouth is open water it does not need to climb over.
+    const anchored = this.mode === 'lurk';
+    if (!anchored) for (const o of world.fish) {
       if (o === me) continue;
       _v.subVectors(pos, o.pos);
       const dist = _v.length(), min = (me.size + o.size) * 0.45;
@@ -374,7 +389,7 @@ export class Brain {
     const ahead = world.reefHeight(pos.x + me.dir.x * 1.2, pos.z + me.dir.z * 1.2) + clearance;
     const below = world.reefHeight(pos.x, pos.z) + clearance;
     if (pos.y < below) dir.y += (below - pos.y) * 4 + 0.5;
-    else if (pos.y < ahead) dir.y += (ahead - pos.y) * 1.5;
+    else if (pos.y < ahead && !anchored) dir.y += (ahead - pos.y) * 1.5;
 
     return speed;
   }

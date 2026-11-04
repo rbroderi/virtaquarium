@@ -130,6 +130,17 @@ export class Fish {
     this.speed = vfNew;
     world.flow(this.pos, _flow);
     this.pos.addScaledVector(this.vel, dt).addScaledVector(_flow, dt);
+    if (brain.backing) {
+      // Swimming backwards into the cave: the body wave runs tail to head (phase below) and pushes it home.
+      _flow.subVectors(brain.home, this.pos);
+      this.pos.addScaledVector(_flow, Math.min(1, (brain.backing * dt) / Math.max(_flow.length(), 1e-3)));
+      this.vel.multiplyScalar(Math.exp(-3 * dt));
+    }
+    if (brain.mode === 'lurk' && brain.lurkDir && this.pos.distanceTo(brain.home) < 0.6) {
+      // A lurking eel braces its body in the crevice: the current and its own sway don't carry it off.
+      this.pos.lerp(brain.home, 1 - Math.exp(-3 * dt));
+      this.vel.multiplyScalar(Math.exp(-3 * dt));
+    }
 
     // Hard limits: glass and rock are rigid.
     const B = world.bounds;
@@ -161,10 +172,11 @@ export class Fish {
     const tailAmp = tailShare * clamp(blEq / 1.2, 0, 1);
     // Hovering fish hold the body still (the pectorals do the work); a slight wave only once moving.
     const idle = 0.06 * smoothstep(0.05, 0.3, U / L) + 0.05 * Math.abs(this.turnRate);
-    this.phase += dt * Math.PI * 2 * Math.max(fTail * tailShare, 1.2);
+    const back = brain.backing ? brain.backing / L : 0;   // reverse swimming, body lengths per second
+    this.phase += back ? -dt * Math.PI * 2 * (0.8 + back * 4) : dt * Math.PI * 2 * Math.max(fTail * tailShare, 1.2);
     const u = this.model.userData.uniforms;
     u.uPhase.value = this.phase;
-    u.uAmp.value = Math.max(tailAmp, idle) + this.gulp;
+    u.uAmp.value = Math.max(tailAmp, idle, back ? 0.5 : 0) + this.gulp;
 
     // Body bends with path curvature (kappa = omega / U), stronger in sharp, slow turns.
     const kappa = this.turnRate / Math.max(U, 0.25 * L);

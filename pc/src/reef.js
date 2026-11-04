@@ -383,6 +383,13 @@ class HeightField {
     }
     this.h = out;
   }
+  // Set every cell whose centre passes inside(x, z) down to at most y (run after finish()).
+  carve(inside, y) {
+    for (let k = 0; k < this.nz; k++) for (let i = 0; i < this.nx; i++) {
+      const j = k * this.nx + i;
+      if (inside(this.x0 + i * this.step, this.z0 + k * this.step)) this.h[j] = Math.min(this.h[j], y);
+    }
+  }
   sample(x, z) {
     const fx = (x - this.x0) / this.step, fz = (z - this.z0) / this.step;
     const i = Math.floor(fx), k = Math.floor(fz);
@@ -664,7 +671,58 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   corals.add(an);
 
   hf.splatObject(corals);
+
+  // Moray caves: an arch of rock (two side stones and a back stone under a flat roof) with its mouth to
+  // the front, so every tank has a crevice for an eel. They draw from their own random stream, so the
+  // rest of the seeded layout (and the Roku backdrop baked from it) is unchanged. The roof stays out of
+  // the height field and the floor is carved back to the sand afterwards, so an eel can lie inside.
+  const caves = [];
+  {
+    const crng = mulberry32(seed + 101);
+    for (const [cx0, cz] of [[2.3, -0.9], [-4.2, -0.3]]) {
+      const cx = cx0 * sx + range(crng, -0.2, 0.2), yaw = range(crng, -0.3, 0.3);
+      const ground = Math.max(0, hf.sample(cx, cz));
+      const cave = new THREE.Group();
+      cave.position.set(cx, ground, cz);
+      cave.rotation.y = yaw;
+      const stone = (x, y, z, w, h, d, solid) => {
+        let m;
+        if (scenery.rocks.length) {
+          m = scenery.rocks[Math.floor(crng() * scenery.rocks.length)].clone();
+          m.scale.set(w * 1.1, h * 1.05, d * 1.1);
+          m.position.set(x, y - h * 0.1, z);
+        } else {
+          m = new THREE.Mesh(rockGeometry(crng, noise, w, h, d), rockMat);
+          m.position.set(x, y + h * 0.5, z);
+        }
+        m.rotation.y = range(crng, -0.3, 0.3);
+        m.castShadow = m.receiveShadow = true;
+        if (!solid) m.userData.noHeight = true;
+        cave.add(m);
+      };
+      stone(-0.75, -0.15, 0, 0.6, 1.0, 1.4, true);    // side stones
+      stone(0.75, -0.15, 0, 0.6, 1.0, 1.4, true);
+      stone(0, -0.15, -0.8, 1.7, 1.0, 0.5, true);     // back
+      stone(0, 0.75, -0.1, 2.3, 0.45, 1.7, false);    // roof
+      rocks.add(cave);
+      hf.splatObject(cave);
+      const out = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      caves.push({
+        mouth: new THREE.Vector3(cx, ground + 0.3, cz).addScaledVector(out, 0.55),   // where the head rests
+        dir: out,                                                                     // facing out of the cave
+        yaw, ground, x: cx, z: cz,
+      });
+    }
+  }
   hf.finish();
+  for (const c of caves) {
+    // Floor between the side stones, from the back stone out past the mouth.
+    const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+    hf.carve((x, z) => {
+      const dx = x - c.x, dz = z - c.z, lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+      return Math.abs(lx) < 0.4 && lz > -0.55 && lz < 1.0;
+    }, c.ground + 0.05);
+  }
 
   // Resting spots: points just above the reef surface spread across the tank.
   const homes = [];
@@ -680,6 +738,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     anemones: [{ pos: new THREE.Vector3(anemoneSpot.x, anemoneSpot.y + 0.35, anemoneSpot.z), radius: 0.75 }],
     bubbler: new THREE.Vector3(6.3 * sx, 0.6, -3.4),
     homes,
+    caves,
   };
 }
 
