@@ -71,7 +71,8 @@ export function gillOf(sp) {
 export function naresOf(sp) {
   const e = sp.eye, len = sp.body.len, sn = sp.body.snout || 0;
   // On the face, not out on a snout: snouted fish have them just ahead of the eye.
-  const lo = sn ? sn + 0.45 * (e.u - e.r / len - sn) : 0.004, front = e.u - e.r / len;
+  // (and back from the nose's rounded tip, where they would stretch over its front)
+  const lo = sn ? sn + 0.45 * (e.u - e.r / len - sn) : Math.max(0.025, 0.3 * e.u), front = e.u - e.r / len;
   const uA = Math.max(lo, e.u - (e.r * 2.9) / len), uP = Math.max((uA + front) / 2, e.u - (e.r * 1.7) / len);
   return [
     { u: uP, v: e.v - 0.05, r: Math.min(e.r * 0.14, 0.0055) },
@@ -1263,7 +1264,7 @@ function reliefOf(sp, prof) {
 }
 
 function bodyGeometry(prof, sp) {
-  const fine = !!sp.ridges, NU = fine ? 170 : 140, NA = 112, CAP = 5;
+  const fine = !!sp.ridges, NU = fine ? 170 : 140, NA = 112;
   const relief = reliefOf(sp, prof);
   const len = sp.body.len, G = gillOf(sp), M = mouthOf(sp);
   const us = [];
@@ -1295,19 +1296,22 @@ function bodyGeometry(prof, sp) {
   };
   // Lips: raised either side of the gape, with a crease along it, fading out past the corner.
   const mw = Math.min(0.004 + 0.05 * M.u, 0.12 * prof.half(M.u));
-  const lips = (u, v, h) => {
+  // sc: the nose dome's shrink at this ring; the lips shrink with it and meet at the tip (at full size
+  // they climbed the shrinking dome, a dark V over the mouth head-on).
+  const lips = (u, v, h, sc = 1) => {
     const t = ((u - M.u) * len) / mw;
     if (t > 1.5) return 0;
-    const dy = (v - lineV(u)) * h;
-    const lip = Math.exp(-(((dy - mw) / (0.7 * mw)) ** 2)) + Math.exp(-(((dy + mw) / (0.7 * mw)) ** 2));
-    return (0.4 * lip - 0.35 * Math.exp(-((dy / (0.45 * mw)) ** 2))) * mw * (1 - smooth01(t + 0.5));
+    const w = mw * Math.min(1, sc), dy = (v - lineV(u)) * h;
+    const lip = Math.exp(-(((dy - w) / (0.7 * w)) ** 2)) + Math.exp(-(((dy + w) / (0.7 * w)) ** 2));
+    return (0.4 * lip - 0.35 * Math.exp(-((dy / (0.45 * w)) ** 2))) * w * (1 - smooth01(t + 0.5));
   };
   const R = NA + 6;   // vertices per ring: NA round it, and the three extra copies on the gape each side
   const pos = [], uv = [], thick = [], idx = [], jaw = [], jawG = [], cov = [], slit = [];
-  // One ring at body position u0, or a ring of the nose cap (scale, at capX). seam: the rings on the
-  // gill margin, { cover, slit, back }: the cover's edge (twice: its outer face and the start of the
-  // gill opening) and, GAP behind and a little sunk, the body's (the opening's far side, then skin).
-  const ringOf = (u0, scale = 1, capX = null, seam = null) => {
+  // One ring at body position u0, or a ring of the nose dome (capX: its x; the section at uSec
+  // shrunk by scale, while u0 places the mouth, jaw and texture). seam: the rings on the gill margin,
+  // { cover, slit, back }: the cover's edge (twice: its outer face and the start of the gill opening)
+  // and, GAP behind and a little sunk, the body's (the opening's far side, then skin).
+  const ringOf = (u0, scale = 1, capX = null, seam = null, uSec = null) => {
     const mouthRing = (seam ? G.u : u0) < M.u;
     // dv: texture offset for the lips' inner faces, so the inside of the mouth maps the skin just above
     // and below the gape (shown darkened, FISH_COVER) rather than one stretched row of it.
@@ -1315,17 +1319,17 @@ function bodyGeometry(prof, sp) {
       const v = -Math.cos(thAt(a));   // which part of the gill margin this vertex sits on
       const u = seam ? (seam.back ? backU(v) : G.edge(v)) : capX != null ? u0 : bendU(u0, v);
       const th = angle(a, u), cy = Math.cos(th), vv = -cy;
-      const h = prof.half(u) * scale, yc = prof.centre(u), x = capX ?? prof.x(u);
-      let y = yc + cy * h, z = flankZ(sp, prof, u, vv, seam ? !seam.back : undefined) * scale;
+      const us_ = uSec ?? u, h = prof.half(us_) * scale, yc = prof.centre(us_), x = capX ?? prof.x(u);
+      let y = yc + cy * h, z = flankZ(sp, prof, us_, vv, seam ? !seam.back : undefined) * scale;
       if (seam?.back && seam.slit) z *= 1 - 0.04 * G.fade(vv);   // the gill chamber is sunk under the cover
-      const k = 1 + (relief(x, y) + lips(u, vv, h)) / Math.max(Math.hypot(y - yc, z), 2 * mw, 1e-3);
+      const k = 1 + (relief(x, y) + lips(u, vv, h, scale)) / Math.max(Math.hypot(y - yc, z), 2 * mw * Math.min(1, scale), 1e-3);
       y = yc + (y - yc) * k; z *= k;
       pos.push(x, y, Math.sign(Math.sin(th)) * z);
-      uv.push(capX != null ? 0 : u, clamp((1 + cy) / 2 + dv, 0, 1));
+      uv.push(u, clamp((1 + cy) / 2 + dv, 0, 1));
       // Tissue a backlight has to pass through: across the body on the flanks, but no less than most
       // of the section's smaller axis at the back, belly and nose, where the distance to the midplane
       // falls to nothing yet the light still crosses the whole body (they glowed as thin lines).
-      thick.push(2 * Math.max(z, 0.8 * Math.min(prof.width(u), prof.half(u))));
+      thick.push(2 * Math.max(z, 0.8 * Math.min(prof.width(us_), prof.half(us_))));
       jaw.push(jw);
       jawG.push(jw > 0 ? wjG : 0);
       // How much of the breathing flare (fish.js) a point takes: most at the cover's margin.
@@ -1353,23 +1357,34 @@ function bodyGeometry(prof, sp) {
     }
   };
   const tip = (u) => { thick.push(1.6 * Math.min(prof.width(u), prof.half(u))); jaw.push(0); jawG.push(0); cov.push(0); slit.push(0); };
-  // Rounded nose cap: rings shrinking on a quarter ellipse ahead of u = 0.
-  const capLen = Math.min(prof.half(0), prof.width(0)) * 0.55;
+  // Nose: an elliptical dome taking over from the head at uS, where the head's surface still slopes
+  // gently enough to round over (most heads rise almost vertically from a blunt front at u = 0, and a
+  // cap set on that front sat on it as a separate knob with a crease round it). The dome leaves the
+  // head at its own slope, so there is no crease, and closes at the tip; its rings shrink the section
+  // at uS while carrying the mouth, jaw and texture on from u = uS to 0.
+  const dh = (u) => (prof.half(u + 1e-3) - prof.half(Math.max(0, u - 1e-3))) / (u + 1e-3 - Math.max(0, u - 1e-3));
+  const ROUND = 0.8;   // the dome's length along x over its height (1: a hemisphere)
+  const domeAt = (u) => { const r = prof.half(u); return { r, t: (dh(u) / len / r) * ROUND * r }; };   // t: tan of where the dome joins
+  let uS = 0;
+  for (let u = 0; u < Math.min(0.06, 0.7 * M.u + 0.01); u += 0.002) { uS = u; if (domeAt(u).t < Math.tan(1.0)) break; }
+  const { r: rS, t: tS } = domeAt(uS);
+  const phi0 = Math.atan(Math.max(0, tS)), aX = (ROUND * rS) / Math.cos(phi0);   // x semi-axis of the dome's ellipse
+  const domeLen = aX * (1 - Math.sin(phi0)), xS = prof.x(uS), DOME = 7;
   // The snout tip, four times over: for the upper jaw's skin, the lower jaw's (it moves with it), and
   // the inner faces of each, which close the front of the open mouth.
   for (const [jw, sl] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
     // (the inner copies map the skin either side of the gape, as the lips' inner faces do)
-    pos.push(prof.x(0) + capLen, prof.centre(0), 0); uv.push(0, sl ? clamp((1 - M.v0) / 2 + (jw ? -0.05 : 0.05), 0, 1) : 0.5); tip(0);
+    pos.push(xS + domeLen, prof.centre(uS), 0); uv.push(0, sl ? clamp((1 - M.v0) / 2 + (jw ? -0.05 : 0.05), 0, 1) : 0.5); tip(uS);
     jaw[jaw.length - 1] = jw; slit[slit.length - 1] = sl;
   }
   let rings = 0;
-  for (let k = CAP; k >= 1; k--, rings++) {
-    const phi = (k / (CAP + 1)) * Math.PI / 2;
-    ringOf(0, Math.cos(phi), prof.x(0) + Math.sin(phi) * capLen);
+  for (let k = DOME; k >= 1; k--, rings++) {
+    const phi = phi0 + (k / (DOME + 1)) * (Math.PI / 2 - phi0);
+    ringOf(uS * (1 - k / (DOME + 1)), Math.cos(phi) / Math.cos(phi0), xS + aX * (Math.sin(phi) - Math.sin(phi0)), null, uS);
   }
   const slitRings = [];
   let seamed = !G;
-  for (const u of us) {
+  for (const u of [uS, ...us.filter((u) => u > uS + 1e-4)]) {
     if (!seamed && u > G.u) {
       for (const seam of [{}, { slit: true }, { slit: true, back: true }, { back: true }]) {
         if (seam.slit) slitRings.push(rings);
