@@ -6,12 +6,19 @@
 //
 // Temperament values are 0..1. Sizes are real aquarium-specimen lengths in world units
 // (1 unit = 12.5 cm); speeds come from the SWIM table at the bottom of this file.
+//
+// Species fitted to reference photos have their shape overridden by pc/src/anatomy/<id>.js.
+import { applyFitted } from './anatomy/index.js';
 
 export const SPECIES = [
   {
     id: 'clownfish', name: 'Ocellaris Clownfish', sci: 'Amphiprion ocellaris',
     fact: 'Lives among anemone tentacles, protected by a mucus coat that stops the sting.',
     size: 0.62, count: 3,
+    // Published: body depth 2.1-2.4 in SL; D X-XI,13-17; A II,11-13; P 16-18; V I,5; LL 34-48; caudal
+    // rounded (FishBase morphology, Allen 1991; Fishes of Australia). tools/fit-anatomy.mjs fits the
+    // silhouette to pc/ref/clownfish within these bounds (pc/src/anatomy/clownfish.js).
+    anatomy: { bodyDepthSL: [0.42, 0.48], dorsal: { spines: 11, rays: 15 }, anal: { spines: 2, rays: 12 }, pectoralRays: 17, pelvic: { spines: 1, rays: 5 } },
     body: { len: 0.8, depth: 0.42, width: 0.42, m: 0.4, headP: 0.7, tailP: 1.3, ped: 0.45 },
     eye: { u: 0.12, v: -0.28, r: 0.045, iris: '#f08a2a' },
     pattern: [
@@ -246,6 +253,7 @@ export const SPECIES = [
     brain: { maxSpeed: 1.1, turn: 4.0, zone: [0.6, 1.0], school: 0, grazer: 0.9, territorial: 0.4, boldness: 0.35, curiosity: 0.5, activity: 0.7, shy: 0.7, tailHz: 4.0 },
   },
 ];
+applyFitted(SPECIES);
 
 export const FISH_NAMES = ['Pip', 'Marlow', 'Coral', 'Finn', 'Juno', 'Ripple', 'Sable', 'Wren', 'Tango', 'Opal', 'Basil', 'Kiko',
   'Moss', 'Zuzu', 'Ember', 'Lumen', 'Pearl', 'Drift', 'Nori', 'Skip', 'Mango', 'Indigo', 'Bubbles', 'Quill', 'Saffron',

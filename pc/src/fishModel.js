@@ -277,7 +277,7 @@ function paintSkin(sp, prof) {
 
 // ---------- fins ----------
 
-function finOutline(sp, prof, fin) {
+export function finOutline(sp, prof, fin) {
   const sign = fin.pos === 'top' ? 1 : -1;
   const base = [], outer = [];
   for (let i = 0; i <= 14; i++) {
@@ -292,7 +292,7 @@ function finOutline(sp, prof, fin) {
   return { base, outer, sign };
 }
 
-function caudalOutline(sp, prof) {
+export function caudalOutline(sp, prof) {
   const c = sp.caudal, xp = prof.xPed + 0.02, hp = prof.half(1) * 0.9, tip = -0.5, L = xp - tip, s = c.spread;
   switch (c.type) {
     case 'forked': return [[xp, hp], [tip + L * 0.05, s], [tip, s * 1.05], [xp - L * 0.55, 0], [tip, -s * 1.05], [tip + L * 0.05, -s], [xp, -hp]];

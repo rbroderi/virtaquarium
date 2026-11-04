@@ -556,7 +556,9 @@
         }
       ],
       "note": "near side-on, slightly turned towards the camera; fin margins on the black background follow a hand outline",
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab",
+      "sideOn": true,
+      "rot": -18
     },
     {
       "file": "krisp_side.jpg",
@@ -1082,7 +1084,8 @@
           "r": 5
         }
       ],
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab",
+      "sideOn": false
     },
     {
       "file": "spekking_side.jpg",
@@ -1624,7 +1627,9 @@
         }
       ],
       "note": "body reads brown (white balance or darker fish): use for shape, not colour",
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab",
+      "sideOn": true,
+      "rot": -3
     },
     {
       "file": "janderk_anemone.jpg",
@@ -2230,7 +2235,9 @@
         }
       ],
       "note": "colour cast towards yellow; second fish lower right is not traced",
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab",
+      "sideOn": true,
+      "rot": 2
     },
     {
       "file": "stang_31zz.jpg",
@@ -2794,7 +2801,8 @@
           "r": 7
         }
       ],
-      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab"
+      "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-03); check in the lab",
+      "sideOn": false
     }
   ]
 }

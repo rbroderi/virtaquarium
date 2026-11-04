@@ -23,8 +23,20 @@ export function installReference(lab) {
   const say = (msg) => { out.textContent = msg; };
   const redraw = () => { dirty = true; };
 
-  const toView = ([x, y]) => [view.tx + view.s * (cur.mirror ? img.naturalWidth - x : x), view.ty + view.s * y];
-  const toPhoto = ([u, v]) => { const x = (u - view.tx) / view.s; return [cur.mirror ? img.naturalWidth - x : x, (v - view.ty) / view.s]; };
+  // Photo px -> CSS px: turn by -rot about the image centre (fish in photos are rarely level; see
+  // tools/fit-anatomy.mjs, which fits `rot`), mirror, then scale and move.
+  const rotOf = () => (-(cur.rot || 0) * Math.PI) / 180;
+  const toView = ([x, y]) => {
+    const a = rotOf(), c = Math.cos(a), s = Math.sin(a), cx = img.naturalWidth / 2, cy = img.naturalHeight / 2;
+    const rx = cx + (x - cx) * c - (y - cy) * s, ry = cy + (x - cx) * s + (y - cy) * c;
+    return [view.tx + view.s * (cur.mirror ? img.naturalWidth - rx : rx), view.ty + view.s * ry];
+  };
+  const toPhoto = ([u, v]) => {
+    const a = rotOf(), c = Math.cos(a), s = Math.sin(a), cx = img.naturalWidth / 2, cy = img.naturalHeight / 2;
+    let rx = (u - view.tx) / view.s; const ry = (v - view.ty) / view.s;
+    if (cur.mirror) rx = img.naturalWidth - rx;
+    return [cx + (rx - cx) * c + (ry - cy) * s, cy - (rx - cx) * s + (ry - cy) * c];
+  };
 
   // ---------- drawing ----------
   function draw() {
@@ -42,6 +54,7 @@ export function installReference(lab) {
       else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h); }
       ctx.translate(view.tx, view.ty); ctx.scale(view.s, view.s);
       if (cur.mirror) { ctx.translate(img.naturalWidth, 0); ctx.scale(-1, 1); }
+      ctx.translate(img.naturalWidth / 2, img.naturalHeight / 2); ctx.rotate(rotOf()); ctx.translate(-img.naturalWidth / 2, -img.naturalHeight / 2);
       ctx.drawImage(img, 0, 0);
       ctx.restore();
     }
@@ -126,7 +139,7 @@ export function installReference(lab) {
   }
 
   function syncInputs() {
-    $('refmirror').checked = cur.mirror; $('refpitch').value = cur.pitch; $('reffov').value = cur.fov;
+    $('refmirror').checked = cur.mirror; $('refpitch').value = cur.pitch; $('reffov').value = cur.fov; $('refrot').value = cur.rot || 0;
     $('refaz').value = cur.light?.az ?? 23; $('refel').value = cur.light?.el ?? 70;
   }
 
@@ -194,12 +207,13 @@ export function installReference(lab) {
     if (cur.outline.length < 3) { say('Trace the fish outline first (outline tool), then align.'); return; }
     const { box } = coverageMask();
     if (!box) { say('No fish on screen to align to.'); return; }
-    const xs = cur.outline.map((p) => p[0]), ys = cur.outline.map((p) => p[1]);
+    // Outline box after rotation and mirroring (unit scale), then match fish length and centre the boxes.
+    view = { s: 1, tx: 0, ty: 0 };
+    const q = cur.outline.map(toView), xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
     const px0 = Math.min(...xs), px1 = Math.max(...xs), py0 = Math.min(...ys), py1 = Math.max(...ys);
-    // Match fish length (horizontal extent), then centre the boxes.
-    view.s = (box.x1 - box.x0 + 1) / (px1 - px0); view.tx = 0; view.ty = 0;
-    const [cx, cy] = toView([(px0 + px1) / 2, (py0 + py1) / 2]);
-    view.tx = (box.x0 + box.x1 + 1) / 2 - cx; view.ty = (box.y0 + box.y1 + 1) / 2 - cy;
+    view.s = (box.x1 - box.x0 + 1) / (px1 - px0);
+    view.tx = (box.x0 + box.x1 + 1) / 2 - view.s * (px0 + px1) / 2;
+    view.ty = (box.y0 + box.y1 + 1) / 2 - view.s * (py0 + py1) / 2;
     redraw();
   }
 
@@ -313,6 +327,7 @@ export function installReference(lab) {
   $('refsel').onchange = (e) => select(Number(e.target.value));
   $('refview').onchange = redraw; $('refmix').oninput = redraw;
   $('refmirror').onchange = (e) => { if (cur) { cur.mirror = e.target.checked; redraw(); } };
+  $('refrot').onchange = (e) => { if (cur) { cur.rot = Number(e.target.value); edge = null; align(); } };
   $('refpitch').onchange = (e) => { if (cur) { cur.pitch = Number(e.target.value); applyPose(); } };
   $('reffov').onchange = (e) => { if (cur) { cur.fov = Number(e.target.value); applyPose(); } };
   $('refaz').onchange = $('refel').onchange = () => { if (cur) { cur.light = { az: Number($('refaz').value), el: Number($('refel').value) }; applyPose(); } };
