@@ -5,7 +5,12 @@
 //   axial drag   Fd = kf * U|U|,  kf = CF * L^2   (pressure drag at Re ~ 1e4-1e5)
 //   lateral drag strong (body acts like a keel), so velocity follows heading
 //   thrust       T  from a speed controller, limited by sustained/burst capacity
-//   turning      yaw rate <= hoverTurn + U / (rmin * L)   (fins at rest, body at speed)
+//   turning      yaw and pitch are separate rotations with rotational inertia (angular acceleration
+//                limited by fin torque). Yaw rate is bounded by pectoral sculling at low speed and,
+//                at speed, by both the turning radius (r >= rmin*L for escapes, 2x that for routine
+//                turns) and the lateral acceleration fins and body can produce (omega <= a_lat / U).
+//                Pitch stays shallow while cruising and steepens only when nearly stopped.
+//                Bending into a turn adds drag, so fish slow down in tight turns.
 // All visible motion is derived from the force balance:
 //   tail-beat frequency from the Strouhal relation St = f A / U ~ 0.3 with A = 0.2 L,
 //     using U_eq = sqrt(T / kf), the speed the present thrust would sustain;
@@ -16,14 +21,18 @@
 import * as THREE from 'three';
 import { Brain } from './brain.js';
 import { buildFishModel } from './fishModel.js';
-import { clamp, lerp, range } from './util.js';
+import { clamp, lerp, range, wrapAngle } from './util.js';
 
 const CF = 0.9;          // axial drag coefficient (folded constants)
+const A_LAT = 0.8 / 0.125;        // routine lateral acceleration in turns, ~0.08 g (units/s^2)
+const A_LAT_BURST = 5 / 0.125;    // escape turns, ~0.5 g
+const PITCH_CRUISE = 0.35;        // rad (~20 deg): steepest climb or dive while swimming
+const PITCH_SLOW = 0.8;           // rad (~46 deg): nose-down grazing / hovering when nearly stopped
 const LATERAL = 8;       // lateral velocity decay rate (1/s)
 const ST = 0.3;          // Strouhal number
 const TAIL_AMP = 0.2;    // tail-tip amplitude / L
 
-const _d = new THREE.Vector3(), _prev = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vector3();
+const _d = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vector3();
 const _lat = new THREE.Vector3(), _flow = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -48,6 +57,11 @@ export class Fish {
     this.pectPhase = rng() * 10;
     this.roll = 0;
     this.turnRate = 0;
+    this.yaw = Math.atan2(this.dir.z, this.dir.x);
+    this.pitch = 0;
+    this.yawRate = 0;
+    this.pitchRate = 0;
+    this.turnSign = 0;   // remembered direction while reversing, so a U-turn doesn't dither
     this.bend = 0;
     this.gulp = 0;
     this.brain = new Brain(this, rng);
@@ -61,23 +75,34 @@ export class Fish {
     const want = brain.steer(dt, world, _d);
     if (_d.lengthSq() < 1e-8) _d.copy(this.dir);
     _d.normalize();
-    _d.y = clamp(_d.y, -0.6, 0.6);   // fish keep near-level; steep climbs are done in stages
-    _d.normalize();
 
-    // ---- heading: yaw-rate limited by fins (at rest) and turning radius (at speed) ----
-    let ang = this.dir.angleTo(_d);
-    if (ang > 2.7) {
-      // Reversing: swing round through the depth axis.
-      _d.z += this.pos.z > 0 ? -0.9 : 0.9;
-      _d.normalize();
-      ang = this.dir.angleTo(_d);
-    }
-    const U = Math.max(0, this.speed);
-    const omegaMax = Math.min(8, sw.hoverTurn + U / (sw.rmin * L)) * (want > 1 ? 1.6 : 1);
-    _prev.copy(this.dir);
-    if (ang > 1e-4) this.dir.lerp(_d, Math.min(1, (omegaMax * dt) / ang)).normalize();
-    const yawDelta = Math.atan2(_prev.x * this.dir.z - _prev.z * this.dir.x, _prev.x * this.dir.x + _prev.z * this.dir.z);
-    this.turnRate = lerp(this.turnRate, yawDelta / Math.max(dt, 1e-4), Math.min(1, dt * 8));
+    // ---- heading: yaw and pitch, each limited in rate and in angular acceleration ----
+    const U = Math.max(0, this.speed), burst = want > 1;
+    const hover = sw.hoverTurn * clamp(1 - U / (sw.maxBL * L), 0.25, 1);   // pectoral sculling fades with speed
+    const rTurn = sw.rmin * L * (burst ? 1 : 2);
+    const aLat = burst ? A_LAT_BURST : A_LAT;
+    const omegaMax = Math.max(hover, Math.min(U / rTurn, aLat / Math.max(U, 1e-3)));
+    const alpha = sw.hoverTurn * (burst ? 30 : 5);   // rad/s^2
+    let err = wrapAngle(Math.atan2(_d.z, _d.x) - this.yaw);
+    if (Math.abs(err) > 2.7) {
+      // Reversing: commit to turning towards open water (away from the nearer glass).
+      if (!this.turnSign) this.turnSign = Math.sign(-this.pos.z * Math.cos(this.yaw)) || 1;
+      err = Math.abs(err) * this.turnSign;
+    } else if (Math.abs(err) < 2.0) this.turnSign = 0;
+    const wYaw = clamp(err * 2.5, -omegaMax, omegaMax);   // ease into the new heading
+    this.yawRate += clamp(wYaw - this.yawRate, -alpha * dt, alpha * dt);
+    this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
+
+    const pMax = lerp(PITCH_SLOW, PITCH_CRUISE, clamp((U / L - 0.15) / 0.3, 0, 1));   // steep only when ~stopped
+    // Fish gain depth gradually and mostly swim level: climb at a shallower angle than straight at the goal.
+    const pitchTarget = clamp(0.6 * Math.asin(clamp(_d.y, -1, 1)), -pMax, pMax);
+    const pitchRateMax = burst ? 2.5 : 0.9;
+    const wPitch = clamp((pitchTarget - this.pitch) * 2.0, -pitchRateMax, pitchRateMax);
+    this.pitchRate += clamp(wPitch - this.pitchRate, -alpha * 0.6 * dt, alpha * 0.6 * dt);
+    this.pitch = clamp(this.pitch + this.pitchRate * dt, -PITCH_SLOW, PITCH_SLOW);
+    const cp = Math.cos(this.pitch);
+    this.dir.set(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
+    this.turnRate = this.yawRate;
 
     // ---- thrust controller ----
     const maxU = sw.maxBL * L, burstU = sw.burstBL * L;
@@ -98,7 +123,8 @@ export class Fish {
     // ---- integrate (forward axis + decaying lateral slip) ----
     const vf = this.vel.dot(this.dir);
     _lat.copy(this.vel).addScaledVector(this.dir, -vf).multiplyScalar(Math.exp(-LATERAL * dt));
-    const af = (T - kf * vf * Math.abs(vf)) / m;
+    const turnDrag = 1 + 0.6 * Math.min(1, Math.abs(this.yawRate) / Math.max(omegaMax, 1e-3)) ** 2;   // bent body
+    const af = (T - kf * turnDrag * vf * Math.abs(vf)) / m;
     const vfNew = vf + af * dt;
     this.vel.copy(this.dir).multiplyScalar(vfNew).add(_lat);
     this.speed = vfNew;
@@ -113,7 +139,8 @@ export class Fish {
 
     // ---- orientation: heading + bank into turns ----
     _up.set(0, 1, 0).addScaledVector(this.dir, -this.dir.y).normalize();
-    this.roll = lerp(this.roll, clamp(this.turnRate * U * 0.15, -0.4, 0.4), Math.min(1, dt * 3));
+    // Bank slightly with the centripetal acceleration; reef fish stay close to upright (< ~10 deg).
+    this.roll = lerp(this.roll, clamp((U * this.yawRate) / (A_LAT * 4), -0.18, 0.18), Math.min(1, dt * 3));
     _up.applyAxisAngle(this.dir, this.roll);
     _side.crossVectors(this.dir, _up);
     _basis.makeBasis(this.dir, _up, _side);

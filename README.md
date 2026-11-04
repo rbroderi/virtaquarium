@@ -39,7 +39,9 @@ The behaviour turns into a steering goal; the body then has to physically achiev
 World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish are real aquarium-specimen sizes.
 
 - **Swimming** (`fish.js`): mass ∝ L³ and quadratic drag. Thrust comes from a speed controller, capped at the species' sustained speed and its burst speed (body lengths/s).
-  - Yaw rate is limited by `hoverTurn + U / (r_min · L)`. Strong lateral drag acts like a keel.
+  - **Turning** has rotational inertia, so angular acceleration is limited by fin torque. Yaw rate is limited by pectoral sculling at low speed. At speed it is limited by the turning radius (`r ≥ r_min · L` for escapes, twice that for routine turns) and by lateral acceleration (`ω ≤ a_lat / U`, about 0.08 g routine and 0.5 g in escapes).
+  - **Posture**: pitch stays within 20° while swimming and reaches about 46° only when nearly stopped (grazing, hovering). Fish change depth gradually and bank under 10°. Bending into a turn adds drag. Strong lateral drag acts like a keel.
+  - **Speed**: routine swimming is 0.5–1.5 body lengths/s. Feeding dashes, chases and escapes use the rest of the range.
   - Tail-beat frequency follows the Strouhal relation `f = St·U/A` (St ≈ 0.3, A = 0.2 L), using the speed the current thrust would sustain.
   - Each species uses its real swimming mode:
     - Labriform (tangs, angels, butterflyfish, damsels) row with their pectoral fins and recruit the tail above a gait-transition speed.
@@ -51,7 +53,7 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   - Inscattered light fills long paths, and only the path inside the glass counts.
   - A custom white balance at reef depth is applied, as an underwater camera would.
   - The ambient environment is the underwater radiance field: Snell's window overhead, blue-green inscatter around it, sand upwelling below.
-- **Surface waves**: 24 capillary-gravity waves, 5–50 cm long, each travelling at its physical phase speed (ω² = gk + σk³/ρ). They tile every 50 cm. The caustics, the light shafts and the surface all use this one wave field.
+- **Surface waves**: an aquarium has no wind waves. Its surface roughness is stirred up by the return pump and carried by the roughly 3 cm/s surface current while it slowly re-forms (frozen turbulence). The model uses 24 components, 5–50 cm long, drifting at 1–4 cm/s and evolving over seconds, instead of free waves at 30–90 cm/s. They tile every 50 cm. The caustics, the light shafts and the surface all use this one wave field.
 - **Caustics** are simulated, not painted:
   - A fine grid on the moving surface refracts the light by Snell's law, with seawater IOR per colour channel so bright lines fringe slightly.
   - The grid is projected to three depths. Irradiance there is the area ratio of each surface triangle to its projection, which conserves energy, times the Fresnel transmittance.

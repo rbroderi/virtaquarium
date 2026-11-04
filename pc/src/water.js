@@ -97,13 +97,15 @@ export const INSCATTER_DAY = new THREE.Color(0.030, 0.20, 0.33);
 
 // ---------- surface waves ----------
 //
-// The surface is a sum of small capillary-gravity waves stirred up by the return pump. Wave
-// vectors sit on a lattice of the tile, so the field (and its caustics) repeats seamlessly every
-// WAVE_TILE units, and each wave travels at its physical phase speed:
-//   omega^2 = g k + (sigma / rho) k^3
-// Wavelengths run 5-50 cm with ~2.5% slope each (rms slope ~0.08, a lively aquarium surface).
+// The surface of an aquarium has no wind waves. What ripples it is roughness stirred up by the
+// return pump, which the slow surface current carries along (a few cm/s) while it slowly re-forms
+// (Taylor's frozen-turbulence picture). So the pattern drifts at the current's speed and evolves over
+// seconds, instead of racing across at free-wave phase speeds (30-90 cm/s at these wavelengths).
+// Wave vectors sit on a lattice of the tile, so the field (and its caustics) repeats seamlessly every
+// WAVE_TILE units. Wavelengths run 5-50 cm with ~2% slope each (rms slope ~0.07).
 export const WAVE_TILE = 4.0;   // units (0.5 m)
 const NWAVES = 24;
+const SURFACE_CURRENT = [0.03, 0.008];   // m/s, along the pump's outflow (+x) with a slight cross drift
 const waves = (() => {
   const rng = mulberry32(911), out = [], seen = new Set();
   while (out.length < NWAVES) {
@@ -113,8 +115,10 @@ const waves = (() => {
     if ((!nx && !nz) || seen.has(nx + ',' + nz)) continue;
     seen.add(nx + ',' + nz);
     const kx = (2 * Math.PI * nx) / WAVE_TILE, kz = (2 * Math.PI * nz) / WAVE_TILE, k = Math.hypot(kx, kz);
-    const km = k / METRES_PER_UNIT;
-    out.push({ kx, kz, amp: (0.025 * (0.7 + 0.6 * rng())) / k, omega: Math.sqrt(9.81 * km + 7.3e-5 * km ** 3), phi: rng() * Math.PI * 2 });
+    // Advection by the current (k . U) plus slow re-forming: a few seconds for ripples, longer for swells.
+    const advect = (kx * SURFACE_CURRENT[0] + kz * SURFACE_CURRENT[1]) / METRES_PER_UNIT;
+    const evolve = (rng() < 0.5 ? -1 : 1) * (0.08 + 0.25 * rng()) * Math.sqrt(n / 5);
+    out.push({ kx, kz, amp: (0.02 * (0.7 + 0.6 * rng())) / k, omega: advect + evolve, phi: rng() * Math.PI * 2 });
   }
   return out;
 })();

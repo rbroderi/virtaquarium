@@ -200,7 +200,9 @@ export class Brain {
     return out;
   }
 
-  // Returns desired heading (written into `dir`, not normalised) and desired speed fraction.
+  // Returns desired heading (written into `dir`, not normalised) and desired speed fraction of the
+  // species' maximum sustained speed. Routine swimming in a tank is slow (~0.5-1.5 body lengths/s,
+  // 15-40% of the maximum); feeding dashes, chases and escapes use the rest.
   steer(dt, world, dir) {
     const me = this.fish, sp = me.sp.brain, pos = me.pos;
     let speed = 0.4, clearance = me.size * 0.45;
@@ -214,7 +216,7 @@ export class Brain {
           this.targetTimer = range(this.rng, 6, 14);
         }
         dir.subVectors(this.target, pos).normalize();
-        speed = 0.3 + 0.3 * this.traits.activity;
+        speed = 0.15 + 0.2 * this.traits.activity;
         break;
       }
       case 'school': {
@@ -226,7 +228,7 @@ export class Brain {
         _w.divideScalar(k).multiplyScalar(1.0);             // alignment
         dir.add(_v).add(_w);
         dir.add(_v.subVectors(goal, pos).normalize().multiplyScalar(0.5));
-        speed = 0.55;
+        speed = 0.35;
         break;
       }
       case 'forage': {
@@ -250,7 +252,7 @@ export class Brain {
           if (this.pecking > range(this.rng, 2.5, 5)) this.targetTimer = 0;
         } else {
           dir.subVectors(this.target, pos).normalize();
-          speed = dist > 2 ? 0.45 : 0.2;
+          speed = dist > 2 ? 0.3 : 0.15;
         }
         break;
       }
@@ -261,7 +263,7 @@ export class Brain {
         const dist = dir.length();
         dir.normalize();
         clearance = me.size * 0.1;
-        speed = dist > 1.2 ? 1.0 : 0.5;
+        speed = dist > 1.2 ? 0.8 : 0.4;
         if (dist < me.size * 0.4) {
           f.eaten = true;
           this.drives.hunger = clamp(this.drives.hunger - 0.15, 0, 1);
@@ -277,7 +279,7 @@ export class Brain {
         if (dist < 0.5) {
           dir.set(Math.sin(this.modeTime * 0.3 + this.orbit) * 0.4, 0, Math.cos(this.modeTime * 0.2) * 0.3).add(me.dir);
           speed = 0.06;
-        } else speed = 0.35;
+        } else speed = 0.25;
         break;
       }
       case 'flee': {
@@ -293,14 +295,14 @@ export class Brain {
           dir.subVectors(foe.pos, pos);
           const dist = dir.length();
           dir.normalize();
-          speed = 0.9;
+          speed = 0.75;
           if (dist < (me.size + foe.size) * 0.6) foe.brain.startle(me, 0.8);
         } else {
           this.focus = null;
           const a = this.modeTime * 0.35 + this.orbit;
           this.target.set(this.home.x + Math.cos(a) * 1.6, this.home.y + 0.4, this.home.z + Math.sin(a) * 0.8);
           dir.subVectors(this.target, pos).normalize();
-          speed = 0.35;
+          speed = 0.25;
         }
         break;
       }
@@ -316,7 +318,7 @@ export class Brain {
           dir.set(Math.sin(this.modeTime * 0.7) * 0.25, 0, 1);
           speed = 0.03;
           if (this.modeTime > 9) { this.inspectDone = true; this.drives.boredom = 0; this.thinkClock = 0; }
-        } else { dir.normalize(); speed = 0.45; }
+        } else { dir.normalize(); speed = 0.3; }
         break;
       }
       case 'host': {
@@ -327,7 +329,7 @@ export class Brain {
         dir.subVectors(this.target, pos);
         const dist = dir.length();
         dir.normalize();
-        speed = dist > 1.5 ? 0.7 : 0.25 + dist * 0.15;
+        speed = dist > 1.5 ? 0.5 : 0.15 + dist * 0.1;
         clearance = 0.05;
         break;
       }
