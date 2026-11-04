@@ -757,6 +757,9 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
         mouth: new THREE.Vector3(cx, ground + 0.3, cz).addScaledVector(out, 0.55),   // where the head rests
         dir: out,                                                                     // facing out of the cave
         yaw, ground, x: cx, z: cz, seen: bestV,                                      // share of sight lines clear
+        // The roof isn't in the height field (it overhangs the floor): its underside, over cave-local
+        // x within ±hx and z from z0 (back) to z1 (front), for animals that move inside.
+        roof: { y: ground + 0.68, hx: 1.1, z0: -0.9, z1: 0.72 },
       });
     }
   }

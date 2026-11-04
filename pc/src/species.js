@@ -70,17 +70,20 @@ export const SPECIES = [
     size: 0.95, count: 2,
     anatomy: { bodyDepthSL: [0.5, 0.6] },
     albedoGain: [0.917, 1.025, 0.978],   // lab patch comparison (chromaticity, 6 patches), half strength
-    body: { len: 0.78, depth: 0.78, width: 0.24, m: 0.42, headP: 0.9, tailP: 1.6, ped: 0.22, snout: 0.06, snoutH: 0.05 },
-    eye: { u: 0.2, v: -0.4, r: 0.04, iris: '#2a2a20' },
+    // Strongly compressed with a lens-shaped section (flank 1.7: thin, sharp-edged; the default for this
+    // width, ~1.2, shades like a ball up close); the snout is flattened side to side.
+    body: { len: 0.78, depth: 0.78, width: 0.2, flank: 1.7, m: 0.42, headP: 0.9, tailP: 1.6, ped: 0.22, snout: 0.06, snoutH: 0.05, snoutW: 0.55 },
+    eye: { u: 0.215, v: -0.55, r: 0.04, iris: '#2a2a20' },   // high under the steep forehead (viatour.jpg blend, with body.mouth)
     pattern: [
       { op: 'vgrad', stops: [[-1, '#ffe14a'], [0, '#ffd400'], [1, '#f2c000']] },
       { op: 'poly', color: '#ffffff', pts: [[0.92, -0.06], [0.99, -0.04], [0.99, 0.02], [0.92, 0.0]] },
     ],
     fins: [
-      { pos: 'top', u0: 0.18, u1: 0.96, pts: [[0, 0.05], [0.15, 0.22], [0.45, 0.25], [0.75, 0.2], [1, 0.03]], sweep: 0.25, fill: '#ffd400', rays: '#e0b000' },
-      { pos: 'bottom', u0: 0.45, u1: 0.96, pts: [[0, 0.03], [0.3, 0.2], [0.7, 0.18], [1, 0.03]], sweep: 0.25, fill: '#ffd400', rays: '#e0b000' },
+      // The fins are as opaque and saturated as the body (the photos), so body and fins read as one disc.
+      { pos: 'top', u0: 0.18, u1: 0.96, pts: [[0, 0.05], [0.15, 0.22], [0.45, 0.25], [0.75, 0.2], [1, 0.03]], sweep: 0.25, fill: '#ffd400', rays: '#eec400', thin: 0.1 },
+      { pos: 'bottom', u0: 0.45, u1: 0.96, pts: [[0, 0.03], [0.3, 0.2], [0.7, 0.18], [1, 0.03]], sweep: 0.25, fill: '#ffd400', rays: '#eec400', thin: 0.1 },
     ],
-    caudal: { type: 'truncate', spread: 0.2, fill: '#ffd400', rays: '#e0b000' },
+    caudal: { type: 'truncate', spread: 0.2, fill: '#ffd400', rays: '#eec400', thin: 0.15 },
     pectoral: { u: 0.32, v: 0.1, len: 0.14, w: 0.08, fill: '#ffe36a', alpha: 0.7 },
     brain: { maxSpeed: 1.7, turn: 3.0, zone: [0.3, 0.95], school: 0.3, grazer: 0.9, territorial: 0.3, boldness: 0.5, curiosity: 0.5, activity: 0.75, tailHz: 3.0 },
   },

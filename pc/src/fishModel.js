@@ -24,10 +24,14 @@ export function makeProfile(body) {
   };
   const x = (u) => 0.5 - u * body.len;
   const halfM = half;
-  const width = (u) => Math.max(halfM(u) * body.width * (1.15 - 0.55 * u), snout && u < snout ? snoutH * 0.9 : 0.004);
+  // snoutW: the snout's width over its height (a butterflyfish beak is round; a tang's is flattened).
+  const width = (u) => Math.max(halfM(u) * body.width * (1.15 - 0.55 * u), snout && u < snout ? snoutH * (body.snoutW ?? 0.9) : 0.004);
   // The back arches above the midline (epaxial muscle) while the mouth and tail stay on it.
   const hump = body.hump ?? 0.05;
-  const centre = (u) => hump * H * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 1.5;
+  // mouth: the snout's height off the midline (in H; negative is below). Tangs and butterflyfish carry
+  // the mouth low under a steep forehead; the midline eases back to level by the deepest point.
+  const mouth = body.mouth ?? 0, mEnd = snout + m * (1 - snout);
+  const centre = (u) => hump * H * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 1.5 + mouth * H * (1 - smooth01(u / mEnd));
   const top = (u) => centre(u) + halfM(u), bot = (u) => centre(u) - halfM(u);
   return { half: halfM, x, width, centre, top, bot, H, xPed: x(1) };
 }
@@ -456,11 +460,12 @@ function paintFins(sp, prof) {
     // more of the light behind it passes through near the edge.
     let bc = [0, 0], oc = [0, 0];
     for (let i = 0; i <= 8; i++) { const [a, b] = rays(i / 8); bc = [bc[0] + a[0] / 9, bc[1] + a[1] / 9]; oc = [oc[0] + b[0] / 9, oc[1] + b[1] / 9]; }
-    // spec.solid: a thick, skin-covered fin fold (morays), opaque to the margin.
+    // spec.solid: a thick, skin-covered fin fold (morays), opaque to the margin. spec.thin: how much the
+    // film thins by the margin (0.38; tangs' fins stay nearly opaque).
     const a0 = spec.solid ? 1 : Math.min(0.95, (spec.alpha ?? 0.9) + 0.05);
     g.globalCompositeOperation = 'destination-out';
     const mg = g.createLinearGradient(bc[0], bc[1], oc[0], oc[1]);
-    for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${spec.solid ? 0 : 1 - a0 * (1 - 0.38 * (s / 4) ** 2)})`);
+    for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${spec.solid ? 0 : 1 - a0 * (1 - (spec.thin ?? 0.38) * (s / 4) ** 2)})`);
     g.fillStyle = mg; g.fillRect(-1, -1, 2, 2);
     // Spiny fins: the membrane is incised between the spine tips, which stand free.
     g.fillStyle = '#000';

@@ -186,6 +186,8 @@ The springs are dynamic, so most of this is PC only. What a bake could take:
 
 ## Log
 
+- 2026-11-04: yellow tang reshaped (low mouth `body.mouth`, flattened snout `snoutW`, thinner lens section, near-opaque fins `thin`): its Roku sprites need a rebake. The cave roofs now carry `roof` data (no layout change).
+
 - 2026-11-04: secondary-motion uniforms (`uBendTail`, `uFold`, `uCup`, `uSpine`); their defaults keep the bake unchanged.
 
 - 2026-11-04: cuttlefish, octopus and turtle (`critters.js`), PC only; not in `SPECIES`, so the bake skips them.

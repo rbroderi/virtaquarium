@@ -145,6 +145,7 @@ for (const entry of tank.fish) {
         const cave = reef.caves[eels + world.critters.filter((o) => o instanceof Octopus).length];
         const den = cave ? cave.mouth.clone().addScaledVector(cave.dir, -0.2) : reef.homes.slice().sort((a, b) => a.y - b.y)[0].clone();
         c = new Octopus(sp, rng, world, den);
+        c.cave = cave || null;
         if (cave) c.yaw = Math.atan2(cave.dir.z, cave.dir.x);
       }
       world.critters.push(c);

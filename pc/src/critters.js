@@ -96,6 +96,33 @@ const randomTarget = (rng, world, lo, hi) => {
   return new THREE.Vector3(x, Math.max(world.reefHeight(x, z) + lo, range(rng, lo, hi)), z);
 };
 
+// Underside of a cave roof over (x, z), or Infinity in the open (roofs overhang, so the height field
+// doesn't hold them: see reef.js caves[].roof).
+function ceilingAt(world, x, z) {
+  let y = Infinity;
+  for (const c of world.reef.caves || []) {
+    const r = c.roof;
+    if (!r) continue;
+    const dx = x - c.x, dz = z - c.z, cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+    const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+    if (Math.abs(lx) < r.hx && lz > r.z0 && lz < r.z1) y = Math.min(y, r.y);
+  }
+  return y;
+}
+// Floor for things lying on the bottom. The height field holds the cave roof's top, dilated for the
+// fishes' clearance, so just outside the mouth (open sand under the overhang's edge) it reads as rock;
+// there the floor is the cave's own ground.
+function floorAt(world, x, z) {
+  for (const c of world.reef.caves || []) {
+    const r = c.roof;
+    if (!r) continue;
+    const dx = x - c.x, dz = z - c.z, cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+    const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+    if (Math.abs(lx) < r.hx && lz > r.z1 - 0.15 && lz < r.z1 + 0.8) return Math.min(world.reefHeight(x, z), c.ground);
+  }
+  return world.reefHeight(x, z);
+}
+
 // A big, fast animal close by (the turtle, a lionfish, a chasing fish) startles the cephalopods.
 function threatNear(me, world, r) {
   for (const o of world.critters) if (o !== me && !o.sp.predator && o.pos.distanceTo(me.pos) < r + o.radius) return o;
@@ -468,12 +495,15 @@ export class Octopus {
       pupil.rotation.y = s * 0.6;
       this.model.add(turret, eye, pupil);
     }
-    // Arms.
+    // Arms. Proportions from octopod morphometrics: the arm width index (base width of the stoutest arm
+    // over mantle length) runs ~13-23%, so with the mantle ~1.1 M long the arms are ~0.19 M across at
+    // the base, tapering to fine tips; they run ~3x the mantle here (O. cyanea's reach 4-5x, but
+    // longer chains read as spider legs at this scale).
     this.arms = [];
     for (let i = 0; i < 8; i++) {
-      const tube = new ArmTube(18, 8, 0.062 * M, 0.012 * M, mat);
+      const tube = new ArmTube(22, 10, 0.095 * M, 0.01 * M, mat);
       tube.angle = ((i + 0.5) / 8) * Math.PI * 2;
-      tube.len = 2.3 * M * range(rng, 0.85, 1.05);
+      tube.len = 3.0 * M * range(rng, 0.85, 1.05);
       tube.curl = range(rng, 0.5, 1.5); tube.ph = rng() * 6;
       this.model.add(tube.mesh);
       this.arms.push(tube);
@@ -494,7 +524,13 @@ export class Octopus {
     const rng = this.rng, M = this.M;
     this.calm = (this.calm || 0) - dt;
     const threat = this.calm <= 0 && this.mode !== 'jet' ? threatNear(this, world, 1.4) : null;
-    if (threat) { this.mode = 'jet'; this.modeT = 2.2; this.jet = 1; this.calm = 15; this.jetDir = _w.subVectors(this.pos, threat.pos).setY(0.4).normalize().clone(); }
+    if (threat) {
+      this.mode = 'jet'; this.modeT = 2.2; this.jet = 1; this.calm = 15;
+      // Away from the threat and a little up; under the den's roof, straight out of the mouth instead.
+      this.jetDir = this.cave && ceilingAt(world, this.pos.x, this.pos.z) < Infinity
+        ? this.cave.dir.clone().setY(0.05).normalize()
+        : _w.subVectors(this.pos, threat.pos).setY(0.4).normalize().clone();
+    }
     let food = null;
     if (this.mode === 'den' || this.mode === 'forage') {
       for (const f of world.food) if (!f.eaten && f.resting && f.pos.distanceTo(this.pos) < 3) { food = f; break; }
@@ -524,18 +560,23 @@ export class Octopus {
       }
       if (this.mode === 'pounce' && this.food && (this.food.eaten || d < 0.35)) { this.food.eaten = true; this.food = null; this.mode = 'den'; this.target.copy(this.den); this.modeT = range(rng, 30, 60); }
     }
-    const ground = Math.max(world.reefHeight(this.pos.x, this.pos.z), 0);
+    const ground = Math.max(floorAt(world, this.pos.x, this.pos.z), 0);
     const restY = ground + 0.12 * M;
     if (this.mode === 'jet') this.pos.y = Math.max(this.pos.y, restY);
     else this.pos.y = lerp(this.pos.y, restY, Math.min(1, dt * 3));
     const B = world.bounds;
     this.pos.x = clamp(this.pos.x, B.x0, B.x1); this.pos.z = clamp(this.pos.z, B.z0, B.z1); this.pos.y = Math.min(this.pos.y, B.y1);
+    // Under a roof the body flattens to fit (octopuses squeeze into gaps), and never rises through it.
+    const ceil = ceilingAt(world, this.pos.x, this.pos.z), room = ceil - ground;
+    this.pos.y = Math.min(this.pos.y, ceil - 0.5 * M);
+    this.squash = lerp(this.squash ?? 1, clamp((room - 0.04) / (0.78 * M), 0.55, 1), Math.min(1, dt * 2));
 
     // Colour: darker and cryptic in the den, paler in a jet.
     this.u.uShade.value = lerp(this.u.uShade.value, this.mode === 'den' ? 0.6 : this.mode === 'jet' ? -0.3 : 0.1, Math.min(1, dt));
     // Breathing: the mantle swells and relaxes.
     const br = 1 + 0.04 * Math.sin(this.t * 2.2);
     this.sac.scale.set(0.58 * M * br, 0.34 * M * br, 0.36 * M * br);
+    this.model.scale.set(1, this.squash, 1);
 
     this.model.position.copy(this.pos);
     this.model.rotation.set(0, -this.yaw, 0);
@@ -550,7 +591,9 @@ export class Octopus {
     for (const arm of this.arms) {
       // In the den the arms are drawn in (tucked under and round the body), not spread over the rock.
       this.tuck = lerp(this.tuck ?? 1, this.mode === 'den' ? 1 : 0, Math.min(1, dt * 0.5));
-      const n = arm.n, seg = arm.len * (1 - 0.55 * this.tuck) / (n - 1), a = arm.angle;
+      // In a cave the den's walls are behind and beside it, so the tucked arms spread out of the mouth.
+      const a = this.cave ? wrapAngle(arm.angle) * (1 - 0.7 * this.tuck) : arm.angle;
+      const n = arm.n, seg = arm.len * (1 - 0.55 * this.tuck) / (n - 1);
       const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
       const dir = jet
         ? new THREE.Vector3(-1, 0, 0).addScaledVector(out, 0.25).normalize()
@@ -570,6 +613,20 @@ export class Octopus {
           if (i > 2) dir.y = lerp(dir.y, s > 0.8 ? 0.25 * (1 - coil * 0.5) : -0.05 - clamp(gap * 3, 0, 0.8), 0.35);   // drape down, then the tip lifts
           dir.normalize();
         } else dir.y = Math.sin(this.t * 6 + s * 3 + arm.ph) * 0.08;
+        if (!jet && i > 1) {
+          // A wall ahead (rock rising more than a step): the arm turns along it rather than standing
+          // up it. Try turning either way and take the lower ground.
+          const here = world_.copy(p).applyMatrix4(this.model.matrixWorld).y;
+          const rise = (d) => { _w.copy(p).addScaledVector(d, seg).applyMatrix4(this.model.matrixWorld); return floorAt(world, _w.x, _w.z) - here; };
+          if (rise(dir) > seg * 1.2) {
+            let best = dir.clone(), bestR = rise(dir);
+            for (const ang of [0.6, -0.6, 1.2, -1.2]) {
+              const d = dir.clone().applyAxisAngle(UP, ang * sense), rr = rise(d);
+              if (rr < bestR) { bestR = rr; best = d; }
+            }
+            dir.copy(best);
+          }
+        }
         p.addScaledVector(dir, seg);
         // Keep the chain above the reef (in world space).
         world_.copy(p).applyMatrix4(this.model.matrixWorld);
@@ -579,11 +636,17 @@ export class Octopus {
         pw.lerp(world_, 1 - Math.exp(-dt * lerp(20, 2.5, s)));
         world_.copy(pw);
         p.copy(world_).applyMatrix4(this._m);
-        // Under the den's roof the height field is the rock above it, so there the floor is the den's own.
-        const g0 = this.tuck > 0.5 && Math.hypot(world_.x - this.den.x, world_.z - this.den.z) < 1.6 ? this.den.y - 0.1 * M : world.reefHeight(world_.x, world_.z);
-        const floor = Math.max(g0, 0) + lerp(arm.r0, arm.r1, s) * 0.9;
+        // Rock and sand below, and a cave roof above (the model is squashed under a roof: undo that
+        // for the world-space limits).
+        const r = lerp(arm.r0, arm.r1, s);
+        // Under a roof the height field is the roof's own top (it's splatted for the fishes' sake), so
+        // the underside caps the floor.
+        const top = ceilingAt(world, world_.x, world_.z) - r;
+        const floor = Math.min(Math.max(floorAt(world, world_.x, world_.z), 0) + r * 0.9, top);
         gap = world_.y - floor;
-        if (gap < 0) { world_.y = floor; gap = 0; p.copy(world_).applyMatrix4(this._m); dir.y = Math.max(dir.y, 0); }
+        if (gap < 0) { world_.y = floor; gap = 0; dir.y = Math.max(dir.y, 0); }
+        if (world_.y > top) { world_.y = top; dir.y = Math.min(dir.y, 0); }
+        p.copy(world_).applyMatrix4(this._m);
         pw.copy(world_);
       }
       arm.build(this._down);
