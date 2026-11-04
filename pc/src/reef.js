@@ -416,6 +416,7 @@ export async function loadScenery(base = './models/') {
     try {
       const gltf = await loader.loadAsync(base + cfg.file);
       const obj = cfg.kind === 'rock' ? normaliseScenery(gltf.scene, 0.7, false) : normaliseScenery(gltf.scene, 0.9, true);
+      obj.name = id;   // GLB scene names repeat ("Scene"), so sort by the manifest id below
       if (cfg.kind === 'rock') out.rocks.push(obj);
       else out.coral[id.replace(/^coral_/, '')] = obj;
     } catch (e) {

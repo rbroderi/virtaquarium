@@ -19,10 +19,11 @@ Open <http://localhost:8080/pc/> and press **F11** for full screen.
 | B | show every fish's current thought |
 | F | feed |
 | N | toggle lights (day / night) |
+| L | toggle the baked reef light (A/B) |
 | Space | pause |
 | H | help |
 
-URL options: `?clock=1` (lights follow your local time), `?feed=4` (auto-feeder interval in minutes, `0` = off), `?drift=0` (no camera parallax), `?seed=7` (reef layout). `?rig=led` lights the tank with an aquarium LED bar (a softer key plus fills; the lab offers the same rig). `?photo=1` renders through a camera model (`photo.js`, `&fstop=2.8`): thin-lens depth of field with autofocus on the fish nearest the centre, lateral chromatic aberration, cos⁴ vignetting and shot-noise grain, all in linear light before tone mapping. The lab takes `?photo=1` too.
+URL options: `?clock=1` (lights follow your local time), `?feed=4` (auto-feeder interval in minutes, `0` = off), `?drift=0` (no camera parallax), `?seed=7` (reef layout). `?reeflight=0` skips the baked reef light: at load the static reef is ray cast from a 3D grid in 256 directions (`reefLight.js`, ~150 ms on the GPU), so crevices, overhangs, cave interiors, the sand at rock bases and fish under an overhang lose the ambient water light they can't see (Roku bake notes: `docs/roku_bake.md`). `?rig=led` lights the tank with an aquarium LED bar (a softer key plus fills; the lab offers the same rig). `?photo=1` renders through a camera model (`photo.js`, `&fstop=2.8`): thin-lens depth of field with autofocus on the fish nearest the centre, lateral chromatic aberration, cos⁴ vignetting and shot-noise grain, all in linear light before tone mapping. The lab takes `?photo=1` too.
 
 ## How it works
 

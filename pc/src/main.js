@@ -14,6 +14,7 @@ import { UI } from './ui.js';
 import { loadTank } from './tank.js';
 import { PhotoCamera } from './photo.js';
 import { LightRig } from './rig.js';
+import { bakeReefLight, reefLightUniforms } from './reefLight.js';
 
 const params = new URLSearchParams(location.search);
 fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
@@ -81,6 +82,8 @@ if (customModels.length) console.info('Using GLB models for:', customModels.join
 const scenery = await loadScenery();
 if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
 const reef = buildReef(scene, TANK_W, SEED, scenery);
+// Ray-cast the static reef's view of the open water once (?reeflight=0 to compare; L toggles it).
+if (params.get('reeflight') !== '0') bakeReefLight(renderer, reef);
 const snow = new MarineSnow(scene, TANK_W * 1.4, rng);
 const bubbles = new Bubbles(scene, reef.bubbler, rng);
 const surface = makeSurface(TANK_W);
@@ -141,9 +144,12 @@ function applyLight(l) {
   world.light = l;
   const k = 0.12 + 0.88 * l;
   rig.apply(l);
-  hemi.intensity = 1.0 * k;
+  // Ambient water light is occluded by the baked reef light, so it can sit lower against the sun
+  // and let the shadows read (without the bake, the old balance).
+  const amb = reefLightUniforms.uRLOn.value ? 0.75 : 1.0;
+  hemi.intensity = amb * k;
   hemi.color.setRGB(lerp(0.30, 0.86, l), lerp(0.45, 0.92, l), 1.0);   // moonlight is bluer
-  scene.environmentIntensity = 0.35 * k;
+  scene.environmentIntensity = 0.35 * amb * k;
   waterUniforms.uCaustic.value = l;
   scene.fog.color.copy(INSCATTER_DAY).multiplyScalar(0.06 + 0.94 * l);
   backdrop.material.uniforms.uBase.value.copy(scene.fog.color);
@@ -160,6 +166,7 @@ let t = 0, nextFeed = FEED_MIN > 0 ? 45 : Infinity, paused = false;
 window.addEventListener('keydown', (e) => {
   if (e.key === ' ') paused = !paused;
   if (e.key === 'n' || e.key === 'N') light = light > 0.5 ? 0 : 1;
+  if ((e.key === 'l' || e.key === 'L') && reefLightUniforms.uRLRes.value.x > 1) reefLightUniforms.uRLOn.value ^= 1;
 });
 
 function frame() {
