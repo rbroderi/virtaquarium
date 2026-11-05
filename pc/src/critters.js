@@ -596,6 +596,9 @@ export class Octopus {
     siph.position.set(-0.08 * M, 0.12 * M, 0.27 * M);
     siph.rotation.set(-1.1, 0, -0.9);   // pointing out, forward and a little up
     siph.name = 'siphon';
+    // Two balls along the tube, for keeping the arms off it (_untangle).
+    const sax = new THREE.Vector3(0, 1, 0).applyEuler(siph.rotation);
+    this.siphonBalls = [-1, 1].map((s) => { const o = new THREE.Object3D(); o.position.copy(siph.position).addScaledVector(sax, s * 0.055 * M); this.model.add(o); return o; });
     this.model.add(siph);
     // Arms. Proportions from octopod morphometrics: the arm width index (base width of the stoutest arm
     // over mantle length) runs ~13-23%, so with the mantle ~1.1 M long the arms are ~0.19 M across at
@@ -614,7 +617,7 @@ export class Octopus {
     // The oral disc under the head, which the arms' roots merge into (eight thick roots crowd
     // together there, so without it they would show running into one another).
     const disc = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12), sacMat);
-    disc.scale.set(0.32 * M, 0.11 * M, 0.32 * M);
+    disc.scale.set(0.36 * M, 0.11 * M, 0.36 * M);
     disc.position.set(0, 0.02 * M, 0);
     disc.name = 'disc';
     this.model.add(disc);
@@ -724,13 +727,14 @@ export class Octopus {
       // In the den the arms are drawn in (tucked under and round the body), not spread over the rock.
       this.tuck = lerp(this.tuck ?? 1, this.mode === 'den' ? 1 : 0, Math.min(1, dt * 0.5));
       // In a cave the den's walls are behind and beside it, so the tucked arms spread out of the mouth
-      // (over half the ring: any narrower and eight arms can't lie side by side).
-      const a = this.cave ? wrapAngle(arm.angle) * (1 - 0.5 * this.tuck) : arm.angle;
+      // (over most of the ring: any narrower and eight arms can't lie side by side).
+      const a = this.cave ? wrapAngle(arm.angle) * (1 - 0.4 * this.tuck) : arm.angle;
       const n = arm.n, seg = arm.len * (1 - 0.55 * this.tuck) / (n - 1);
+      arm.seg = seg;   // (its rest length, for _untangle)
       const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
       const dir = jet
         ? new THREE.Vector3(1, -0.3, 0).addScaledVector(out, 0.35).normalize()
-        : out.clone().multiplyScalar(0.75).setY(lerp(-0.35, -0.8, this.stand ?? 0)).normalize();
+        : out.clone().multiplyScalar(0.75).setY(lerp(-0.2, -0.45, this.stand ?? 0)).normalize();   // out from the mouth before they drape (straight down, the roots ran into one another)
       const p = local.set(Math.cos(a) * 0.12 * M, 0.02 * M, Math.sin(a) * 0.12 * M);
       const walk = this.mode === 'forage' || this.mode === 'pounce' ? Math.sin(this.t * 2.5 + arm.ph) : 0;
       // Per segment: turn about the vertical (a flat spiral that tightens towards the tip), a slow
@@ -742,7 +746,10 @@ export class Octopus {
         arm.pts[i].copy(p);
         const s = i / (n - 1);
         if (!jet) {
-          const turn = sense * (coil * (0.03 + 0.3 * s ** 3) * arm.curl + (Math.sin(this.t * 0.7 + arm.ph + s * 6) + 0.5 * Math.sin(this.t * 0.45 + arm.ph * 2 + s * 11)) * (0.06 + 0.16 * (1 - coil)) + walk * 0.06 * (1 - s));
+          // (the coil turns every arm the same way, a pinwheel whose curves nest, and by under a
+          // radian in all, so each keeps to about its own sector: turned either way at random, or
+          // wrapped round the body, they ran into one another)
+          const turn = coil * (0.01 + 0.12 * s ** 3) * arm.curl + sense * ((Math.sin(this.t * 0.7 + arm.ph + s * 6) + 0.5 * Math.sin(this.t * 0.45 + arm.ph * 2 + s * 11)) * (0.06 + 0.16 * (1 - coil)) + walk * 0.06 * (1 - s));
           dir.applyAxisAngle(UP, turn);
           if (i > 2) dir.y = lerp(dir.y, s > 0.8 ? 0.25 * (1 - coil * 0.5) : -0.05 - clamp(gap * 3, 0, 0.8), 0.35);   // drape down, then the tip lifts
           dir.normalize();
@@ -765,9 +772,10 @@ export class Octopus {
         // Keep the chain above the reef (in world space).
         world_.copy(p).applyMatrix4(this.model.matrixWorld);
         // Soft arms: each point is towed through the water towards its pose rather than placed there,
-        // more loosely towards the tip, so the arms trail a jet, swing after a turn and settle.
+        // more loosely towards the tip, so the arms trail a jet, swing after a turn and settle. The
+        // first two points, the root, turn with the body (towed, they swung in across a neighbour's).
         const pw = (arm.prevW[i] ??= world_.clone());
-        pw.lerp(world_, 1 - Math.exp(-dt * lerp(20, 2.5, s)));
+        if (i < 2) pw.copy(world_); else pw.lerp(world_, 1 - Math.exp(-dt * lerp(20, 2.5, s)));
         world_.copy(pw);
         p.copy(world_).applyMatrix4(this._m);
         // Rock and sand below, and a cave roof above (the model is squashed under a roof: undo that
@@ -794,7 +802,11 @@ export class Octopus {
       }
     }
     this._untangle();
-    for (const arm of this.arms) arm.build(this._down);
+    for (const arm of this.arms) {
+      // tow on from where they settled, so the next frame starts nearly untangled
+      for (let i = 1; i < arm.n; i++) arm.prevW[i - 1].copy(arm.pts[i]).applyMatrix4(this.model.matrixWorld);
+      arm.build(this._down);
+    }
     this._buildWeb();
   }
 
@@ -803,40 +815,49 @@ export class Octopus {
   // and segments out of the sac, the eye turrets and the eyes, each arm keeping its length. (Their
   // roots, inside the oral disc, are left merged.) Solved by turns (position-based): the contacts,
   // then each segment back to its length (both ends giving, the root held), until nothing touches.
-  // It corrects only what is drawn: the towing carries on from the pose. On flat arrays, with the
-  // segments binned in a coarse grid so each point meets only those near it: it runs every frame.
+  // The towing carries on from the result, so each frame starts from the last one's settled pose and
+  // a few passes do. On flat arrays, with the segments binned in a coarse grid so each point meets
+  // only those near it: it runs every frame.
   _untangle() {
     const arms = this.arms, NA = arms.length, n = arms[0].n, N = NA * n, gap = 0.01 * this.M, D = this.disc;
     const X = (this._ux ??= new Float64Array(N * 3)), R = (this._ur ??= new Float64Array(N));
-    const L = (this._ul ??= new Float64Array(N)), free = (this._uf ??= new Uint8Array(N));
+    const L = (this._ul ??= new Float64Array(N)), root = (this._uf ??= new Uint8Array(N));
     for (let A = 0; A < NA; A++) {
       const a = arms[A];
       for (let i = 0; i < n; i++) {
         const k = A * n + i, q = a.pts[i];
         X[3 * k] = q.x; X[3 * k + 1] = q.y; X[3 * k + 2] = q.z;
         R[k] = lerp(a.r0, a.r1, i / (n - 1)) * (i === n - 1 ? 0.3 : 1);
-        if (i) L[k] = Math.hypot(q.x - X[3 * k - 3], q.y - X[3 * k - 2], q.z - X[3 * k - 1]);   // segment i-1..i
+        L[k] = a.seg;   // segment i-1..i, at its rest length (towed, it can bunch up)
       }
     }
     // The obstacles are spheres in their own frames (the sac's stretched, its bumpy skin up to 9%
     // proud): their matrices to and from the model's frame.
-    const obst = this.obstacles ??= [[this.sac, 1.1], ...this.model.children.filter((o) => /^(turret|eye)/.test(o.name)).map((o) => [o, o.geometry.parameters.radius])];
+    const obst = this.obstacles ??= [[this.sac, 1.1], ...this.model.children.filter((o) => /^(turret|eye)/.test(o.name)).map((o) => [o, o.geometry.parameters.radius]),
+      ...this.siphonBalls.map((o) => [o, 0.08 * this.M])];   // the siphon's tube, in two balls along it
     const OB = obst.map(([o, r]) => ({ to: _mInv.copy(o.matrix).invert().elements.slice(), from: o.matrix.elements, r, sc: Math.min(o.scale.x, o.scale.y, o.scale.z) }));
-    const reach = arms[0].r0 * 2 + gap, tol = 0.25 * gap;
-    let hits;   // contacts found this pass deeper than tol (none: settled, within the gap kept)
-    // point k against segment j..j+1 (both in X)
-    const push = (k, j) => {
-      const px = X[3 * k], py = X[3 * k + 1], pz = X[3 * k + 2], ax = X[3 * j], ay = X[3 * j + 1], az = X[3 * j + 2];
+    const reach = arms[0].r0 * 2 + gap, tol = gap;
+    let hits;   // real overlaps found this pass, deeper than the gap kept (none: settled, though a pass still opens the gap)
+    // the point s along k..k+1 (s 0: point k itself) against segment j..j+1 (both in X)
+    const push = (k, j, s = 0) => {
+      const q = s ? 3 : 0;
+      const px = X[3 * k] + (X[3 * k + q] - X[3 * k]) * s, py = X[3 * k + 1] + (X[3 * k + 1 + q] - X[3 * k + 1]) * s, pz = X[3 * k + 2] + (X[3 * k + 2 + q] - X[3 * k + 2]) * s;
+      const ax = X[3 * j], ay = X[3 * j + 1], az = X[3 * j + 2];
       const ex = X[3 * j + 3] - ax, ey = X[3 * j + 4] - ay, ez = X[3 * j + 5] - az;
       const t = clamp(((px - ax) * ex + (py - ay) * ey + (pz - az) * ez) / Math.max(ex * ex + ey * ey + ez * ez, 1e-12), 0, 1);
       let dx = px - ax - ex * t, dy = py - ay - ey * t, dz = pz - az - ez * t;
-      const need = R[k] + R[j] + (R[j + 1] - R[j]) * t + gap, d2 = dx * dx + dy * dy + dz * dz;
+      const need = R[k] + (s ? (R[k + 1] - R[k]) * s : 0) + R[j] + (R[j + 1] - R[j]) * t + gap, d2 = dx * dx + dy * dy + dz * dz;
       if (d2 >= need * need) return;
       const d = Math.sqrt(d2);
       if (need - d > tol) hits++;
       if (d < 1e-9) { dx = 0; dy = 1; dz = 0; } else { dx /= d; dy /= d; dz /= d; }
-      const m = (need - d) / 2, m0 = m * (1 - t), m1 = m * t;
-      X[3 * k] += dx * m; X[3 * k + 1] += dy * m; X[3 * k + 2] += dz * m;
+      // shared, except that a root is stiff (held at its base): what meets one does all the giving
+      const wk = root[k] || (s && root[k + 1]) ? 0 : root[j] || root[j + 1] ? 1 : 0.5, mk = (need - d) * wk, m = (need - d) * (1 - wk), m0 = m * (1 - t), m1 = m * t;
+      if (s) {   // a segment's middle: both its ends move, so that it moves by mk
+        const w = mk / ((1 - s) ** 2 + s * s), w0 = w * (1 - s), w1 = w * s;
+        X[3 * k] += dx * w0; X[3 * k + 1] += dy * w0; X[3 * k + 2] += dz * w0;
+        X[3 * k + 3] += dx * w1; X[3 * k + 4] += dy * w1; X[3 * k + 5] += dz * w1;
+      } else { X[3 * k] += dx * mk; X[3 * k + 1] += dy * mk; X[3 * k + 2] += dz * mk; }
       X[3 * j] -= dx * m0; X[3 * j + 1] -= dy * m0; X[3 * j + 2] -= dz * m0;
       X[3 * j + 3] -= dx * m1; X[3 * j + 4] -= dy * m1; X[3 * j + 5] -= dz * m1;
     };
@@ -845,7 +866,7 @@ export class Octopus {
         // the segment's nearest point to the obstacle's centre (a segment can cut a corner its two
         // ends keep clear of): both ends move out by what it lacks (only the far one at the root)
         const k0 = A * n + i - 1, k1 = k0 + 1, a0 = 3 * k0, a1 = 3 * k1;
-        if (!free[k0] && !free[k1]) continue;   // the root, merged into the disc (and so the body)
+        if (root[k0] && root[k1]) continue;   // the root, merged into the disc (and so the body)
         const s0x = T[0] * X[a0] + T[4] * X[a0 + 1] + T[8] * X[a0 + 2] + T[12], s0y = T[1] * X[a0] + T[5] * X[a0 + 1] + T[9] * X[a0 + 2] + T[13], s0z = T[2] * X[a0] + T[6] * X[a0 + 1] + T[10] * X[a0 + 2] + T[14];
         const s1x = T[0] * X[a1] + T[4] * X[a1 + 1] + T[8] * X[a1 + 2] + T[12], s1y = T[1] * X[a1] + T[5] * X[a1 + 1] + T[9] * X[a1 + 2] + T[13], s1z = T[2] * X[a1] + T[6] * X[a1 + 1] + T[10] * X[a1 + 2] + T[14];
         const ex = s1x - s0x, ey = s1y - s0y, ez = s1z - s0z;
@@ -859,35 +880,54 @@ export class Octopus {
         if (i > 1) put(a0, s0x + mx, s0y + my, s0z + mz);
         put(a1, s1x + mx, s1y + my, s1z + mz);
       }
+      // Nor can an arm, past its root, coil under the oral disc: there it would be squeezed between
+      // the floor and the other arms' roots. Below the disc's top it keeps outside the disc's rim.
+      const top = D.position.y + D.scale.y;
+      for (let A = 0; A < NA; A++) for (let i = 5; i < n; i++) {
+        const a = 3 * (A * n + i);
+        if (X[a + 1] >= top) continue;
+        const rho = Math.hypot(X[a], X[a + 2]), need = D.scale.x + R[A * n + i] + gap;
+        if (rho >= need) continue;
+        if (need - rho > tol) hits++;
+        const f = rho > 1e-9 ? need / rho : 1;
+        if (rho > 1e-9) { X[a] *= f; X[a + 2] *= f; } else X[a] = need;
+      }
     };
     const near2 = (k, j, l) => { const dx = X[3 * k] - X[3 * j], dy = X[3 * k + 1] - X[3 * j + 1], dz = X[3 * k + 2] - X[3 * j + 2]; return dx * dx + dy * dy + dz * dz < (reach + l) ** 2; };
-    // The grid: cells a contact's reach plus a segment across, G to a side about the body.
+    // The grid: cells a contact's reach plus a segment and a half across (a segment's middle meets
+    // another's), G to a side about the body.
     let maxL = 0;
     for (let k = 0; k < N; k++) if (k % n) maxL = Math.max(maxL, L[k]);
-    const G = 32, CS = reach + maxL, head = (this._gh ??= new Int32Array(G * G * G)), next = (this._gn ??= new Int32Array(N));
+    const G = 32, CS = reach + 1.5 * maxL, head = (this._gh ??= new Int32Array(G * G * G)), next = (this._gn ??= new Int32Array(N));
     const cell = (v) => Math.min(G - 1, Math.max(0, Math.floor(v / CS) + G / 2));
-    for (let pass = 0; pass < 4; pass++) {
+    for (let pass = 0; pass < 6; pass++) {
       hits = 0;
       head.fill(-1);
       for (let k = 0; k < N; k++) {
-        // points within the oral disc are the merged roots: no contact counts there
+        // the roots: an arm's first few points while within the oral disc, where they merge. Roots
+        // don't meet roots; anything else (an arm coiled back under the body) meets them all the same.
         const x = X[3 * k] / D.scale.x, y = (X[3 * k + 1] - D.position.y) / D.scale.y, z = X[3 * k + 2] / D.scale.z;
-        free[k] = x * x + y * y + z * z >= 1 ? 1 : 0;
+        root[k] = k % n <= 4 && x * x + y * y + z * z < 1 ? 1 : 0;
       }
       for (let k = 0; k < N; k++) {   // bin each segment k..k+1 (from point 1 on) by its middle
         const i = k % n;
-        if (i < 1 || i > n - 2 || !(free[k] || free[k + 1])) continue;
+        if (i < 1 || i > n - 2) continue;
         const c = cell((X[3 * k] + X[3 * k + 3]) / 2) + G * (cell((X[3 * k + 1] + X[3 * k + 4]) / 2) + G * cell((X[3 * k + 2] + X[3 * k + 5]) / 2));
         next[k] = head[c]; head[c] = k;
       }
       for (let k = 0; k < N; k++) {
-        if (k % n < 1 || !free[k]) continue;
+        if (k % n < 1) continue;
         const A = Math.floor(k / n), cx = cell(X[3 * k]), cy = cell(X[3 * k + 1]), cz = cell(X[3 * k + 2]);
         for (let z = Math.max(0, cz - 1); z <= Math.min(G - 1, cz + 1); z++) for (let y = Math.max(0, cy - 1); y <= Math.min(G - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(G - 1, cx + 1); x++)
-          for (let j = head[x + G * (y + G * z)]; j >= 0; j = next[j]) if (Math.floor(j / n) !== A && near2(k, j, L[j + 1])) push(k, j);
+          for (let j = head[x + G * (y + G * z)]; j >= 0; j = next[j])
+            if (Math.floor(j / n) !== A && !(root[k] && (root[j] || root[j + 1])) && near2(k, j, L[j + 1] + (k % n < n - 1 ? L[k + 1] / 2 : 0))) {
+              push(k, j);
+              // and the middle of the segment it starts (two segments crossing middle to middle
+              // come nearer than either's ends do)
+              if (k % n < n - 1 && !(root[k + 1] && (root[j] || root[j + 1]))) push(k, j, 0.5);
+            }
       }
       keepOut();
-      if (!hits) break;
       for (let A = 0; A < NA; A++) for (let i = 1; i < n; i++) {
         const k = A * n + i, a1 = 3 * k, a0 = a1 - 3;
         const ex = X[a1] - X[a0], ey = X[a1 + 1] - X[a0 + 1], ez = X[a1 + 2] - X[a0 + 2], l = Math.hypot(ex, ey, ez);
@@ -895,6 +935,7 @@ export class Octopus {
         X[a1] -= ex * w1; X[a1 + 1] -= ey * w1; X[a1 + 2] -= ez * w1;
         X[a0] += ex * w0; X[a0 + 1] += ey * w0; X[a0 + 2] += ez * w0;
       }
+      if (!hits) break;
     }
     keepOut();
     for (let A = 0; A < NA; A++) for (let i = 1; i < n; i++) { const k = A * n + i; arms[A].pts[i].set(X[3 * k], X[3 * k + 1], X[3 * k + 2]); }
