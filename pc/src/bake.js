@@ -252,8 +252,10 @@ async function bakeScenery(scenery, seed) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMappingExposure = EXPOSURE;
+  // Supersampled like the fish: the headless GPU's MSAA leaves about a quarter of the reef's outline
+  // pixels hard-stepped, so the strip is rendered at SS x and filtered down when it is read back.
   renderer.setPixelRatio(1);
-  renderer.setSize(STRIP.w, STRIP.h, false);
+  renderer.setSize(STRIP.w * SS, STRIP.h * SS, false);
 
   // Marine snow as in main.js, carried by the pump current (world.js). It moves, so it lives only in
   // the water loop, never the static layers; two copies (the same particles) are simulated forward to
@@ -284,8 +286,9 @@ async function bakeScenery(scenery, seed) {
   const out = document.createElement('canvas');
   out.width = STRIP.w; out.height = STRIP.h;
   const g = out.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingQuality = 'high';
   waterRenderer.render(scene, camera, sun);
-  g.drawImage(renderer.domElement, 0, 0);
+  g.drawImage(renderer.domElement, 0, 0, STRIP.w, STRIP.h);
   // The strip is cut into TILE-wide columns, so the Roku holds only those in view as the window pans.
   const backTiles = [];
   for (let x = 0, n = 0; x < STRIP.w; x += TILE, n++) {
@@ -308,7 +311,7 @@ async function bakeScenery(scenery, seed) {
   renderer.setClearColor(0x000000, 0);
   renderer.render(scene, camera);
   g.clearRect(0, 0, STRIP.w, STRIP.h);
-  g.drawImage(renderer.domElement, 0, 0);
+  g.drawImage(renderer.domElement, 0, 0, STRIP.w, STRIP.h);
   // Columns like the backdrop's, each cropped to the pixels that hold reef: texture memory goes by
   // bitmap size (4 bytes a pixel), so empty layer costs as much as reef.
   const fgTiles = [];
@@ -391,11 +394,12 @@ function encodeOverlay(F, B, mask, box, w) {
 
 async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly, snow) {
   const W = STRIP.w / WATER_SCALE, H = STRIP.h / WATER_SCALE;
-  renderer.setSize(W, H, false);
+  renderer.setSize(W * SS, H * SS, false);   // supersampled as the static layers
   const grab = document.createElement('canvas');
   grab.width = W; grab.height = H;
   const gg = grab.getContext('2d', { willReadFrequently: true });
-  const read = () => { gg.clearRect(0, 0, W, H); gg.drawImage(renderer.domElement, 0, 0); return gg.getImageData(0, 0, W, H).data; };
+  gg.imageSmoothingQuality = 'high';
+  const read = () => { gg.clearRect(0, 0, W, H); gg.drawImage(renderer.domElement, 0, 0, W, H); return gg.getImageData(0, 0, W, H).data; };
   const setTime = (t, waves = t) => { waterUniforms.uTime.value = t; updateWaves(waves); caustics.update(); };
   const back = () => { renderer.setClearColor(0x000000, 1); waterRenderer.render(scene, camera, sun); return read(); };
   const front = () => { showFgOnly(true); renderer.setClearColor(0x000000, 0); renderer.render(scene, camera); const d = read(); showFgOnly(false); return d; };
@@ -491,8 +495,8 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
       }
     }
   }
-  renderer.setSize(STRIP.w, STRIP.h, false);
-  const layer = (L) => L && { rect: L.rect, frames: L.files, steps: L.steps };
+  renderer.setSize(STRIP.w * SS, STRIP.h * SS, false);
+  const layer =(L) => L && { rect: L.rect, frames: L.files, steps: L.steps };
   return { fps: WATER_FRAMES / WATER_LOOP, scale: WATER_SCALE, back: layer(layers[0]), front: layer(layers[1]) };
 }
 
