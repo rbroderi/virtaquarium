@@ -158,8 +158,10 @@ export const SPECIES = [
       { u: 0.04, v: 0.45, len: 0.022, dir: [0.2, -1, 0.4], r: 0.004, flat: 0.4, shape: 'leaf', color: '#efe3d6' },
       { u: 0.1, v: 0.6, len: 0.02, dir: [0, -1, 0.5], r: 0.004, flat: 0.4, shape: 'leaf', color: '#efe3d6' },
     ],
+    // Venomous dorsal spines: carried up, flared further forward at a threat (and while stalking).
+    erect: { rest: 1, alarm: 1.8 },
     fins: [
-      { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.3, hs: [0.55, 0.75, 0.85, 0.95, 1, 1, 0.95, 0.85, 0.7, 0.55, 0.42, 0.3, 0.22], lean: [-5, 60], r: 0.0045, flag: 0.13, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c' },
+      { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.3, hs: [0.55, 0.75, 0.85, 0.95, 1, 1, 0.95, 0.85, 0.7, 0.55, 0.42, 0.3, 0.22], lean: [-5, 60], r: 0.0045, flag: 0.13, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c', raise: 15, foldTo: 82 },
       { pos: 'top', meristic: 'dorsalSoft', u0: 0.66, u1: 0.93, pts: [[0, 0.04], [0.3, 0.13], [0.8, 0.12], [1, 0.02]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
       { pos: 'bottom', meristic: 'anal', u0: 0.62, u1: 0.88, pts: [[0, 0.03], [0.4, 0.15], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
     ],
@@ -222,7 +224,13 @@ export const SPECIES = [
     fact: 'Bold and inquisitive; locks itself into crevices with its "trigger" dorsal spine.',
     size: 1.15, count: 1,
     albedoGain: [1.02, 0.995, 0.889],   // lab patch comparison (white-referenced, 8 patches), half strength
-    body: { len: 0.82, depth: 0.55, width: 0.36, m: 0.45, headP: 0.9, tailP: 1.2, ped: 0.3 },
+    body: {
+      len: 0.82, depth: 0.55, width: 0.36, m: 0.45, headP: 0.9, tailP: 1.2, ped: 0.3,
+      // The head is boxed in bony plates: flat cheeks meeting the narrow nape and chin at rounded edges.
+      section: { u0: 0.02, u1: 0.42, ease: 0.08, lo: -0.4, hi: 0.35, round: 0.16, sharp: 0.75 },
+    },
+    // Erectile spines: lowered into their groove at rest, locked upright when alarmed or wedged in a crevice.
+    erect: { rest: 0.2, alarm: 2 },
     // Dorsal III + 25-27, anal 21-23, pectoral 14-15 (Randall 2005; FishBase).
     anatomy: { bodyDepthSL: [0.48, 0.56], dorsalSoft: { spines: 0, rays: 26 }, anal: { spines: 0, rays: 22 }, pectoralRays: 14 },
     eye: { u: 0.28, v: -0.38, r: 0.035, iris: '#3a3020' },
@@ -246,7 +254,7 @@ export const SPECIES = [
     fins: [
       { pos: 'top', meristic: 'dorsalSoft', u0: 0.6, u1: 0.93, pts: [[0, 0.03], [0.2, 0.13], [1, 0.03]], sweep: 0.2, fill: '#8c8a94', alpha: 0.55, rays: 'rgba(20,20,28,0.35)' },
       // The trigger: a stout first spine locked upright by the second; folded flat into a groove at rest.
-      { pos: 'top', kind: 'spines', u0: 0.4, u1: 0.47, n: 3, h: 0.08, hs: [1, 0.55, 0.2], lean: [70, 75], r: 0.0075, web: 0.9, fill: '#141414', alpha: 0.9, color: '#1c1a18', bend: 0.02 },
+      { pos: 'top', kind: 'spines', u0: 0.4, u1: 0.47, n: 3, h: 0.08, hs: [1, 0.55, 0.2], lean: [70, 75], r: 0.0075, web: 0.9, fill: '#141414', alpha: 0.9, color: '#1c1a18', bend: 0.02, raise: 50, foldTo: 88 },
       { pos: 'bottom', meristic: 'anal', u0: 0.6, u1: 0.93, pts: [[0, 0.03], [0.2, 0.13], [1, 0.03]], sweep: 0.2, fill: '#8c8a94', alpha: 0.55, rays: 'rgba(20,20,28,0.35)' },
     ],
     caudal: { type: 'round', spread: 0.17, fill: '#141414', band: { t: 0.45, w: 0.25, color: '#e0e0d8' } },

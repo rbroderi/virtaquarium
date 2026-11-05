@@ -343,6 +343,16 @@ export class Fish {
     const foldT = smoothstep(0.35, 0.9, U / (sw.burstBL * L)) * (1 - clamp(Math.abs(this.yawRate) * 0.8, 0, 0.8));
     u.uFold.value = clamp(spring(this.sFold, foldT, 1.2, 0.8, dt), 0, 1);
     u.uCup.value = cup;
+    // Erectile spines (sp.erect: uErect at rest and when alarmed): raised by fear, a chase or a stalk,
+    // and locked up when the fish wedges into its shelter (a trigger bracing in its crevice). They go up
+    // in a fraction of a second and come down slowly.
+    if (sp.erect) {
+      const alarm = clamp(brain.drives.fear * 2 + (brain.sheltered ? 1 : 0) + (brain.mode === 'patrol' && brain.focus ? 0.7 : 0) + (brain.mode === 'stalk' ? 0.6 : 0), 0, 1);
+      const eT = lerp(sp.erect.rest, sp.erect.alarm, alarm);
+      this.erect ??= sp.erect.rest;
+      this.erect += (eT - this.erect) * Math.min(1, dt * (eT > this.erect ? 6 : 0.8));
+      u.uErect.value = this.erect;
+    }
     if (this.spine) {
       // The moray's chain does the bending; the analytic bend is off. Braced in its crevice, the body is stiff.
       this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12);

@@ -32,16 +32,16 @@ The mid-laptop budget is about 3 ms more before integrated GPUs drop under 60 fp
   - *Rocks:* a free triplanar overlay in `normaliseScenery` (coralline patches from 3D noise, algae turf on upward faces, detritus on flats), at most 1.15x stretch, and per-copy hue jitter. Optionally 4 more Tripo rocks for about 120 credits.
   - *Corals:* lofted polyp stalks instead of spheres, a time-based sway, and cheap subsurface scattering, porting the fish's tissue shader.
   - *Sand:* ripples, about 200 rubble and shell pieces at rock feet, and contact darkening.
-  - *Inverts and plants:* feather-duster worms that retract on startle, and swaying macroalgae.
+  - *Inverts and plants:* feather-duster worms that retract on startle, and swaying macroalgae. **Done (2026-11-05):** `fanWorms.js`; rock and coral pores also get parallax occlusion (`parallax.js`).
   - About +0.5 ms. Everything carries to the Roku through the baked layers and the water loop, for about 10% more bake time.
 - **R5. Particulates and depth of field (0.5 day).** Draw marine snow as quads that blur with distance from focus, add near-glass motes, and make `?photo=1` the default at f/5.6 with gentler grain. About 1.5 ms. The backdrop bake can use it too.
 - **R6. Animation (2 days).**
   - Eyes on their own pivots, counter-rotating against pitch and roll, with saccades towards what the brain is looking at.
-  - Pectoral fins that bend along their rays.
+  - Pectoral fins that bend along their rays. **Done (2026-11-05):** `uPBend`.
   - Caudal cupping on the power stroke.
   - Night colouring: pale clownfish and tangs, darker chromis.
   - No GPU cost. Not carried to the Roku: night sprites would break the memory budget.
-- **R7. Glass (optional).** A faint double-contour refraction.
+- **R7. Glass (optional).** A faint double-contour refraction. **Done (2026-11-05)** as the pane's two reflecting faces (`photo.js`): the side panes, where a real tank shows a doubled image by total internal reflection, are never in this framing (the tank's width follows the screen's aspect).
 - **R8. Lighting from above (user request, 2026-11-05).** The renders still look flat. Make the sun (or the tank's lamp) clearly the dominant light from overhead and cut the fake ambient fill: hemisphere light, environment intensity and the ambient water light in `main.js` `applyLight` and `bake.js`. Shadows, undersides and form should then read. Check with look-check renders, and keep the bake on the same values.
 
 ## 3. Brains

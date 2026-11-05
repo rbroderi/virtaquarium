@@ -142,8 +142,12 @@ function frame() {
     const br = Math.sin(t * Math.PI * 2 * 1.2);
     u.uVent.value = hold.vent ?? 0.035 * (0.5 + 0.5 * br);
     if (u.uGape) u.uGape.value = hold.gape ?? 0.07 * (0.5 - 0.5 * br);
+    // hold.erect: erectile spines (0 lowered, 1 as drawn, 2 raised); else they rise and fall slowly.
+    if (u.uErect) u.uErect.value = hold.erect ?? (swim ? 1 + 0.6 * Math.sin(t * 0.7) : 1);
     for (const p of m.userData.pects) {
       if (m.userData.fan) p.rotation.set(0, p.userData.side * 0.9, 0);
+      // hold.pect: a fixed stroke phase, to look at the rays' bend
+      else if (hold.pect != null) posePectoral(p, hold.pect, 0.5 + 0.3 * Math.sin(hold.pect), 0.2 + 0.25 * Math.cos(hold.pect));
       else if (swim) posePectoral(p, t * 9, 0.5 + 0.3 * Math.sin(t * 9), 0.2 + 0.25 * Math.cos(t * 9));
       else posePectoral(p, -Math.PI / 2, 0.5, 0);   // glide pose: half open, flat
     }
@@ -151,7 +155,7 @@ function frame() {
   present();
 }
 // ?photo=1: through the camera model (photo.js), focused on the fish.
-const photo = params.has('photo') && params.get('photo') !== '0' ? new PhotoCamera(renderer, { depth: true, fNumber: Number(params.get('fstop')) || 2.8 }) : null;
+const photo = params.has('photo') && params.get('photo') !== '0' ? new PhotoCamera(renderer, { depth: true, fNumber: Number(params.get('fstop')) || 2.8, glass: false }) : null;
 function present() {
   if (!photo) { renderer.render(scene, camera); return; }
   photo.focus = camera.position.distanceTo(CENTRE);

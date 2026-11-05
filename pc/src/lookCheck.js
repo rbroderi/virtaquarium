@@ -3,6 +3,7 @@
 // out/look-<tag>-<t>s.png, plus close-ups (out/look-<tag>-<t>s-<what>.png) of
 //   station   the cleaning station (cleaner and client)
 //   <species> the first fish of that species
+//   fanworm   the most open feather-duster worm
 // URL options: &at=5,30 (seconds), &close=station,cleanerwrasse, &tag=name, &night=1 (lights off).
 // Reports { files, stats } to /__done, stats per frame: mean luminance and saturation, so looks can be
 // compared over time without opening the pictures.
@@ -25,10 +26,12 @@ export async function main(aq) {
     files.push(await save(`out/${name}.png`, canvas));
     stats.push({ t: target, ...measure(canvas) });
     for (const what of close) {
-      const p = what === 'station' ? world.station?.pos : world.fish.find((f) => f.sp.id === what)?.pos;
+      // fanworm: the most open feather-duster worm in front of the camera.
+      const worm = what === 'fanworm' ? (world.reef.fanWorms?.worms || []).filter((w) => w.mouth.z > -0.5).sort((a, b) => a.retract - b.retract)[0] : null;
+      const p = what === 'station' ? world.station?.pos : worm ? worm.mouth : world.fish.find((f) => f.sp.id === what)?.pos;
       if (!p) continue;
       const v = p.clone().project(camera), W = canvas.width, H = canvas.height;
-      const s = Math.round(H * 0.35), x = Math.round((v.x + 1) / 2 * W - s / 2), y = Math.round((1 - v.y) / 2 * H - s / 2);
+      const s = Math.round(H * (worm ? 0.14 : 0.35)), x = Math.round((v.x + 1) / 2 * W - s / 2), y = Math.round((1 - v.y) / 2 * H - s / 2);
       const c = document.createElement('canvas');
       c.width = c.height = 512;
       c.getContext('2d').drawImage(canvas, Math.max(0, Math.min(W - s, x)), Math.max(0, Math.min(H - s, y)), s, s, 0, 0, 512, 512);

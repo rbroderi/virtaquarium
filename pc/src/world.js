@@ -155,5 +155,6 @@ export class World {
     this.foodMesh.instanceMatrix.needsUpdate = true;
     if (this.foodMesh.instanceColor) this.foodMesh.instanceColor.needsUpdate = true;
     for (const f of this.fish) f.update(dt, this);
+    this.reef.fanWorms?.update(dt, this);
   }
 }

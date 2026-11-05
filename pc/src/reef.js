@@ -8,6 +8,8 @@ import { Noise, mulberry32, range, clamp, makeCanvas, lerp } from './util.js';
 import { addCaustics, waterUniforms } from './water.js';
 import { RockField } from './rockField.js';
 import { addTranslucency } from './softSkin.js';
+import { FanWorms } from './fanWorms.js';
+import { addParallax } from './parallax.js';
 
 const C = (hex) => new THREE.Color(hex);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -34,15 +36,26 @@ function grainTexture(rng, size, base, spread, repeat) {
   return t;
 }
 
+// Height map of the rock's pores (bump and parallax, see parallax.js: bright high, dark deep): a gently
+// undulating surface pitted with bowls, each with a slightly raised lip, some deep, most shallow. Drawn
+// wrapped, so the tile repeats without seams.
 function poreTexture(rng) {
   const s = 512, c = makeCanvas(s, s), g = c.getContext('2d');
-  g.fillStyle = '#909090'; g.fillRect(0, 0, s, s);
-  for (let i = 0; i < 2600; i++) {
-    const x = rng() * s, y = rng() * s, r = Math.pow(rng(), 3) * 9 + 0.8;
-    g.fillStyle = `rgba(20,20,20,${0.3 + rng() * 0.5})`;
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-    g.fillStyle = 'rgba(230,230,230,0.25)';
-    g.beginPath(); g.arc(x - r * 0.3, y - r * 0.3, r * 0.6, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#9a9a9a'; g.fillRect(0, 0, s, s);
+  const blob = (x, y, r, inner, outer) => {
+    for (const ox of [-s, 0, s]) for (const oy of [-s, 0, s]) {
+      if (x + ox + r < 0 || x + ox - r > s || y + oy + r < 0 || y + oy - r > s) continue;
+      const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+      gr.addColorStop(0, inner); gr.addColorStop(1, outer);
+      g.fillStyle = gr; g.beginPath(); g.arc(x + ox, y + oy, r, 0, Math.PI * 2); g.fill();
+    }
+  };
+  // Low undulation first, then the pits.
+  for (let i = 0; i < 60; i++) blob(rng() * s, rng() * s, 30 + rng() * 60, `rgba(${rng() < 0.5 ? '200,200,200' : '70,70,70'},0.18)`, 'rgba(128,128,128,0)');
+  for (let i = 0; i < 2200; i++) {
+    const x = rng() * s, y = rng() * s, r = Math.pow(rng(), 3) * 10 + 1.2, d = 0.35 + rng() * 0.6;
+    blob(x, y, r * 1.35, 'rgba(190,190,190,0.35)', 'rgba(190,190,190,0)');                         // the lip
+    blob(x, y, r, `rgba(12,12,12,${d})`, `rgba(12,12,12,${d * 0.25})`);                              // the bowl
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -566,7 +579,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   }
 
   const pores = poreTexture(rng);
-  const rockMat = stdMat({ vertexColors: true, map: rockDetailTexture(rng), roughness: 0.95, bumpMap: pores, bumpScale: 3.0 }, 0.7);
+  const rockMat = addParallax(stdMat({ vertexColors: true, map: rockDetailTexture(rng), roughness: 0.95, bumpMap: pores, bumpScale: 3.0 }, 0.7), 0.05);
   const rocks = new THREE.Group();
   reef.add(rocks);
   // A generated rock for a w x h x d slot, stretched by kx (sideways) and ky (up). Rocks stay near their
@@ -649,7 +662,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   // Staghorn on the central pile (the first is the chromis shoal's home coral)
   let stagMain = null;
   {
-    const mat = stdMat({ vertexColors: true, roughness: 0.7, bumpMap: pores, bumpScale: 1.0 }, 0.9);
+    const mat = addParallax(stdMat({ vertexColors: true, roughness: 0.7, bumpMap: pores, bumpScale: 1.0 }, 0.9), 0.03);
     for (const [x, z, s] of [[-0.6, -1.4, 1.25], [4.6, -1.3, 0.7], [-6.0, -2.6, 0.6]]) {
       const m = new THREE.Mesh(staghorn(rng, s), mat);
       m.position.set(x * sx, top(x * sx, z, 0.3 * s) - 0.15, z);
@@ -1060,6 +1073,13 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     return f;
   })();
 
+  // Feather-duster worms on the rock faces, in a few clusters (fanWorms.js); not on the anemone's rock.
+  const fanWorms = new FanWorms(rng, field, (x, z) => hf.sample(x, z), {
+    width, count: 16, avoid: [{ x: anemoneSpot.x, z: anemoneSpot.z, r: 1.2 }],
+  });
+  reef.add(fanWorms.group);
+  console.log('Fan worms:', fanWorms.worms.length);
+
   let shoalCoral = null;
   if (stagMain) {
     const b = new THREE.Box3().setFromObject(stagMain), c = b.getCenter(new THREE.Vector3());
@@ -1080,6 +1100,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     planted,   // { grass: patches, clumps: algae clumps } that found clear sand
     shelters,
     shoalCoral,   // the chromis' home staghorn: { pos (upper middle), top, r }
+    fanWorms,     // feather dusters: update(dt, world) retracts them when startled
   };
 }
 

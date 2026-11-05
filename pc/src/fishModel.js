@@ -823,7 +823,15 @@ function paintFins(sp, prof, cachedMaps = false) {
         g.restore();
       }
       g.restore();
-      meshes.push({ rays, n: N - 1 });
+      // Erectile spines: each turns about its base, back to `foldTo` (deg from vertical, flat along the
+      // back) when lowered and forward by `raise` deg past its drawn lean when raised (FISH_ERECT). The
+      // web between two spines turns with them, by the angle interpolated across it.
+      const fold = THREE.MathUtils.degToRad(spec.foldTo ?? 86), raise = -THREE.MathUtils.degToRad(spec.raise ?? 10);
+      const erect = (t) => {
+        const k = t * (N - 1), j = Math.min(N - 2, Math.floor(k)), q = k - j, b = rays(t)[0];
+        return [b[0], b[1], fold - lerp(S[j].a, S[j + 1].a, q), raise];
+      };
+      meshes.push({ rays, n: N - 1, erect });
       // The spines themselves, on the membrane's pleat ridges (see finMesh) so they stay on the web.
       S.forEach((s, i) => {
         const z = 0.035 * s.len * Math.cos(Math.PI * i);
@@ -833,6 +841,7 @@ function paintFins(sp, prof, cachedMaps = false) {
           pts: [[...s.b, 0], [mid[0] - nrm[0] * bend * s.len, mid[1] - nrm[1] * bend * s.len, z * 0.5], [...s.tip, z]],
           r0: spec.r ?? 0.005, r1: (spec.r ?? 0.005) * 0.2, color: spec.color || spec.fill, stripes: spec.stripes,
           nb: spec.stripes ? Math.max(3, Math.round(s.len / 0.025)) : 0,
+          erect: [s.b[0], s.b[1], fold - s.a, raise],
         });
       });
       return;
@@ -1136,10 +1145,11 @@ function paintPectoral(sp) {
 // A fin membrane meshed on its rays: rows run from the base to the edge, and the membrane is
 // fan-folded (rays on alternate ridges and valleys), which gives fins their pleated relief and
 // broken-up highlights. UVs index the fin sheet texture, which is drawn in fish coordinates.
-function finMesh({ rays, n }, sheet) {
-  const NT = Math.max(24, n * 4), NS = 10, pos = [], uv = [], idx = [];
+function finMesh({ rays, n, erect }, sheet) {
+  const NT = Math.max(24, n * 4), NS = 10, pos = [], uv = [], idx = [], er = [];
   for (let i = 0; i <= NT; i++) {
-    const t = i / NT, [b, o] = rays(t);
+    const t = i / NT, [b, o] = rays(t), e = erect ? erect(t) : [0, 0, 0, 0];
+    for (let j = 0; j <= NS; j++) er.push(...e);
     const ex = o[0] + (o[0] - b[0]) * 0.05, ey = o[1] + (o[1] - b[1]) * 0.05;   // overshoot; alpha trims it
     const L = Math.hypot(ex - b[0], ey - b[1]);
     for (let j = 0; j <= NS; j++) {
@@ -1157,6 +1167,9 @@ function finMesh({ rays, n }, sheet) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  // aErect: (base x, base y, angle when lowered, angle when fully raised) of an erectile spine and its
+  // web, zero elsewhere (FISH_ERECT).
+  g.setAttribute('aErect', new THREE.Float32BufferAttribute(er, 4));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -1204,6 +1217,9 @@ function tubeGeometry(d, seg = 7) {
   // On the lower jaw (d.jaw): swings down with it as the mouth opens (FISH_JAW).
   g.setAttribute('aJaw', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3).fill(d.jaw ? 1 : 0), 1));
   g.setAttribute('aJawG', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
+  const er = new Float32Array((pos.length / 3) * 4);
+  if (d.erect) for (let i = 0; i < er.length; i += 4) er.set(d.erect, i);
+  g.setAttribute('aErect', new THREE.Float32BufferAttribute(er, 4));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -1311,6 +1327,22 @@ function coverAt(G, u, v, cover) {
   return smooth01((u - (edge - 0.13)) / 0.12) * G.fade(v);
 }
 
+// Angular cross-section (sp.body.section, the triggerfish's plated head): flat cheeks at full width
+// between cy = lo and hi (cy = +1 dorsal), tapering straight to the dorsal and ventral keels, the
+// corners rounded over `round` (no sharp edges: bone under skin). sharp blends it over the round
+// section between u0 and u1 (eased in and out over `ease`).
+// { u0, u1, ease, lo, hi, round, sharp }
+function angularSection(S, u, cy, z, W) {
+  if (!S) return z;
+  const ease = S.ease ?? 0.06;
+  const s = (S.sharp ?? 0.7) * smooth01((u - S.u0) / ease + 1) * (1 - smooth01((u - S.u1) / ease));
+  if (s <= 0) return z;
+  const r = S.round ?? 0.15, lo = S.lo ?? -0.3, hi = S.hi ?? 0.4;
+  const ramp = (x) => 0.5 * (x + Math.sqrt(x * x + r * r)) - 0.5 * r;   // softened max(0, x)
+  const a = Math.max(0, 1 - ramp((cy - hi) / (1 - hi)) - ramp((lo - cy) / (1 + lo))) * smooth01((1 - Math.abs(cy)) / 0.05);
+  return lerp(z, a * W, s);
+}
+
 // The skin's distance from the midplane at body position u and texture height v (-1 dorsal, +1
 // ventral), before relief: the body mesh's cross-section, shared with the eyes so they sit on it.
 function flankZ(sp, prof, u, v, cover) {
@@ -1320,6 +1352,7 @@ function flankZ(sp, prof, u, v, cover) {
   const flank = sp.body.flank ?? 1.6 - sp.body.width * 1.6;
   const h = prof.half(u);
   let z = Math.pow(Math.sqrt(Math.max(0, 1 - cy * cy)), flank) * prof.width(u);
+  z = angularSection(sp.body.section, u, cy, z, prof.width(u));
   z *= 1 - 0.25 * Math.max(0, cy) ** 4;                                  // narrow dorsal ridge (fin base)
   z *= 1 + 0.12 * Math.max(0, -cy) * (1 - smooth01(u / 0.6));            // fuller belly over the gut
   z *= 1 + COVER * coverAt(gillOf(sp), u, v, cover);                    // gill cover overhangs the flank
@@ -1403,6 +1436,23 @@ float finFlutter(vec3 p) {
 // Gill cover breathing: the rear of the operculum flares out and back (aCover: the share of the flare
 // each body vertex takes, most at the margin; the rings behind the margin stay put, so the gill
 // opening under it widens).
+// Erectile spines (aErect, see finMesh): uErect 0 lowered flat along the back, 1 as drawn, 2 fully
+// raised. At speed they fold back with the other median fins (uFold). Returns the turn about the base.
+#ifdef FISH_ERECT
+attribute vec4 aErect;
+uniform float uErect;
+float erectAngle() {
+  float e = min(uErect, 2.0 - 1.8 * uFold);
+  return e < 1.0 ? aErect.z * (1.0 - e) : aErect.w * (e - 1.0);
+}
+#endif
+// Pectoral bending along the rays (a fin's own space: x out along the rays from the base, y across
+// them, leading edge up). uPBend.x: the tips' lag behind the stroke (fin lengths of deflection), z: the
+// fin's length. The rays bend progressively towards the tip, the stiff leading rays least.
+#ifdef FISH_PECT
+uniform vec3 uPBend;
+float pectFlex(float y) { return 1.0 - 0.45 * clamp(y / (0.5 * uPBend.z), -1.0, 1.0); }
+#endif
 #ifdef FISH_COVER
 attribute float aCover;
 float ventScale(vec3 p) { return 1.0 + uVent * 1.5 * aCover; }
@@ -1491,6 +1541,16 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
             float dEx = cos(a) - 1.0 + dx * sin(a) * k, dDy = sin(a) - dx * cos(a) * k;   // da/dx = -k
             objectNormal.x = (objectNormal.x - dDy * objectNormal.y) / (1.0 + dEx); }
         #endif
+        #ifdef FISH_ERECT
+          { float a = erectAngle(), c = cos(a), s = sin(a);
+            objectNormal.xy = vec2(c * objectNormal.x - s * objectNormal.y, s * objectNormal.x + c * objectNormal.y); }
+        #endif
+        #ifdef FISH_PECT
+          { float r = clamp(position.x / uPBend.z, 0.0, 1.0);
+            float dzdx = 2.0 * uPBend.x * r * pectFlex(position.y);
+            float dzdy = abs(position.y) < 0.5 * uPBend.z ? -0.9 * uPBend.x * r * r : 0.0;
+            objectNormal = vec3(objectNormal.x - dzdx * objectNormal.z, objectNormal.y - dzdy * objectNormal.z, objectNormal.z); }
+        #endif
         objectNormal = vec3(objectNormal.x * swC - objectNormal.z * swS, objectNormal.y, objectNormal.x * swS + objectNormal.z * swC);
         #ifdef USE_TANGENT
           vec3 objectTangent = vec3(tangent.xyz);
@@ -1504,10 +1564,20 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
           { float a = -uGape * aJaw, dx = p0.x - uHinge.x;
             p0.x += dx * (cos(a) - 1.0); p0.y += dx * sin(a); }
         #endif
+        float erSpine = 0.0;
+        #ifdef FISH_ERECT
+          // An erectile spine (and its web) turns about its base instead of folding with the soft fins.
+          { float a = erectAngle(), c = cos(a), s = sin(a); vec2 d = p0.xy - aErect.xy;
+            erSpine = step(1e-5, abs(aErect.z));
+            p0.xy = mix(p0.xy, aErect.xy + vec2(c * d.x - s * d.y, s * d.x + c * d.y), erSpine); }
+        #endif
+        #ifdef FISH_PECT
+          p0.z += uPBend.x * uPBend.z * pow(clamp(p0.x / uPBend.z, 0.0, 1.0), 2.0) * pectFlex(p0.y);
+        #endif
         #ifdef FISH_FIN
           // Median fins fold: rays above the body lower and sweep back (not the caudal blade).
           { float over = abs(p0.y) - uFinH;
-            if (over > 0.0 && p0.x > uXPed + 0.03) {
+            if (over > 0.0 && p0.x > uXPed + 0.03 && erSpine == 0.0) {
               float k = uFold * smoothstep(0.0, 0.05, over);
               p0.y = sign(p0.y) * (uFinH + over * (1.0 - 0.55 * k));
               p0.x -= over * 0.35 * k;
@@ -1519,6 +1589,8 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         transformed.y = p0.y + liftY(p0.x);
         transformed.z = swH + swZ * swC;`);
     if (tissue?.kind === 'fin') shader.defines = { ...shader.defines, FISH_FIN: '' };
+    if (tissue?.erect) shader.defines = { ...shader.defines, FISH_ERECT: '' };
+    if (tissue?.pect) shader.defines = { ...shader.defines, FISH_PECT: '' };
     if (tissue?.packed) {
       // Second channels of the packed body maps (see buildFishModel): film thickness from the iridescence
       // map's G, and the cavity from the roughness map's R, applied as three's aoMap would (indirect
@@ -1589,7 +1661,7 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         .replace('#include <aomap_fragment>', 'reflectedLight.directSpecular *= 1.0 - vSlit;\n  reflectedLight.indirectSpecular *= 1.0 - vSlit;\n  reflectedLight.directDiffuse *= 1.0 - 0.85 * vSlit;\n  #include <aomap_fragment>');
     }
   };
-  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') + (tissue.night ? '-night-' + tissue.night : '') + (tissue.thickMap ? '-thick' : '') + (tissue.detail ? '-detail' : '') + (tissue.packed ? '-packed' : '') : 'plain');
+  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') + (tissue.night ? '-night-' + tissue.night : '') + (tissue.thickMap ? '-thick' : '') + (tissue.detail ? '-detail' : '') + (tissue.packed ? '-packed' : '') + (tissue.erect ? '-erect' : '') + (tissue.pect ? '-pect' : '') : 'plain');
   return addCaustics(base);   // fish swim through the same focused light as the reef
 }
 
@@ -1990,12 +2062,20 @@ const IN_WATER_IOR = 1.04;
 // the recovery, when the fin feathers (turns its chord edge-on to the flow) and its rays partly
 // collapse; on the power stroke back towards the body it is flat and fully spread.
 // open: opening angle (rad); flap: roll of the stroke plane (rad).
+// The rays are flexible: the fin bends along them, its tips trailing the stroke (the opening angle
+// follows sin(ph), so its rate follows cos(ph)), most at the trailing edge, as in high-speed video of
+// labriform swimmers (the tips lag the base by ~1/8 of a stroke). In the fin's space +z faces the body
+// while the fin is open (the mesh is turned to point back), so while it opens (cos ph > 0) the tips
+// bend towards the body, and away from it on the power stroke.
 export function posePectoral(p, ph, open, flap) {
   const s = p.userData.side, rec = Math.max(0, Math.cos(ph)), fin = p.children[0];
   p.rotation.set(0, s * open, flap);
   fin.rotation.x = s * 0.6 * rec;
   fin.scale.y = 1 - 0.25 * rec;
+  if (p.userData.uPBend) p.userData.uPBend.value.x = PECT_LAG * s * Math.cos(ph) * clamp(open * 2, 0.4, 1);
 }
+let PECT_LAG = 0.22;
+export function setPectLag(v) { PECT_LAG = v; }   // lab tuning
 
 // finDepth: fins write depth (and cut out below 15% alpha, under the faintest fringe), set before building fish. The photo camera
 // needs it so translucent fins focus with the body; otherwise fins don't write depth, which avoids
@@ -2011,7 +2091,9 @@ export function buildFishModel(sp, opts = {}) {
     uFinH: { value: a.prof.H }, uXPed: { value: a.prof.xPed },
     uAnguil: { value: sp.swim?.mode === 'anguilliform' ? 1 : 0 },
     uGape: { value: 0 }, uHinge: { value: new THREE.Vector2(9, 9) }, uNight: { value: 0 },
+    uErect: { value: 1 },   // erectile spines as drawn (fish.js raises and lowers them)
   });
+  const erect = sp.fins.some((f) => f.kind === 'spines');
   const M = mouthOf(sp);   // the lower jaw hinges at the corner of the mouth
   uniforms.uHinge.value.set(a.prof.x(M.u), a.prof.centre(M.u) - M.v * a.prof.half(M.u));
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
@@ -2037,13 +2119,15 @@ export function buildFishModel(sp, opts = {}) {
   const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.finTex, normalMap: a.finNormalTex, roughnessMap: a.finDataTex, transparent: true, side: THREE.DoubleSide,
     depthWrite: fishRender.finDepth, roughness: 1, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
-  }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8, thickMap: a.finDataTex });
+  }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8, thickMap: a.finDataTex, erect });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
-  // still get the membrane light transport.
-  const still = swimUniforms({ uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 } });
-  const pectMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+  // still get the membrane light transport, and each bends along its rays (its own uPBend, so a
+  // material each side; both share one program).
+  const p = sp.pectoral, rowed = p && p.kind !== 'fan';
+  const stillFor = () => swimUniforms({ uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 }, uPBend: { value: new THREE.Vector3(0, 0, p ? p.len : 1) } });
+  const pectMatFor = (u) => makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
-  }), still, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
+  }), u, { kind: 'fin', thickMM: 0.15 * sp.size * 8, pect: rowed });
 
   const group = new THREE.Group();
   const body = new THREE.Mesh(a.bodyGeo, bodyMat);
@@ -2051,21 +2135,21 @@ export function buildFishModel(sp, opts = {}) {
   fins.renderOrder = 1;
   group.add(fins, body);
   // Spines, free rays and tentacles: solid, glossy, banded by vertex colour; thin enough to glow when backlit.
-  const tubeMat = (u, jaw = false) => makeSwimMaterial(new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }), u, { kind: 'fin', thickMM: 0.8 * sp.size * 8, jaw });
-  if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms, true)));   // chin lappets ride on the lower jaw
+  const tubeMat = (u, jaw = false, extra = {}) => makeSwimMaterial(new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }), u, { kind: 'fin', thickMM: 0.8 * sp.size * 8, jaw, ...extra });
+  if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms, true, { erect })));   // chin lappets ride on the lower jaw
 
-  const pects = [], pectTubeMat = a.pectTubeGeo ? tubeMat(still) : null;
-  const p = sp.pectoral;
+  const pects = [];
   for (const side of p ? [1, -1] : []) {
     const px = a.prof.x(p.u), py = a.prof.centre(p.u) - p.v * a.prof.half(p.u), pz = a.prof.width(p.u);
-    const pivot = new THREE.Group();
+    const pivot = new THREE.Group(), still = stillFor();
     pivot.position.set(px, py, side * pz * 0.9);
-    const m = new THREE.Mesh(a.pectGeo, pectMat);
+    const m = new THREE.Mesh(a.pectGeo, pectMatFor(still));
     m.renderOrder = 2;
     m.rotation.y = Math.PI; // point backwards
-    if (a.pectTubeGeo) m.add(new THREE.Mesh(a.pectTubeGeo, pectTubeMat));
+    if (a.pectTubeGeo) m.add(new THREE.Mesh(a.pectTubeGeo, tubeMat(still, false, { pect: rowed })));
     pivot.add(m);
     pivot.userData.side = side;
+    pivot.userData.uPBend = still.uPBend;
     group.add(pivot);
     pects.push(pivot);
   }
