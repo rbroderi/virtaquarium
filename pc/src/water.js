@@ -98,28 +98,46 @@ export const INSCATTER_DAY = new THREE.Color(0.030, 0.20, 0.33);
 
 // ---------- surface waves ----------
 //
-// The surface of an aquarium has no wind waves. What ripples it is roughness stirred up by the
-// return pump, which the slow surface current carries along (a few cm/s) while it slowly re-forms
-// (Taylor's frozen-turbulence picture). So the pattern drifts at the current's speed and evolves over
-// seconds, instead of racing across at free-wave phase speeds (30-90 cm/s at these wavelengths).
+// The surface of an aquarium has no wind waves. What ripples it is roughness stirred up by the pumps,
+// carried along by slow surface currents (a few cm/s) while it slowly re-forms (Taylor's
+// frozen-turbulence picture), instead of racing across at free-wave phase speeds (30-90 cm/s here).
+// A tank has several such sources at once, so the surface is a sum of wave trains, each drifting its
+// own way at its own speed:
+//   - the return pump's outflow: fine roughness carried along the front (+x);
+//   - a powerhead across the back, and the gyre returning the other way: longer, slower swells;
+//   - ripples bounced off the glass: short, weak, any direction, hardly drifting (they shimmer in place).
+// Where the trains cross, their caustic networks overlap and mix: broad bright bands from the swells
+// sweep one way while the fine net slides another, as in a real tank.
 // Wave vectors sit on a lattice of the tile, so the field (and its caustics) repeats seamlessly every
 // WAVE_TILE units. Wavelengths run 5-50 cm with ~2% slope each (rms slope ~0.07).
 export const WAVE_TILE = 4.0;   // units (0.5 m)
-const NWAVES = 24;
-const SURFACE_CURRENT = [0.03, 0.008];   // m/s, along the pump's outflow (+x) with a slight cross drift
+//  drift: surface current carrying the train (m/s); dir/spread: wave-vector heading and spread (rad);
+//  n: lattice wavenumber range (wavelength = 50 cm / n); amp: slope scale, set so each train focuses
+//  about the same share of the light (no single drift direction dominates the caustics).
+const TRAINS = [
+  { count: 10, drift: [0.03, 0.008], dir: 0, spread: 0.9, n: [3, 10], amp: 0.5 },          // pump outflow
+  { count: 6, drift: [-0.018, -0.01], dir: 2.7, spread: 0.6, n: [1, 4], amp: 1.55 },       // returning gyre
+  { count: 6, drift: [0.006, -0.022], dir: -1.5, spread: 0.7, n: [2, 6], amp: 0.9 },       // powerhead
+  { count: 6, drift: [0.002, 0.003], dir: 0, spread: Math.PI, n: [5, 11], amp: 0.5 },      // reflections
+];
+const NWAVES = TRAINS.reduce((s, t) => s + t.count, 0);
 const waves = (() => {
   const rng = mulberry32(911), out = [], seen = new Set();
-  while (out.length < NWAVES) {
-    const n = 1 + Math.floor(Math.pow(rng(), 1.4) * 10);
-    const a = (rng() - 0.5) * 2.4 + (rng() < 0.2 ? Math.PI : 0);   // mostly along the pump's flow (+x)
-    const nx = Math.round(n * Math.cos(a)), nz = Math.round(n * Math.sin(a));
-    if ((!nx && !nz) || seen.has(nx + ',' + nz)) continue;
-    seen.add(nx + ',' + nz);
-    const kx = (2 * Math.PI * nx) / WAVE_TILE, kz = (2 * Math.PI * nz) / WAVE_TILE, k = Math.hypot(kx, kz);
-    // Advection by the current (k . U) plus slow re-forming: a few seconds for ripples, longer for swells.
-    const advect = (kx * SURFACE_CURRENT[0] + kz * SURFACE_CURRENT[1]) / METRES_PER_UNIT;
-    const evolve = (rng() < 0.5 ? -1 : 1) * (0.08 + 0.25 * rng()) * Math.sqrt(n / 5);
-    out.push({ kx, kz, amp: (0.02 * (0.7 + 0.6 * rng())) / k, omega: advect + evolve, phi: rng() * Math.PI * 2 });
+  for (const tr of TRAINS) {
+    for (let made = 0; made < tr.count;) {
+      const n = tr.n[0] + Math.pow(rng(), 1.3) * (tr.n[1] - tr.n[0]);
+      const a = tr.dir + (rng() * 2 - 1) * tr.spread;
+      const nx = Math.round(n * Math.cos(a)), nz = Math.round(n * Math.sin(a));
+      // One wave per lattice vector (a +k/-k pair would just be a single wave too).
+      if ((!nx && !nz) || seen.has(nx + ',' + nz) || seen.has(-nx + ',' + -nz)) continue;
+      seen.add(nx + ',' + nz);
+      made++;
+      const kx = (2 * Math.PI * nx) / WAVE_TILE, kz = (2 * Math.PI * nz) / WAVE_TILE, k = Math.hypot(kx, kz);
+      // Advection by the train's current (k . U) plus slow re-forming: seconds for ripples, longer for swells.
+      const advect = (kx * tr.drift[0] + kz * tr.drift[1]) / METRES_PER_UNIT;
+      const evolve = (rng() < 0.5 ? -1 : 1) * (0.08 + 0.25 * rng()) * Math.sqrt(Math.hypot(nx, nz) / 5);
+      out.push({ kx, kz, amp: (0.02 * tr.amp * (0.7 + 0.6 * rng())) / k, omega: advect + evolve, phi: rng() * Math.PI * 2 });
+    }
   }
   return out;
 })();
