@@ -25,9 +25,23 @@ export function startServer(port = PORT, onEvent = () => {}) {
       if (!allowed) { res.writeHead(403).end(); return; }
       const chunks = [];
       req.on('data', (c) => chunks.push(c));
-      req.on('end', () => {
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.writeFileSync(dest, Buffer.concat(chunks));
+      req.on('end', async () => {
+        // On Windows another process (a virus scan, a browser showing the old sheet) can hold the file
+        // a moment: write beside it and swap it in, retrying, rather than take the server down.
+        const tmp = dest + '.part';
+        for (let tries = 0; ; tries++) {
+          try {
+            fs.mkdirSync(path.dirname(dest), { recursive: true });
+            fs.writeFileSync(tmp, Buffer.concat(chunks));
+            fs.renameSync(tmp, dest);
+            break;
+          } catch (err) {
+            if (tries < 20) { await new Promise((r) => setTimeout(r, 250)); continue; }
+            console.error(`save ${rel}: ${err.message}`);
+            res.writeHead(500).end(err.message);
+            return;
+          }
+        }
         onEvent({ type: 'saved', path: rel });
         res.writeHead(200).end('ok');
       });

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated": "2026-11-04T14:42:22.687Z",
+  "generated": "2026-11-05T01:39:02.442Z",
   "screen": {
     "w": 1920,
     "h": 1080
@@ -45,13 +45,13 @@
       "count": 2,
       "sheet": "fish/bluetang.png",
       "frameW": 174,
-      "frameH": 126,
+      "frameH": 82,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 154,
+      "lengthPx": 153,
       "brain": {
         "maxSpeed": 3.1500000000000004,
         "zone": [
@@ -75,14 +75,14 @@
       "fact": "Spends most of the day grazing algae from rock, which keeps reefs healthy.",
       "count": 2,
       "sheet": "fish/yellowtang.png",
-      "frameW": 160,
-      "frameH": 202,
+      "frameW": 158,
+      "frameH": 96,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 141,
+      "lengthPx": 140,
       "brain": {
         "maxSpeed": 2.8499999999999996,
         "zone": [
@@ -106,14 +106,14 @@
       "fact": "Named by Moors who believed it a bringer of happiness; trails a long white dorsal filament.",
       "count": 2,
       "sheet": "fish/moorishidol.png",
-      "frameW": 212,
-      "frameH": 442,
+      "frameW": 252,
+      "frameH": 130,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 169,
+      "lengthPx": 187,
       "brain": {
         "maxSpeed": 2.5,
         "zone": [
@@ -144,7 +144,7 @@
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 213,
+      "lengthPx": 212,
       "brain": {
         "maxSpeed": 1.74,
         "zone": [
@@ -169,13 +169,13 @@
       "count": 1,
       "sheet": "fish/copperband.png",
       "frameW": 142,
-      "frameH": 136,
+      "frameH": 104,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 125,
+      "lengthPx": 126,
       "brain": {
         "maxSpeed": 2.125,
         "zone": [
@@ -200,7 +200,7 @@
       "count": 2,
       "sheet": "fish/royalgramma.png",
       "frameW": 84,
-      "frameH": 40,
+      "frameH": 42,
       "frames": 12,
       "rows": {
         "swim": 0,
@@ -261,14 +261,14 @@
       "fact": "Juveniles wear white rings on blue; adults change completely into this striped livery.",
       "count": 1,
       "sheet": "fish/emperorangel.png",
-      "frameW": 216,
-      "frameH": 190,
+      "frameW": 220,
+      "frameH": 114,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 191,
+      "lengthPx": 194,
       "brain": {
         "maxSpeed": 3.25,
         "zone": [
@@ -292,14 +292,14 @@
       "fact": "Its elongated snout reaches into coral branches to pluck tube-worm tentacles.",
       "count": 1,
       "sheet": "fish/longnose.png",
-      "frameW": 134,
-      "frameH": 116,
+      "frameW": 140,
+      "frameH": 94,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 118,
+      "lengthPx": 121,
       "brain": {
         "maxSpeed": 2,
         "zone": [
@@ -324,7 +324,7 @@
       "count": 9,
       "sheet": "fish/chromis.png",
       "frameW": 64,
-      "frameH": 40,
+      "frameH": 28,
       "frames": 12,
       "rows": {
         "swim": 0,
@@ -354,14 +354,14 @@
       "fact": "A dwarf angelfish that rarely strays far from rockwork, darting between caves.",
       "count": 1,
       "sheet": "fish/coralbeauty.png",
-      "frameW": 100,
-      "frameH": 74,
+      "frameW": 102,
+      "frameH": 64,
       "frames": 12,
       "rows": {
         "swim": 0,
         "turn": 1
       },
-      "lengthPx": 88,
+      "lengthPx": 89,
       "brain": {
         "maxSpeed": 1.7999999999999998,
         "zone": [
@@ -377,6 +377,37 @@
         "host": false,
         "prey": false,
         "shy": 0.7
+      }
+    },
+    "moray": {
+      "name": "Snowflake Moray",
+      "sci": "Echidna nebulosa",
+      "fact": "Spends the day with its head out of a crevice, gulping water through its mouth; hunts crabs at night.",
+      "count": 1,
+      "sheet": "fish/moray.png",
+      "frameW": 528,
+      "frameH": 46,
+      "frames": 12,
+      "rows": {
+        "swim": 0,
+        "turn": 1
+      },
+      "lengthPx": 466,
+      "brain": {
+        "maxSpeed": 1.92,
+        "zone": [
+          0.9,
+          1
+        ],
+        "school": 0,
+        "grazer": 0,
+        "territorial": 0.3,
+        "boldness": 0.6,
+        "curiosity": 0.3,
+        "activity": 0.2,
+        "host": false,
+        "prey": false,
+        "shy": 0
       }
     }
   },
@@ -419,8 +450,8 @@
           "rect": [
             78,
             762,
-            1766,
-            262
+            1764,
+            270
           ],
           "frames": [
             "scenery/reef-7-water-fg-00.png",
@@ -446,60 +477,60 @@
         920,
         920,
         920,
-        920,
-        842,
-        833,
-        830,
-        829,
-        796,
-        751,
-        738,
-        727,
-        725,
-        725,
-        725,
-        726,
-        737,
-        751,
-        776,
+        879,
+        838,
+        823,
+        820,
+        820,
+        806,
+        766,
+        753,
+        742,
+        740,
+        740,
+        740,
+        740,
+        741,
+        748,
+        761,
         784,
         785,
         796,
         822,
         821,
         821,
-        757,
-        748,
-        745,
-        745,
-        745,
-        750,
-        751,
-        593,
-        589,
-        589,
+        808,
+        761,
         744,
-        890,
-        915,
-        920,
-        920,
-        920,
-        920,
-        908,
-        817,
+        725,
+        725,
+        725,
+        769,
+        573,
+        568,
+        568,
+        684,
+        789,
+        789,
+        792,
+        815,
+        816,
+        837,
+        904,
         792,
         777,
-        771,
-        771,
-        754,
-        699,
-        685,
-        685,
-        685,
-        686,
-        694,
-        712,
-        795,
+        766,
+        763,
+        763,
+        755,
+        724,
+        710,
+        710,
+        710,
+        710,
+        719,
+        736,
+        829,
         840,
         888,
         920,
@@ -510,8 +541,8 @@
         920
       ],
       "anemone": [
-        1285,
-        917
+        1286,
+        876
       ],
       "swimBox": [
         207,

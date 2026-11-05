@@ -98,22 +98,34 @@ export const SPECIES = [
     size: 1.0, count: 2,
     anatomy: { bodyDepthSL: [0.7, 1.0] },
     albedoGain: [0.933, 1.015, 1.0],   // lab patch comparison (white-referenced, 6 patches), half strength
-    body: { len: 0.74, depth: 0.88, width: 0.2, m: 0.38, headP: 1.2, tailP: 1.5, ped: 0.18, snout: 0.14, snoutH: 0.045,
-      snoutTip: 0.6, snoutBlend: 0.04 },   // the tube narrows to the mouth and runs smoothly into the steep face
-    eye: { u: 0.22, v: -0.3, r: 0.04, iris: '#1a1a1a' },
+    // Shape measured off the side-on photos (zerpe.jpg): most of the idol's height is its dorsal and
+    // anal fins; the body proper is about 0.8 SL deep, deepest just over halfway back.
+    body: { len: 0.74, depth: 0.6, width: 0.2, m: 0.46, headP: 1.15, tailP: 1.2, ped: 0.16, snout: 0.19, snoutH: 0.034,
+      snoutTip: 0.75, snoutBlend: 0.04 },   // the tube narrows to the mouth and runs smoothly into the steep face
+    eye: { u: 0.35, v: -0.6, r: 0.03, iris: '#1a1a1a' },
+    // Photo order from the snout: black lips, an orange saddle, a white face, the black head band
+    // (the eye in it), yellow, the black rear band, a thin yellow strip, the white peduncle.
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f7f4ea'], [1, '#ece5d2']] },
-      { op: 'blob', u: 0.58, v: 0.0, ru: 0.16, rv: 1.4, color: '#f5d33a', soft: 0.6 },
-      { op: 'band', u: 0.27, w: 0.2, curve: 0.03, color: '#151515', edge: '#ffffff', ew: 0.01 },
-      { op: 'band', u: 0.8, w: 0.14, curve: 0.0, color: '#151515', edge: '#ffffff', ew: 0.01 },
-      { op: 'poly', color: '#f08a2a', pts: [[0.08, -1.1], [0.16, -1.1], [0.16, -0.3], [0.08, -0.3]] },
+      { op: 'blob', u: 0.65, v: 0.0, ru: 0.12, rv: 1.4, color: '#f5d33a', soft: 0.6 },
+      { op: 'band', u: 0.405, w: 0.27, curve: 0.03, color: '#151515', edge: '#ffffff', ew: 0.01 },
+      { op: 'band', u: 0.83, w: 0.15, curve: 0.0, color: '#151515', edge: '#ffffff', ew: 0.01 },
+      { op: 'band', u: 0.93, w: 0.035, curve: 0.0, color: '#f5d33a' },
+      { op: 'band', u: 0.02, w: 0.05, curve: 0.0, color: '#151515' },
+      { op: 'poly', color: '#f08a2a', pts: [[0.12, -1.1], [0.19, -1.1], [0.19, -0.2], [0.12, -0.2]] },
     ],
     fins: [
-      { pos: 'top', u0: 0.25, u1: 0.86, pts: [[0, 0.04], [0.08, 0.4], [0.12, 0.7], [0.15, 0.95], [0.22, 0.25], [0.5, 0.1], [0.8, 0.06], [1, 0.02]], sweep: 0.9, fill: '#f7f4ea', paint: [{ t0: 0.78, t1: 1, color: '#151515' }, { t0: 0, t1: 0.06, color: '#151515' }] },
-      { pos: 'bottom', u0: 0.42, u1: 0.86, pts: [[0, 0.05], [0.2, 0.35], [0.5, 0.25], [1, 0.03]], sweep: 0.5, fill: '#f5d33a', paint: [{ t0: 0, t1: 0.2, color: '#151515' }, { t0: 0.75, t1: 1, color: '#151515' }] },
+      // The dorsal rises off the back and sweeps straight back into the white filament, which trails
+      // well past the tail; its rear edge runs down the back of the body to the peduncle. Points are
+      // [t, h, back] off the photo outline.
+      { pos: 'top', u0: 0.566, u1: 0.955, pts: [[0, 0.009, 0], [0.02, 0.035, 0.095], [0.04, 0.056, 0.2], [0.06, 0.072, 0.305], [0.08, 0.083, 0.445], [0.1, 0.082, 0.658], [0.12, 0.077, 0.834], [0.14, 0.078, 0.646], [0.16, 0.079, 0.422], [0.18, 0.068, 0.233], [0.2, 0.05, 0.167], [0.3, 0.023, 0.124], [0.5, 0.004, 0.085], [0.75, 0.003, 0.043], [1, 0.002, 0.005]],
+        fill: '#f7f4ea', paint: [{ t0: 0.155, t1: 0.21, color: '#151515' }, { t0: 0.21, t1: 1, color: '#f5d33a' }] },
+      // The anal: the same sweep below, black with a yellow rear edge.
+      { pos: 'bottom', u0: 0.598, u1: 0.955, pts: [[0, 0.002, 0], [0.1, 0.01, 0.074], [0.2, 0.025, 0.141], [0.3, 0.008, 0.133], [0.5, 0.004, 0.091], [0.75, 0.003, 0.049], [1, 0.002, 0.008]],
+        fill: '#f5d33a', paint: [{ t0: 0, t1: 0.3, color: '#151515' }] },
     ],
-    caudal: { type: 'truncate', spread: 0.2, fill: '#151515', edge: '#f7f4ea', edgeW: 0.0075 },
-    pectoral: { u: 0.36, v: 0.2, len: 0.12, w: 0.07, fill: '#f7f4ea', alpha: 0.6 },
+    caudal: { type: 'forked', spread: 0.105, tip: -0.44, fill: '#151515', edge: '#f7f4ea', edgeW: 0.0075 },
+    pectoral: { u: 0.5, v: 0.1, len: 0.12, w: 0.07, fill: '#f7f4ea', alpha: 0.6 },
     brain: { maxSpeed: 1.4, turn: 2.5, zone: [0.2, 0.85], school: 0.45, grazer: 0.6, territorial: 0.1, boldness: 0.4, curiosity: 0.5, activity: 0.7, tailHz: 2.6 },
   },
   {

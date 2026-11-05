@@ -224,7 +224,8 @@ async function bakeScenery(scenery, seed) {
 // over the static backdrop with plain alpha blending, turns it into that moment of the water:
 // per pixel the smallest alpha a and colour C with B(1 - a) + C a = F. Only pixels that change carry
 // alpha, so the frames crop and compress well. The waves never repeat, so the loop is a crossfade:
-// frame s shows (s/T) F(s) + (1 - s/T) F(s + T), which starts and ends on F(T).
+// frame s shows (s/T) F(s) + (1 - s/T) F(s + T), which starts and ends on F(T) (blended about the
+// loop's mean, so the contrast holds through the fade).
 // A second overlay set covers the foreground reef layer and is drawn over it.
 
 // Overlay that takes base B to target F (both RGBA bytes); mask (0-255 per pixel) limits it. Grows box.
@@ -259,7 +260,20 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
   const setTime = (t, waves = t) => { waterUniforms.uTime.value = t; updateWaves(waves); caustics.update(); };
   const back = () => { renderer.setClearColor(0x000000, 1); waterRenderer.render(scene, camera, sun); return read(); };
   const front = () => { showFgOnly(true); renderer.setClearColor(0x000000, 0); renderer.render(scene, camera); const d = read(); showFgOnly(false); return d; };
-  const mix = (a, b, w) => { const o = new Uint8ClampedArray(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] * w + b[i] * (1 - w); return o; };
+  // A plain crossfade of two unrelated caustic patterns halves their contrast mid-loop (the light
+  // pulses dim and bright once a loop): blend the offsets from each pixel's mean over the loop instead,
+  // scaled back up to the contrast of one pattern.
+  const mix = (a, b, w, M) => {
+    const o = new Uint8ClampedArray(a.length), k = 1 / Math.hypot(w, 1 - w);
+    for (let i = 0; i < a.length; i++) o[i] = M[i] + ((a[i] - M[i]) * w + (b[i] - M[i]) * (1 - w)) * k;
+    return o;
+  };
+  const meanOf = (list) => {
+    const M = new Float32Array(list[0].length);
+    for (const d of list) for (let i = 0; i < M.length; i++) M[i] += d[i];
+    for (let i = 0; i < M.length; i++) M[i] /= list.length;
+    return M;
+  };
 
   // Bases: the backdrop and foreground exactly as baked above, at loop resolution.
   setTime(0, CAUSTIC_T);
@@ -267,18 +281,22 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
   const fgA = new Uint8ClampedArray(W * H), backMask = new Uint8ClampedArray(W * H);
   for (let p = 0; p < W * H; p++) { fgA[p] = G[p * 4 + 3]; backMask[p] = 255 - fgA[p]; }
 
-  const boxes = [{ x0: W, y0: H, x1: 0, y1: 0 }, { x0: W, y0: H, x1: 0, y1: 0 }], frames = [];
+  const boxes = [{ x0: W, y0: H, x1: 0, y1: 0 }, { x0: W, y0: H, x1: 0, y1: 0 }], frames = [], shots = [];
   for (let i = 0; i < WATER_FRAMES; i++) {
-    const s = (i / WATER_FRAMES) * WATER_LOOP, w = i / WATER_FRAMES;
-    const t0 = CAUSTIC_T + s, t1 = t0 + WATER_LOOP;
+    const t0 = CAUSTIC_T + (i / WATER_FRAMES) * WATER_LOOP, t1 = t0 + WATER_LOOP;
     setTime(t0); const b0 = back(), f0 = front();
     setTime(t1); const b1 = back(), f1 = front();
-    frames.push([
-      encodeOverlay(mix(b0, b1, w), B, backMask, boxes[0], W),
-      encodeOverlay(mix(f0, f1, w), G, fgA, boxes[1], W),
-    ]);
+    shots.push({ b0, f0, b1, f1 });
     log(`water ${key}: frame ${i + 1}/${WATER_FRAMES}`);
   }
+  const MB = meanOf(shots.flatMap((s) => [s.b0, s.b1])), MF = meanOf(shots.flatMap((s) => [s.f0, s.f1]));
+  shots.forEach(({ b0, f0, b1, f1 }, i) => {
+    const w = i / WATER_FRAMES;
+    frames.push([
+      encodeOverlay(mix(b0, b1, w, MB), B, backMask, boxes[0], W),
+      encodeOverlay(mix(f0, f1, w, MF), G, fgA, boxes[1], W),
+    ]);
+  });
   setTime(0, CAUSTIC_T);
 
   // Crop every frame of a layer to the area that ever changes, and save.

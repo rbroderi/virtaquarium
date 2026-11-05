@@ -429,15 +429,17 @@ export function finOutline(sp, prof, fin) {
     outer.push([prof.x(fin.u1) - 0.01, prof.top(fin.u1) + 0.005]);
     return { base, outer, sign };
   }
-  for (const [t, h] of fin.pts) {
+  // [t, h, back]: back (optional) is how far behind its base the point lies, in place of sweep * h (a
+  // filament running back past the tail).
+  for (const [t, h, back] of fin.pts) {
     const u = lerp(fin.u0, fin.u1, t);
-    outer.push([prof.x(u) - (fin.sweep || 0) * h, prof.centre(u) + sign * (prof.half(u) + h)]);
+    outer.push([prof.x(u) - (back ?? (fin.sweep || 0) * h), prof.centre(u) + sign * (prof.half(u) + h)]);
   }
   return { base, outer, sign };
 }
 
 export function caudalOutline(sp, prof) {
-  const c = sp.caudal, xp = prof.xPed + 0.02, hp = prof.half(1) * 0.9, tip = -0.5, L = xp - tip, s = c.spread;
+  const c = sp.caudal, xp = prof.xPed + 0.02, hp = prof.half(1) * 0.9, tip = c.tip ?? -0.5, L = xp - tip, s = c.spread;
   switch (c.type) {
     case 'forked': return [[xp, hp], [tip + L * 0.05, s], [tip, s * 1.05], [xp - L * 0.55, 0], [tip, -s * 1.05], [tip + L * 0.05, -s], [xp, -hp]];
     case 'lunate': return [[xp, hp], [xp - L * 0.6, s * 0.7], [tip, s * 1.1], [xp - L * 0.6, s * 0.25], [xp - L * 0.62, 0], [xp - L * 0.6, -s * 0.25], [tip, -s * 1.1], [xp - L * 0.6, -s * 0.7], [xp, -hp]];
@@ -488,13 +490,13 @@ function finFill(g, fill, x0, x1) {
 
 function paintFins(sp, prof) {
   // Bounds of everything drawn on the sheet.
-  let ymax = prof.H * 1.25;
+  let ymax = prof.H * 1.25, xmin = -0.52;
   const fins = sp.fins.map((f) => finOutline(sp, prof, f));
-  for (const f of fins) for (const p of f.outer) ymax = Math.max(ymax, Math.abs(p[1]) + 0.03);
+  for (const f of fins) for (const p of f.outer) { ymax = Math.max(ymax, Math.abs(p[1]) + 0.03); xmin = Math.min(xmin, p[0] - 0.02); }
   const tail = caudalOutline(sp, prof);
   for (const p of tail) ymax = Math.max(ymax, Math.abs(p[1]) + 0.03);
   if (sp.pelvic) for (const p of pelvicOutline(sp, prof).outline) ymax = Math.max(ymax, Math.abs(p[1]) + 0.03);
-  const xmin = -0.52, xmax = 0.52, W = 2048, H = Math.ceil((W * (2 * ymax)) / (xmax - xmin));
+  const xmax = 0.52, W = 2048, H = Math.ceil((W * (2 * ymax)) / (xmax - xmin));
   const c = makeCanvas(W, H), g = c.getContext('2d');
   const k = W / (xmax - xmin);
   g.setTransform(k, 0, 0, -k, -xmin * k, ymax * k);
@@ -1092,6 +1094,7 @@ vec2 spineAt(float x) {
 // Anguilliform: ~0.6 BL wavelength (1.5-2 waves on the body), amplitude ~0.03 BL at the head rising
 // to ~0.1 BL at the tail, no separate caudal blade.
 float spineH(float x) {
+  x = max(x, -0.55);   // (a fin filament trailing past the tail follows the tail, not a wave grown on past it)
   float s = 0.5 - x;
   float env = mix(0.02 - 0.06 * s + 0.2 * s * s, 0.03 + 0.07 * s, uAnguil);
   float lag = (0.8 + uCup) * (1.0 - uAnguil) * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));

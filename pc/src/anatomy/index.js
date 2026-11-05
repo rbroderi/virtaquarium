@@ -7,14 +7,16 @@ import clowntrigger from './clowntrigger.js';
 import copperband from './copperband.js';
 import bluetang from './bluetang.js';
 import yellowtang from './yellowtang.js';
-import moorishidol from './moorishidol.js';
 import royalgramma from './royalgramma.js';
 import emperorangel from './emperorangel.js';
 import longnose from './longnose.js';
 import chromis from './chromis.js';
 import coralbeauty from './coralbeauty.js';
 
-const FITTED = { clownfish, lionfish, clowntrigger, copperband, bluetang, yellowtang, moorishidol, royalgramma, emperorangel, longnose, chromis, coralbeauty };
+// (Not the Moorish idol: its traces cut through the tail and the fit can't raise a fin past 0.35 or
+// reach past the tail, so it flattened the dorsal and its filament and thinned the snout to a needle.
+// Its shape is hand-fitted to the photos in species.js.)
+const FITTED = { clownfish, lionfish, clowntrigger, copperband, bluetang, yellowtang, royalgramma, emperorangel, longnose, chromis, coralbeauty };
 
 // Linear-light gain on a species' saturated colours (pattern, fins), from the lab's white-referenced
 // patch comparison; white and black pattern are left alone.
