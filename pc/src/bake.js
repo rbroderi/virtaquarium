@@ -1,9 +1,9 @@
 // Roku asset baker. Renders what the Roku channel can't (it has no WebGL) into plain images:
-//   roku/assets/fish/<id>.png         sprite sheet, row 0 = swim cycle facing right, row 1 = turn right -> left
+//   roku/assets/fish/<id>-a<n>.png    one page per viewing angle n: the swim cycle, facing right, cropped
 //   roku/assets/scenery/<key>.jpg     1920x1080 backdrop: water + reef, no fish
 //   roku/assets/scenery/<key>-fg.png  reef pieces near the glass, drawn over fish that are behind them
 //   roku/assets/manifest.json         frame sizes, anchors, per-species behaviour, reef floor line
-// Open /pc/bake.html (optionally ?species=a,b&seeds=7,42&frames=12), or run `node tools/bake.mjs`.
+// Open /pc/bake.html (optionally ?species=a,b&seeds=7,42&frames=8&yaws=9), or run `node tools/bake.mjs`.
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildFishModel, loadCustomModels, posePectoral } from './fishModel.js';
@@ -15,15 +15,20 @@ import {
 import { SCENERY } from './tank.js';
 
 const params = new URLSearchParams(location.search);
-const FRAMES = Number(params.get('frames') || 12);
+const FRAMES = Number(params.get('frames') || 8);   // swim-cycle frames per viewing angle
+// Viewing angles (yaw towards the viewer), evenly from tail-on (-90) through side-on (0) to head-on (+90).
+// Fish are bilaterally symmetric, so the Roku mirrors these for a fish facing left: 9 angles cover the
+// full circle in 22.5 degree steps. 9 x 8 cells for all species is ~60 MB of decoded texture.
+const YAWS = Number(params.get('yaws') || 9);
+const MAX_SHEET = 2048;             // Roku's recommended largest bitmap side; cells wrap to stay inside it
 const SS = 2;                       // supersampling factor
 const SCREEN = { w: 1920, h: 1080 };
 const CAUSTIC_T = 3.0;   // wave time (s) the backdrop's caustics are frozen at
-const WATER_FRAMES = Number(params.get('waterFrames') || 16);   // moving-water loop: frames ...
+const WATER_FRAMES = Number(params.get('waterFrames') || 32);   // moving-water loop: frames ...
 const WATER_LOOP = Number(params.get('waterLoop') || 8);        // ... spread over this many seconds
 const WATER_SCALE = 2;              // loop frames are baked at 1/2 resolution and scaled up on the Roku
 const PX_PER_UNIT = 144;            // sprite resolution: ~1.25x on-screen size at 1080p, headroom for near fish
-const YAW = 0.35;                   // swim-row angle towards the viewer (radians)
+const CRUISE_YAW = 0.35;            // the player shows cruising fish turned this far towards the viewer (rad)
 const OUT = 'roku/assets/';
 const only = params.get('species')?.split(',');
 const species = SPECIES.filter((sp) => !only || only.includes(sp.id));
@@ -36,6 +41,26 @@ async function save(path, blobOrText) {
   if (!res.ok) throw new Error(`save ${path}: HTTP ${res.status}`);
 }
 const toBlob = (canvas, type, q) => new Promise((r) => canvas.toBlob(r, type, q));
+
+// Bounding box [x, y, w, h] of the non-transparent pixels of `img` (ImageData); [0, 0, 1, 1] if empty.
+function alphaBox(img) {
+  let x0 = img.width, y0 = img.height, x1 = 0, y1 = 0;
+  const d = img.data;
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      if (d[(y * img.width + x) * 4 + 3] < 2) continue;
+      if (x < x0) x0 = x; if (x >= x1) x1 = x + 1;
+      if (y < y0) y0 = y; if (y >= y1) y1 = y + 1;
+    }
+  }
+  return x1 > x0 ? [x0, y0, x1 - x0, y1 - y0] : [0, 0, 1, 1];
+}
+function cropCanvas(src, [x, y, w, h]) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, w, h);
+  return c;
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -54,10 +79,10 @@ function fishScene() {
 }
 
 // Pose the model for frame i of n. Every phase advances a whole number of cycles so the loop is seamless.
-function pose(model, i, n) {
+function pose(model, i, n, amp = 0.55) {
   const a = (i / n) * Math.PI * 2, u = model.userData.uniforms;
   u.uPhase.value = a;
-  u.uAmp.value = 0.55;
+  u.uAmp.value = amp;
   u.uBend.value = 0;
   u.uFinPhase.value = a * 2;
   u.uFlutter.value = 0.4;
@@ -87,29 +112,57 @@ async function bakeFish(sp, scene) {
   renderer.setSize(cw * SS, ch * SS, false);
   renderer.setClearColor(0x000000, 0);
 
-  const sheet = document.createElement('canvas');
-  sheet.width = cw * FRAMES; sheet.height = ch * 2;
-  const g = sheet.getContext('2d');
-  g.imageSmoothingQuality = 'high';
-  for (let row = 0; row < 2; row++) {
+  // One page (bitmap) per viewing angle, holding that angle's swim cycle (FRAMES cells), so the Roku
+  // can load and unload angles independently under its texture budget. Each angle's cells are cropped
+  // to what that angle ever covers (a head-on fish is a third the width of a side-on one); `x, y` place
+  // the crop within the full frameW x frameH cell, whose centre is the fish's origin. Cells wrap to stay
+  // within MAX_SHEET.
+  // An eel swims at full amplitude whatever its speed, and its wave is sideways, so it is shown further
+  // round towards the camera or the S of the body barely shows from the side.
+  const eel = sp.swim?.mode === 'anguilliform', amp = eel ? 0.9 : 0.55;
+  const yaws = Array.from({ length: YAWS }, (_, r) => -90 + (180 * r) / (YAWS - 1));
+  const shot = document.createElement('canvas');
+  shot.width = cw; shot.height = ch;
+  const sg = shot.getContext('2d', { willReadFrequently: true });
+  sg.imageSmoothingQuality = 'high';
+  const angles = [];
+  for (let r = 0; r < YAWS; r++) {
+    const cells = [];
+    let x0 = cw, y0 = ch, x1 = 0, y1 = 0;
     for (let i = 0; i < FRAMES; i++) {
-      pose(model, i, FRAMES);
-      // Swim row is angled slightly towards the camera so the side-to-side tail beat reads; the turn row
-      // swings through the viewer to the mirror of that pose, which the Roku gets by flipping the swim row.
-      model.rotation.y = row === 0 ? -YAW : -(YAW + (i / (FRAMES - 1)) * (Math.PI - 2 * YAW));
+      pose(model, i, FRAMES, amp);
+      model.rotation.y = -yaws[r] * Math.PI / 180;   // +90: head-on, -90: tail-on
       renderer.render(scene, cam);
-      g.drawImage(renderer.domElement, i * cw, row * ch, cw, ch);
+      sg.clearRect(0, 0, cw, ch);
+      sg.drawImage(renderer.domElement, 0, 0, cw, ch);
+      const img = sg.getImageData(0, 0, cw, ch), [bx, by, bw, bh] = alphaBox(img);
+      x0 = Math.min(x0, bx); y0 = Math.min(y0, by); x1 = Math.max(x1, bx + bw); y1 = Math.max(y1, by + bh);
+      cells.push(img);
     }
+    // One clear pixel of margin so bilinear scaling on the Roku doesn't pick up a neighbour.
+    x0 = Math.max(0, x0 - 1); y0 = Math.max(0, y0 - 1); x1 = Math.min(cw, x1 + 1); y1 = Math.min(ch, y1 + 1);
+    const w = x1 - x0, h = y1 - y0, cols = Math.max(1, Math.min(FRAMES, Math.floor(MAX_SHEET / w)));
+    const sheet = document.createElement('canvas');
+    sheet.width = w * cols; sheet.height = h * Math.ceil(FRAMES / cols);
+    const g = sheet.getContext('2d');
+    cells.forEach((img, i) => g.putImageData(img, (i % cols) * w - x0, Math.floor(i / cols) * h - y0, x0, y0, w, h));
+    const path = `fish/${sp.id}-a${r}.png`;
+    await save(path, await toBlob(sheet, 'image/png'));
+    document.getElementById('sheets').appendChild(sheet);
+    angles.push({ yaw: yaws[r], sheet: path, x: x0, y: y0, w, h, cols, mb: +((sheet.width * sheet.height * 4) / 1e6).toFixed(2) });
   }
   scene.remove(model);
-  await save(`fish/${sp.id}.png`, await toBlob(sheet, 'image/png'));
-  document.getElementById('sheets').appendChild(sheet);
 
   const { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host, prey, shy } = sp.brain;
   return {
     name: sp.name, sci: sp.sci, fact: sp.fact, count: sp.count,
-    sheet: `fish/${sp.id}.png`, frameW: cw, frameH: ch, frames: FRAMES, rows: { swim: 0, turn: 1 },
+    frameW: cw, frameH: ch, frames: FRAMES, angles,
+    // Decoded RGBA (4 bytes a pixel), what the Roku holds in texture memory with every angle loaded.
+    textureMB: +angles.reduce((s, a) => s + a.mb, 0).toFixed(1),
+    cruiseYaw: +((eel ? 0.6 : CRUISE_YAW) * 180 / Math.PI).toFixed(1),
+    turnRate: +(sp.swim.hoverTurn * 180 / Math.PI).toFixed(0),   // deg/s, pectoral-sculling turn at low speed
     lengthPx: Math.round(size.x * PX_PER_UNIT),
+    ...(eel && { tailHz: sp.brain.tailHz }),   // eels beat far slower than the player's default rate
     brain: { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host: !!host, prey: !!prey, shy: shy || 0 },
   };
 }
@@ -185,7 +238,10 @@ async function bakeScenery(scenery, seed) {
   renderer.render(scene, camera);
   g.clearRect(0, 0, SCREEN.w, SCREEN.h);
   g.drawImage(renderer.domElement, 0, 0);
-  await save(`scenery/${key}-fg.png`, await toBlob(out, 'image/png'));
+  // Crop to the pixels that hold reef: texture memory goes by bitmap size (4 bytes a pixel), so a
+  // mostly empty full-screen layer costs 8 MB on the Roku for ~2 MB of reef.
+  const fgRect = alphaBox(g.getImageData(0, 0, SCREEN.w, SCREEN.h));
+  await save(`scenery/${key}-fg.png`, await toBlob(cropCanvas(out, fgRect), 'image/png'));
   showFgOnly(false);
   const water = await bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly);
   renderer.shadowMap.enabled = false;
@@ -211,7 +267,7 @@ async function bakeScenery(scenery, seed) {
   return {
     key,
     entry: {
-      scenery, seed, backdrop: `scenery/${key}.jpg`, foreground: `scenery/${key}-fg.png`, water,
+      scenery, seed, backdrop: `scenery/${key}.jpg`, foreground: `scenery/${key}-fg.png`, foregroundRect: fgRect, water,
       floor, anemone: project(an.x, an.y, an.z), swimBox: [tl[0], tl[1], br[0], br[1]],
     },
   };
@@ -262,11 +318,27 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
   const front = () => { showFgOnly(true); renderer.setClearColor(0x000000, 0); renderer.render(scene, camera); const d = read(); showFgOnly(false); return d; };
   // A plain crossfade of two unrelated caustic patterns halves their contrast mid-loop (the light
   // pulses dim and bright once a loop): blend the offsets from each pixel's mean over the loop instead,
-  // scaled back up to the contrast of one pattern.
-  const mix = (a, b, w, M) => {
-    const o = new Uint8ClampedArray(a.length), k = 1 / Math.hypot(w, 1 - w);
-    for (let i = 0; i < a.length; i++) o[i] = M[i] + ((a[i] - M[i]) * w + (b[i] - M[i]) * (1 - w)) * k;
-    return o;
+  // scaled to the contrast of one pattern. The two patterns aren't quite unrelated, so the scale is
+  // measured per frame (rms offset from the mean, matched to the average of the single shots, `rms`).
+  const rmsOff = (d, M) => { let s = 0; for (let i = 0; i < d.length; i++) s += (d[i] - M[i]) ** 2; return Math.sqrt(s / d.length); };
+  const mix = (a, b, w, M, rms) => {
+    const o = new Float32Array(a.length);
+    for (let i = 0; i < a.length; i++) o[i] = (a[i] - M[i]) * w + (b[i] - M[i]) * (1 - w);
+    let s = 0;
+    for (let i = 0; i < o.length; i++) s += o[i] * o[i];
+    const k = rms / Math.max(1e-6, Math.sqrt(s / o.length)), out = new Uint8ClampedArray(a.length);
+    for (let i = 0; i < a.length; i++) out[i] = M[i] + o[i] * k;
+    return out;
+  };
+  // What the screen shows after drawing overlay O over base B (RGBA bytes; the result is opaque).
+  const composite = (B, O) => {
+    const out = new Uint8ClampedArray(B.length);
+    for (let i = 0; i < B.length; i += 4) {
+      const a = O[i + 3] / 255;
+      for (let c = 0; c < 3; c++) out[i + c] = B[i + c] * (1 - a) + O[i + c] * a;
+      out[i + 3] = 255;
+    }
+    return out;
   };
   const meanOf = (list) => {
     const M = new Float32Array(list[0].length);
@@ -290,13 +362,26 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
     log(`water ${key}: frame ${i + 1}/${WATER_FRAMES}`);
   }
   const MB = meanOf(shots.flatMap((s) => [s.b0, s.b1])), MF = meanOf(shots.flatMap((s) => [s.f0, s.f1]));
-  shots.forEach(({ b0, f0, b1, f1 }, i) => {
+  const avg = (list, M) => list.reduce((s, d) => s + rmsOff(d, M), 0) / list.length;
+  const rmsB = avg(shots.flatMap((s) => [s.b0, s.b1]), MB), rmsF = avg(shots.flatMap((s) => [s.f0, s.f1]), MF);
+  const targets = shots.map(({ b0, f0, b1, f1 }, i) => {
     const w = i / WATER_FRAMES;
-    frames.push([
-      encodeOverlay(mix(b0, b1, w, MB), B, backMask, boxes[0], W),
-      encodeOverlay(mix(f0, f1, w, MF), G, fgA, boxes[1], W),
-    ]);
+    return [mix(b0, b1, w, MB, rmsB), mix(f0, f1, w, MF, rmsF)];
   });
+  shots.length = 0;   // ~8 MB a frame; the overlays below need as much again
+  // Each step has two overlays: the frame itself (over the static base), and a step overlay that takes
+  // what is then on screen to the next frame. The Roku draws the frame, then the step at opacity t;
+  // because the step was encoded against exactly that screen, the result is the linear blend
+  // (1 - t) frame + t next for every t. Fading one partly transparent frame over another instead shows
+  // both caustic networks at once and brightens through each step (a pulse at the loop's frame rate).
+  const bases = [[B, backMask], [G, fgA]];
+  for (let i = 0; i < WATER_FRAMES; i++) {
+    frames.push([0, 1].map((l) => {
+      const [base, mask] = bases[l], O = encodeOverlay(targets[i][l], base, mask, boxes[l], W);
+      const D = encodeOverlay(targets[(i + 1) % WATER_FRAMES][l], composite(base, O), mask, boxes[l], W);
+      return [O, D];
+    }));
+  }
   setTime(0, CAUSTIC_T);
 
   // Crop every frame of a layer to the area that ever changes, and save.
@@ -305,22 +390,24 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
     if (b.x1 <= b.x0) return null;
     const cw = b.x1 - b.x0, ch = b.y1 - b.y0, c = document.createElement('canvas');
     c.width = cw; c.height = ch;
-    return { suffix, b, c, files: [], rect: [b.x0, b.y0, cw, ch].map((v) => v * WATER_SCALE) };
+    return { suffix, b, c, files: [], steps: [], rect: [b.x0, b.y0, cw, ch].map((v) => v * WATER_SCALE) };
   });
   for (let i = 0; i < frames.length; i++) {
     for (let l = 0; l < 2; l++) {
       const L = layers[l];
       if (!L) continue;
-      const full = new ImageData(frames[i][l], W, H), cg = L.c.getContext('2d');
-      cg.clearRect(0, 0, L.c.width, L.c.height);
-      cg.putImageData(full, -L.b.x0, -L.b.y0, L.b.x0, L.b.y0, L.c.width, L.c.height);
-      const file = `scenery/${key}-water${L.suffix}-${String(i).padStart(2, '0')}.png`;
-      await save(file, await toBlob(L.c, 'image/png'));
-      L.files.push(file);
+      for (const [d, kind, list] of [[0, '', L.files], [1, 'step-', L.steps]]) {
+        const full = new ImageData(frames[i][l][d], W, H), cg = L.c.getContext('2d');
+        cg.clearRect(0, 0, L.c.width, L.c.height);
+        cg.putImageData(full, -L.b.x0, -L.b.y0, L.b.x0, L.b.y0, L.c.width, L.c.height);
+        const file = `scenery/${key}-water${L.suffix}-${kind}${String(i).padStart(2, '0')}.png`;
+        await save(file, await toBlob(L.c, 'image/png'));
+        list.push(file);
+      }
     }
   }
   renderer.setSize(SCREEN.w, SCREEN.h, false);
-  const layer = (L) => L && { rect: L.rect, frames: L.files };
+  const layer = (L) => L && { rect: L.rect, frames: L.files, steps: L.steps };
   return { fps: WATER_FRAMES / WATER_LOOP, scale: WATER_SCALE, back: layer(layers[0]), front: layer(layers[1]) };
 }
 
@@ -335,7 +422,7 @@ async function run() {
   const fs = fishScene();
   for (const sp of species) {
     manifest.species[sp.id] = await bakeFish(sp, fs);
-    log(`fish ${sp.id}: ${manifest.species[sp.id].frameW}x${manifest.species[sp.id].frameH} x ${FRAMES * 2}`);
+    log(`fish ${sp.id}: ${manifest.species[sp.id].frameW}x${manifest.species[sp.id].frameH} x ${YAWS} angles x ${FRAMES}, ${manifest.species[sp.id].textureMB} MB`);
   }
   for (const scenery of SCENERY) {
     for (const seed of seeds) {

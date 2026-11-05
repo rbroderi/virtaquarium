@@ -1,13 +1,24 @@
 // Roku preview: plays the baked assets in roku/assets/ the way the Roku channel will, with no WebGL.
-// Only what SceneGraph can do: a 1920x1080 backdrop poster, sprite-sheet fish (flipped for facing left),
-// and the foreground reef poster over fish that are behind it, driven by a simple 2D brain.
-//   /pc/roku.html?scene=reef-7&fps=30&seed=1
+// Only what SceneGraph can do: a 1920x1080 backdrop poster, sprite-sheet fish and the foreground reef
+// poster over fish that are behind it, driven by a simple brain. Each fish has a heading in the plane of
+// x and depth, turned at a limited rate, so it swings towards or away from the viewer as it turns and
+// its size changes as it swims nearer. Each viewing angle (tail-on, side-on, head-on) is its own page
+// holding the swim cycle; a fish facing left is the mirror image, and the player crossfades the two
+// nearest angles (two posters on the Roku).
+// Texture memory is budgeted as on the Roku (see Textures): pages are loaded ahead of need and freed
+// when no poster shows them, so the total stays under ?budget= MB however many angles were baked.
+//   /pc/roku.html?scene=reef-7&fps=30&seed=1&budget=40&latency=80
 // Keys: H hud, W moving water on/off, Space pause.
 const params = new URLSearchParams(location.search);
 const ASSETS = '/roku/assets/';
 const FPS = Number(params.get('fps') || 30);
-const TURN_TIME = 0.45;            // seconds to play the turn row
+// ?timer=1 drives the loop from a timer instead of animation frames (headless or hidden-window checks).
+const nextFrame = params.has('timer') ? (f) => setTimeout(() => f(performance.now()), 1000 / FPS) : requestAnimationFrame;
 const NEAR = 0.35;                 // depth above which a fish swims in front of the foreground reef
+// Roku texture memory is ~100 MB shared with the OS, whose own textures can take more than half of it
+// (jellyrock/jellyrock#74 measured 58 MB OS, 32 MB app), so the app keeps to its own budget.
+const BUDGET_MB = Number(params.get('budget') || 40);
+const LATENCY = Number(params.get('latency') ?? 80);   // ms to load and decode a bitmap, as on the device
 
 const canvas = document.getElementById('screen');
 const g = canvas.getContext('2d');
@@ -24,17 +35,81 @@ function mulberry32(a) {
 const rand = mulberry32(Number(params.get('seed') || 1));
 const range = (a, b) => a + (b - a) * rand();
 
-const loadImage = (src) => new Promise((resolve, reject) => {
-  const img = new Image();
-  img.onload = () => resolve(img);
-  img.onerror = () => reject(new Error(`missing ${src}`));
-  img.src = src;
-});
-
 function fail(msg) {
   const el = document.getElementById('error');
   el.style.display = 'grid';
   el.textContent = msg;
+}
+
+// Texture memory as the Roku keeps it. A bitmap is resident while any Poster's uri points at it,
+// visible or not, and freed when the last one is cleared, so the channel must clear the uri of every
+// poster it isn't showing (Roku's advice) rather than just hiding it. Bitmaps cost 4 bytes a pixel
+// whatever the file size. Each frame the player says what it wants, by priority:
+//   0 pinned    backdrop, foreground, one fallback angle per species
+//   1 shown     the angles and water frames being drawn now
+//   2 next      what a turn or the water loop reaches within a fraction of a second
+//   3 nearby    neighbouring angles, if there is room
+// Wants are granted in priority order while they fit the budget; anything not granted is freed (its
+// poster's uri cleared). A load takes LATENCY ms, so 'next' covers the gap; a shown page that isn't
+// ready is drawn with the nearest page that is (a miss). Every load is a PNG decode on the device, so
+// 'nearby' pages don't churn: one already held outranks a new one, and a new one starts only with 10%
+// of the budget spare, one per frame.
+class Textures {
+  constructor(budgetMB, latency) {
+    this.budget = budgetMB * 1e6;
+    this.latency = latency;
+    this.map = new Map();   // url -> { bytes, img, ready }
+    this.wants = new Map(); // url -> { bytes, prio } for this frame
+    this.used = 0;
+    this.need = 0;   // of `used`, what is shown or about to be (priorities 0-2)
+    this.peak = 0;
+    this.loads = 0;
+    this.misses = 0;
+  }
+  want(url, bytes, prio) {
+    const w = this.wants.get(url);
+    if (!w) this.wants.set(url, { bytes, prio });
+    else if (prio < w.prio) w.prio = prio;
+  }
+  get(url) {
+    const e = this.map.get(url);
+    return e && e.ready ? e.img : null;
+  }
+  // Grant this frame's wants, free the rest, start loads.
+  update() {
+    // Held 'nearby' pages rank just above new ones.
+    const rank = ([url, w]) => (w.prio === 3 && this.map.has(url) ? 2.5 : w.prio);
+    const order = [...this.wants].sort((a, b) => rank(a) - rank(b));
+    const keep = new Set();
+    let total = 0, spec = 0;
+    for (const [url, w] of order) {
+      if (w.prio > 0 && total + w.bytes > this.budget) continue;
+      if (w.prio === 3 && !this.map.has(url) && (spec >= 1 || total + w.bytes > this.budget * 0.9)) continue;
+      if (w.prio === 3 && !this.map.has(url)) spec++;
+      keep.add(url);
+      total += w.bytes;
+    }
+    this.need = order.reduce((s, [url, w]) => s + (w.prio <= 2 && keep.has(url) ? w.bytes : 0), 0);
+    for (const [url, e] of this.map) {
+      if (keep.has(url)) continue;
+      e.img.onload = e.img.onerror = null;   // clearing src fires onerror in the browser
+      e.img.src = '';   // the Roku: poster.uri = ""
+      this.map.delete(url);
+      this.used -= e.bytes;
+    }
+    for (const url of keep) {
+      if (this.map.has(url)) continue;
+      const e = { bytes: this.wants.get(url).bytes, img: new Image(), ready: false };
+      e.img.onload = () => setTimeout(() => { e.ready = true; }, this.latency);
+      e.img.onerror = () => fail(`missing ${url}`);
+      e.img.src = ASSETS + url;
+      this.map.set(url, e);
+      this.used += e.bytes;
+      this.loads++;
+    }
+    this.peak = Math.max(this.peak, this.used);
+    this.wants.clear();
+  }
 }
 
 async function main() {
@@ -47,18 +122,23 @@ async function main() {
   canvas.width = manifest.screen.w;
   canvas.height = manifest.screen.h;
 
-  const [back, front] = await Promise.all([loadImage(ASSETS + scene.backdrop), loadImage(ASSETS + scene.foreground)]);
-  // Moving water: a loop of overlay frames for the backdrop and for the foreground reef.
+  const tex = new Textures(BUDGET_MB, LATENCY);
+  const { w: SW, h: SH } = manifest.screen;
+  const fgRect = scene.foregroundRect || [0, 0, SW, SH];
+  const backBytes = SW * SH * 4, frontBytes = fgRect[2] * fgRect[3] * 4;
+  // Moving water: a loop of overlay frames for the backdrop and for the foreground reef, streamed:
+  // only the frames being shown and the next one are held.
   const water = scene.water;
-  const loadLayer = async (L) => L && { rect: L.rect, frames: await Promise.all(L.frames.map((f) => loadImage(ASSETS + f))) };
-  // The loop is large, so the tank starts without it and the water starts moving once it has loaded.
-  let waterLayers = [null, null];
-  if (water) Promise.all([loadLayer(water.back), loadLayer(water.front)]).then((l) => { waterLayers = l; }, (e) => fail(e.message));
-  const species = await Promise.all(Object.entries(manifest.species).map(async ([id, sp]) => {
-    const img = await loadImage(ASSETS + sp.sheet);
-    // Cell size from the sheet itself, so a sheet re-baked on its own still lines up.
-    return { id, ...sp, img, fw: img.width / sp.frames, fh: img.height / 2 };
-  }));
+  const waterLayers = water ? [water.back, water.front].map((L) => L && {
+    ...L, bytes: Math.round(L.rect[2] / water.scale) * Math.round(L.rect[3] / water.scale) * 4, last: null,
+  }) : [null, null];
+  const species = Object.entries(manifest.species).map(([id, sp]) => {
+    if (!sp.angles) throw new Error(`${id}: sprite sheet has no per-angle pages; re-bake`);
+    const yaws = sp.angles.map((a) => a.yaw);
+    // Fallback angle, always held: the one cruising fish are mostly seen at.
+    const home = yaws.reduce((b, y, i) => (Math.abs(y - (sp.cruiseYaw || 0)) < Math.abs(yaws[b] - (sp.cruiseYaw || 0)) ? i : b), 0);
+    return { id, ...sp, fw: sp.frameW, fh: sp.frameH, home, stepYaw: 180 / (yaws.length - 1) };
+  });
 
   // Screen pixels per world unit on the mid-depth plane, from the same tank width the bake used.
   const aspect = manifest.screen.w / manifest.screen.h;
@@ -66,6 +146,8 @@ async function main() {
   const [bx0, by0, bx1, by1] = scene.swimBox;
   const pxPerUnit = (bx1 - bx0) / (tankW - 1.8);
   const baseScale = pxPerUnit / manifest.pxPerUnit;
+  const DEPTH_PX = 2.85 * pxPerUnit;   // depth runs -1..1 over the tank's 5.7 units front to back
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
   const floorAt = (x) => {
     const f = scene.floor, t = Math.min(Math.max(x / manifest.screen.w, 0), 1) * (f.length - 1);
@@ -78,9 +160,11 @@ async function main() {
     for (let n = 0; n < (sp.count || 1); n++) {
       const depth = range(-1, 1);
       fish.push({
-        sp, depth, scale: baseScale * (1 + 0.18 * depth),
-        x: range(bx0 + 100, bx1 - 100), y: range(by0 + 150, by1 - 150), vx: 0, vy: 0,
-        facing: rand() < 0.5 ? 1 : -1, turn: null, phase: rand(), tx: 0, ty: 0, timer: 0, mode: 'cruise',
+        sp, depth, tdepth: depth, scale: baseScale * (1 + 0.18 * depth),
+        x: range(bx0 + 100, bx1 - 100), y: range(by0 + 150, by1 - 150), vx: 0, vy: 0, vz: 0, speed: 0,
+        psi: rand() < 0.5 ? 0 : Math.PI, omega: 0, turnSign: 0, tilt: 0,   // heading: 0 right, +pi/2 at the viewer
+        u: 0, du: 0,   // shown angle (index into the angle pages) and its rate, for loading ahead
+        phase: rand(), tx: 0, ty: 0, timer: 0, mode: 'cruise',
       });
     }
   }
@@ -113,6 +197,9 @@ async function main() {
     const [top, bottom] = limits(f, x);
     f.tx = x;
     f.ty = top + (bottom - top) * zoneF;
+    // Sometimes also move nearer the glass or further back; host fish stay at the anemone's depth.
+    if (f.mode === 'host') f.tdepth = 0;
+    else if (rand() < 0.5) f.tdepth = range(-1, 1);
     f.timer = range(3, 10) / (0.4 + b.activity) * (f.mode === 'cruise' ? 1 : 1.8);
   }
 
@@ -136,73 +223,153 @@ async function main() {
     }
     wy = Math.max(-cruise * 0.45, Math.min(cruise * 0.45, wy));   // fish climb and dive gently
 
-    const k = Math.min(1, dt * (f.turn ? 4 : 1.4));
-    f.vx += (wx - f.vx) * k;
-    f.vy += (wy - f.vy) * k;
-    if (f.turn) f.vx *= 1 - Math.min(1, dt * 3);      // brake through the turn
+    const wz = Math.max(-cruise * 0.5, Math.min(cruise * 0.5, (f.tdepth - f.depth) * DEPTH_PX * 0.4));
 
-    // Start a turn when the wanted heading crosses over; the sheet's turn row carries the facing across.
-    if (!f.turn && Math.sign(wx) === -f.facing && Math.abs(wx) > cruise * 0.15) f.turn = { t: 0, to: -f.facing };
-    if (f.turn) {
-      f.turn.t += dt / TURN_TIME;
-      if (f.turn.t >= 1) { f.facing = f.turn.to; f.turn = null; }
-    }
+    // Heading turns at a limited rate (the species' pectoral-sculling rate), easing in and out. A U-turn
+    // picks a side once: towards the viewer from the back half of the tank, away from it near the glass.
+    const rate = (f.sp.turnRate || 90) * Math.PI / 180, want = Math.hypot(wx, wz);
+    let err = want > cruise * 0.1 ? wrap(Math.atan2(wz, wx) - f.psi) : 0;
+    if (Math.abs(err) > 2.6) {
+      if (!f.turnSign) f.turnSign = (Math.cos(f.psi) >= 0 ? 1 : -1) * (f.depth < 0.4 ? 1 : -1);
+      err = Math.abs(err) * f.turnSign;
+    } else if (Math.abs(err) < 2.0) f.turnSign = 0;
+    const wOmega = Math.max(-rate, Math.min(rate, err * 2.5));
+    f.omega += Math.max(-rate * 4 * dt, Math.min(rate * 4 * dt, wOmega - f.omega));
+    f.psi = wrap(f.psi + f.omega * dt);
+
+    // The fish swims along its heading, slowing in tight turns.
+    const k = Math.min(1, dt * 1.4);
+    f.speed += (want * Math.max(0, Math.cos(err)) * (1 - 0.5 * Math.min(1, Math.abs(f.omega) / rate)) - f.speed) * k;
+    f.vx = f.speed * Math.cos(f.psi);
+    f.vz = f.speed * Math.sin(f.psi);
+    f.vy += (wy - f.vy) * k;
 
     f.x = Math.min(Math.max(f.x + f.vx * dt, bx0), bx1);
+    f.depth = Math.min(Math.max(f.depth + (f.vz / DEPTH_PX) * dt, -1), 1);
+    f.scale = baseScale * (1 + 0.18 * f.depth);
     const [top, bottom] = limits(f, f.x);
     f.y = Math.min(Math.max(f.y + f.vy * dt, top), bottom);
     // Tail beat speeds up with swimming speed; idle fish still fin gently.
-    f.phase += dt * (0.7 + 2.2 * Math.min(1.5, Math.hypot(f.vx, f.vy) / cruise));
+    const effort = Math.min(1.5, Math.hypot(f.vx, f.vy) / cruise);
+    f.phase += dt * (f.sp.tailHz ? f.sp.tailHz * (0.35 + 0.65 * effort) : 0.7 + 2.2 * effort);
+  }
+
+  // Viewing angle for a fish's heading: shown a little turned towards the viewer while cruising
+  // (cruiseYaw), and folded into -90..90 with a mirror flip for facing left. u indexes the angle pages.
+  function view(f) {
+    const { sp } = f, A = sp.angles.length;
+    const psi = wrap(f.psi + (sp.cruiseYaw || 0) * Math.PI / 180 * Math.cos(f.psi));
+    const flip = Math.abs(psi) > Math.PI / 2, yaw = (flip ? Math.sign(psi) * Math.PI - psi : psi) * 180 / Math.PI;
+    const u = Math.min(Math.max((yaw - sp.angles[0].yaw) / sp.stepYaw, 0), A - 1);
+    return { flip, yaw, u };
+  }
+
+  // Ask for the pages each fish shows now, the ones its turn reaches next, and their neighbours.
+  function plan(dt) {
+    tex.want(scene.backdrop, backBytes, 0);
+    tex.want(scene.foreground, frontBytes, 0);
+    for (const sp of species) tex.want(sp.angles[sp.home].sheet, sp.angles[sp.home].mb * 1e6, 0);
+    for (const f of fish) {
+      const { sp } = f, A = sp.angles.length, { u } = view(f);
+      f.du = dt > 0 ? (u - f.u) / dt : 0;
+      f.u = u;
+      const page = (r, prio) => { if (r >= 0 && r < A) tex.want(sp.angles[r].sheet, sp.angles[r].mb * 1e6, prio); };
+      const r0 = Math.min(Math.floor(u), A - 2);
+      page(r0, 1); page(r0 + 1, 1);
+      // Where the shown angle will be in 0.4 s, and the pages on the way there.
+      const ahead = Math.min(Math.max(u + f.du * 0.4, 0), A - 1);
+      for (let r = Math.min(r0, Math.floor(ahead)); r <= Math.max(r0 + 1, Math.ceil(ahead)); r++) page(r, 2);
+      page(r0 - 1, 3); page(r0 + 2, 3);
+    }
+    for (const L of waterLayers) {
+      if (!L) continue;
+      const n = L.frames.length, k = Math.floor((waterT * water.fps) % n);
+      const k1 = (k + 1) % n;
+      tex.want(L.frames[k], L.bytes, 1); tex.want(L.frames[k1], L.bytes, 2);
+      if (L.steps) { tex.want(L.steps[k], L.bytes, 1); tex.want(L.steps[k1], L.bytes, 2); }
+    }
+    tex.update();
+  }
+
+  // The loaded page nearest angle r (a miss if it isn't r itself).
+  function pageFor(sp, r) {
+    for (let d = 0; d < sp.angles.length; d++) {
+      for (const q of d ? [r - d, r + d] : [r]) {
+        const img = q >= 0 && q < sp.angles.length && tex.get(sp.angles[q].sheet);
+        if (img) { if (d) tex.misses++; return { a: sp.angles[q], img }; }
+      }
+    }
+    return null;
   }
 
   function draw(f) {
-    const { sp } = f, n = sp.frames, w = sp.fw * f.scale, h = sp.fh * f.scale;
-    let row = sp.rows.swim, frame = Math.floor(f.phase * n) % n, flip = f.facing < 0;
-    if (f.turn) {
-      // The turn row goes right -> left; played backwards it goes left -> right.
-      const i = Math.min(n - 1, Math.floor(f.turn.t * n));
-      row = sp.rows.turn;
-      frame = f.turn.to < 0 ? i : n - 1 - i;
-      flip = false;
-    }
+    const { sp } = f, n = sp.frames, frame = Math.floor(f.phase * n) % n, A = sp.angles.length;
+    const { flip, yaw, u } = view(f);
+    const r0 = Math.min(Math.floor(u), A - 2), t = u - r0;
+    // Climbing and diving tilt the side view; a head-on or tail-on view can't show it.
+    const tiltW = Math.max(-0.35, Math.min(0.35, Math.atan2(f.vy, Math.abs(f.vx) + 1))) * Math.abs(Math.cos(yaw * Math.PI / 180));
+    f.tilt += (tiltW - f.tilt) * 0.1;
     const bob = f.mode === 'cruise' ? 0 : Math.sin(f.phase * 1.3) * 2;
     g.save();
     g.translate(f.x, f.y + bob);
     if (flip) g.scale(-1, 1);
-    g.drawImage(sp.img, frame * sp.fw, row * sp.fh, sp.fw, sp.fh, -w / 2, -h / 2, w, h);
+    g.rotate(f.tilt);
+    // A cell is the angle page's crop of the full frameW x frameH cell, whose centre is the fish.
+    const s = f.scale, drawn = new Set();
+    const cell = (r, alpha) => {
+      const p = pageFor(sp, r);
+      if (!p || drawn.has(p.a)) return;   // the fallback for both angles is the same page: draw it once
+      drawn.add(p.a);
+      const { a, img } = p;
+      g.globalAlpha = alpha;
+      g.drawImage(img, (frame % a.cols) * a.w, Math.floor(frame / a.cols) * a.h, a.w, a.h,
+        (a.x - sp.fw / 2) * s, (a.y - sp.fh / 2) * s, a.w * s, a.h * s);
+    };
+    // Nearer angle drawn solid, the other faded in over it.
+    if (t < 0.5) { cell(r0, 1); if (t > 0.02) cell(r0 + 1, t); }
+    else { cell(r0 + 1, 1); if (t < 0.98) cell(r0, 1 - t); }
+    g.globalAlpha = 1;
     g.restore();
   }
 
   let paused = false, showHud = true, showWater = true, last = performance.now(), acc = 0, frames = 0, fpsShown = 0, fpsT = 0;
+  let waterT = 0, loadsShown = 0, loads0 = 0, missesShown = 0, misses0 = 0;
   addEventListener('keydown', (e) => {
     if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
     if (e.code === 'KeyH') showHud = !showHud;
     if (e.code === 'KeyW') showWater = !showWater;
   });
 
-  // Two posters per layer: the current frame, and the next one fading in over it.
-  let waterT = 0;
+  // Two posters per layer: frame k, and its step overlay at opacity t, which the bake encoded against
+  // exactly what frame k leaves on screen, so together they are the linear blend towards frame k + 1.
+  // If a frame hasn't loaded yet the last one shown holds (the water pauses rather than vanishing).
   function drawWater(L) {
     if (!L || !showWater) return;
     const n = L.frames.length, pos = (waterT * water.fps) % n, k = Math.floor(pos);
-    const [x, y, w, h] = L.rect;
-    g.drawImage(L.frames[k], x, y, w, h);
-    g.globalAlpha = pos - k;
-    g.drawImage(L.frames[(k + 1) % n], x, y, w, h);
-    g.globalAlpha = 1;
+    const [x, y, w, h] = L.rect, cur = tex.get(L.frames[k]), step = L.steps && tex.get(L.steps[k]);
+    if (cur) L.last = cur; else tex.misses++;
+    if (!L.last) return;
+    g.drawImage(L.last, x, y, w, h);
+    if (cur && step) {
+      g.globalAlpha = pos - k;
+      g.drawImage(step, x, y, w, h);
+      g.globalAlpha = 1;
+    }
   }
 
   function render() {
-    g.drawImage(back, 0, 0);
+    fish.sort((a, b) => a.depth - b.depth);   // depth changes as fish swim nearer or further
+    const back = tex.get(scene.backdrop), front = tex.get(scene.foreground);
+    if (back) g.drawImage(back, 0, 0); else { g.fillStyle = '#0b3a55'; g.fillRect(0, 0, SW, SH); }
     drawWater(waterLayers[0]);
     for (const f of fish) if (f.depth <= NEAR) draw(f);
-    g.drawImage(front, 0, 0);
+    if (front) g.drawImage(front, fgRect[0], fgRect[1]);
     drawWater(waterLayers[1]);
     for (const f of fish) if (f.depth > NEAR) draw(f);
   }
 
   function loop(now) {
-    requestAnimationFrame(loop);
+    nextFrame(loop);
     acc += now - last;
     last = now;
     // Run at the Roku's frame rate, not the monitor's.
@@ -213,14 +380,22 @@ async function main() {
       for (const f of fish) step(f, dt);
       waterT += dt;
     }
+    plan(paused ? 0 : dt);
     render();
     frames++;
-    if (now - fpsT > 1000) { fpsShown = frames; frames = 0; fpsT = now; }
+    if (now - fpsT > 1000) {
+      fpsShown = frames; frames = 0; fpsT = now;
+      loadsShown = tex.loads - loads0; loads0 = tex.loads;
+      missesShown = tex.misses - misses0; misses0 = tex.misses;
+    }
+    const mb = (b) => (b / 1e6).toFixed(1);
     hud.textContent = showHud
-      ? `Roku preview  ${sceneKey}  ${fish.length} fish  ${fpsShown}/${FPS} fps${paused ? '  paused' : ''}${water ? '' : '  (no water loop: re-bake)'}\nH hud  W water  Space pause`
+      ? `Roku preview  ${sceneKey}  ${fish.length} fish  ${fpsShown}/${FPS} fps${paused ? '  paused' : ''}${water ? '' : '  (no water loop: re-bake)'}\n`
+        + `textures ${mb(tex.used)}/${BUDGET_MB} MB (peak ${mb(tex.peak)}, needed ${mb(tex.need)})  ${tex.map.size} bitmaps  ${loadsShown} loads/s  ${missesShown} misses/s\n`
+        + 'H hud  W water  Space pause'
       : '';
   }
-  requestAnimationFrame(loop);
+  nextFrame(loop);
 }
 
 main().catch((e) => fail(e.message));

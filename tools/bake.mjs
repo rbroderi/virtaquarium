@@ -1,6 +1,6 @@
 // Bake Roku assets headlessly: starts the static server, opens pc/bake.html in headless Chrome/Edge,
 // and exits when the page reports done. Output lands in roku/assets/.
-//   node tools/bake.mjs [--species=a,b] [--seeds=7,42] [--frames=12]
+//   node tools/bake.mjs [--species=a,b] [--seeds=7,42] [--frames=8] [--yaws=9] [--waterFrames=32]
 // Set BROWSER=<path to chrome.exe or msedge.exe> if neither is found.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,11 +22,11 @@ if (!browser) { console.error('No Chrome/Edge found; set BROWSER=<path>'); proce
 
 const query = new URLSearchParams();
 for (const arg of process.argv.slice(2)) {
-  const m = arg.match(/^--(species|seeds|frames)=(.+)$/);
+  const m = arg.match(/^--(species|seeds|frames|yaws|waterFrames|waterLoop)=(.+)$/);
   if (m) query.set(m[1], m[2]);
 }
 
-const TIMEOUT_MS = 10 * 60 * 1000;
+const TIMEOUT_MS = 20 * 60 * 1000;
 let child;
 const server = await startServer(0, (ev) => {
   if (ev.type === 'saved') console.log('  wrote', ev.path);
