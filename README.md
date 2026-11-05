@@ -25,7 +25,7 @@ Open <http://localhost:8080/pc/> and press **F11** for full screen.
 
 **View**: the camera is pushed in towards the glass like Aquatic Life's: the screen shows a 1/1.6 window of the tank, near the bottom so the sand and reef stay in frame (`pc/src/view.js`). Fish stay below the top of the window. `?zoom=1` shows the whole tank. `?pan=1` pans the window slowly across the tank every 2 minutes; it is off by default because on the Roku it measured 53–66 MB of texture memory against a 50 MB target. The Roku bake uses the same framing.
 
-URL options: `?clock=1` (lights follow your local time), `?feed=4` (auto-feeder interval in minutes, `0` = off), `?drift=0` (no camera parallax), `?seed=7` (reef layout). `?scenery=jelly` opens the jelly tank: moon jellies only, in a backlit deep-blue kreisel with no reef, sand or surface (`jelly.js`; a tank file's `"scenery": "jelly"` does the same, and jellies are dropped from reef tanks). `?reeflight=0` skips the baked reef light: at load the static reef is ray cast on the GPU (`reefLight.js`, about a second) for soft sun shadows from a light of finite size, the share of the water's ambient light each point can see, and coloured light bounced off the reef (two bounces), per pixel from the camera's rest view and in a 3D grid that the fish use. Live, a screen-space AO pass adds contact shading for the fish, and only the fish cast real-time shadows (Roku bake notes: `docs/roku_bake.md`). `?rig=led` lights the tank with an aquarium LED bar (a softer key plus fills; the lab offers the same rig). `?photo=1` renders through a camera model (`photo.js`, `&fstop=2.8`): thin-lens depth of field with autofocus on the fish nearest the centre, lateral chromatic aberration, cos⁴ vignetting and shot-noise grain, all in linear light before tone mapping. The lab takes `?photo=1` too.
+URL options: `?clock=1` (lights follow your local time), `?feed=4` (auto-feeder interval in minutes, `0` = off), `?drift=0` (no camera parallax), `?seed=7` (reef layout). `?scenery=jelly` opens the jelly tank: moon jellies only, in a backlit deep-blue kreisel with no reef, sand or surface (`jelly.js`; a tank file's `"scenery": "jelly"` does the same, and jellies are dropped from reef tanks). `?reeflight=0` skips the baked reef light: at load the static reef is ray cast on the GPU (`reefLight.js`, about a second) for soft sun shadows from a light of finite size, the share of the water's ambient light each point can see, and coloured light bounced off the reef (two bounces), per pixel from the camera's rest view and in a 3D grid that the fish use. Live, a screen-space AO pass adds contact shading for the fish, and only the fish cast real-time shadows (Roku bake notes: `docs/roku_bake.md`). `?rig=led` lights the tank with an aquarium LED bar (a softer key plus fills; the lab offers the same rig). By default the tank renders through a camera model (`photo.js`, f/5.6, `&fstop=2.8` for shallower, `?photo=0` to turn it off): thin-lens depth of field with autofocus on the fish nearest the centre, lateral chromatic aberration, cos⁴ vignetting and shot-noise grain, all in linear light before tone mapping. Fish get motion blur for a 1/100 s shutter (`water.js`, from a velocity buffer of the fish; `?blur=0` to turn it off). Tone mapping is Khronos PBR Neutral, which keeps the fish's hues where ACES greys saturated oranges and yellows (`?tone=aces` to compare; `rig.js`). Lighting (`rig.js` `LIGHTS`, shared with the bake) is one strong overhead sun with low ambient fill, so undersides and overhangs read. The lab takes `?photo=1` too.
 
 ## How it works
 
@@ -33,10 +33,19 @@ URL options: `?clock=1` (lights follow your local time), `?feed=4` (auto-feeder 
 Each fish is an agent with:
 - **Personality traits**: boldness, curiosity, activity, sociability, aggression and appetite. Drawn per individual around species norms, so no two fish of a species act the same.
 - **Drives** that change continuously: hunger, energy, fear, social need and boredom.
-- **Perception**: same-species neighbours, predators, rivals near its territory, and food within sight. Bold, hungry fish notice food from further away.
-- **Utility-based action selection**: cruise, school, forage, feed, rest, flee, patrol, inspect the glass, host in the anemone, or hover. Hysteresis keeps it committed to a choice, and chase fatigue lets rivals settle into a truce.
+- **Perception**: all-round vision except a blind cone behind. Its range grows with the target's size, shrinks in the dark (to a quarter at night) and is blocked by rock (sightlines tested against the reef). The lateral line senses anything within about a body length, in any light and through rock. A fish attends to its nearest 4 shoalmates, predators, rivals near its territory, and food it can see.
+- **Utility-based action selection**: cruise, school, forage, feed, rest, flee, patrol, inspect the glass, host in the anemone, hover, stalk (lionfish), clean (cleaner wrasse) or pose (a client at the cleaning station). Hysteresis keeps it committed to a choice, and chase fatigue lets rivals settle into a truce.
 
-The behaviour turns into a steering goal; the body then has to physically achieve it.
+The behaviour turns into a steering goal; the body then has to physically achieve it. The local rules below are what the tank's group behaviour comes from; nothing is scripted:
+- **Schools** follow pairwise rules on their nearest shoalmates: repulsion inside ~0.6 body lengths, attraction beyond ~1.5, matching the speed of fish ahead, weak alignment (Herbert-Read et al. 2011, Katz et al. 2011). There is no shared goal, so a shoal splits round a coral head and re-forms. Chromis hover over their staghorn and dive into it when scared.
+- **Fear spreads**: a fish that sees a neighbour dash off flees too, away from what scared it, so a startle runs through a shoal as a wave (Rosenthal et al. 2015). It weakens with each hop and dies out after three, and a fish ignores further waves for a few seconds. Prey keep a wary distance from a predator that is just there, and flee from one closing in.
+- **Shelter and night**: `reef.js` finds gaps under rock ledges and crevices with an open front; each fish knows one near home, and chromis use their coral. At dusk the reef empties as fish go in (Hobson 1972). Tangs rest wedged on their side and the royal gramma hangs upside down under its ledge. Night colours come on over minutes: yellow and blue tangs pale, chromis, idols, butterflyfish, angels and triggers darken.
+- **Cleaning station**: a bluestreak cleaner wrasse holds a station on a prominent rock and advertises with an up-and-down dance. Tangs, angels, butterflyfish, the idol, the trigger and the lionfish build up parasites over a few minutes. They queue, then hold still head-up with fins spread, colours shifted, while it works along their flanks. Now and then it cheats and bites mucus, and the client jolts away (Bshary & Grutter 2002).
+- **Territory**: a fish chased off twice by the same territory holder keeps out of its home area afterwards, so stable truce lines form.
+- **Lionfish** stalk at dusk with their fans spread, then lunge from about a body length (Albins & Lyons 2012). The prey always gets away here, but the lunge sets off a fear wave.
+- **Feeding**: flakes sink into view from just above the window. A small fish leaves a flake that a much bigger one is already taking. Hungry fish gather where food comes in during the last minute before a scheduled feed.
+- **The viewer**: pointer movement at the glass draws bold, curious fish to come and look, and makes shy ones back off; both get used to it.
+- **Eyes** make saccades to whatever the fish attends to, and counter-roll against pitch.
 
 ### Physics
 World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish are real aquarium-specimen sizes.
@@ -162,10 +171,30 @@ The first command shows the jobs and prompts. The second generates every missing
 - **Key**: put the API key in `tripo3d.ai.key` in the project root, or set `TRIPO_API_KEY`. The file is git-ignored and the server refuses to serve it.
 - **Credits**: API credits are separate from a Studio subscription. Each model costs roughly 10–40 credits (1 credit = $0.01).
 - **Output**: models go to `pc/models/scenery/` and are listed in `pc/models/scenery.json`.
-- **Placement**: rocks are stretched onto the procedural rock-pile layout. Each coral replaces its procedural counterpart (staghorn, finger, cauliflower, brain, leather, fan), fitted to the same size and spot. The reef heightfield the fish use follows the new shapes. Anything missing stays procedural.
+- **Placement**: rocks are stretched onto the procedural rock-pile layout, each slot taking one of the two rocks whose own proportions fit it best (8 rocks: boulders, a pillar, a shelf, an arch, a ledge with an overhang, a rubble mound, a pitted boulder and a branching dead-coral piece). Each coral replaces its procedural counterpart (staghorn, finger, cauliflower, brain, leather, fan), fitted to the same size and spot. The reef heightfield the fish use follows the new shapes. Anything missing stays procedural.
 - **Props** (`kind: "prop"`): a starfish and a conch, from your own GLBs (`starfish.glb`, `conch.glb`, textures shrunk with `node tools/optimize-scenery.mjs starfish conch`), lie on the open sand at the front at life size (17 and 16 cm). `rotate: [x, y, z]` in degrees turns a model before it is fitted; the starfish was modelled upright, so it gets `[-90, 0, 0]` to lie flat.
+- **Plants** (`kind: "plant"`, `stiff` 0..1): Halimeda (calcified, stiff) and Caulerpa clumps on clear sand. Three beds of turtle grass are built in code: strap blades in shoots, olive with browned tips. Plants, the sea fan, the leather coral (`sway`) and the anemone sway with the water in the vertex shader (`reef.js` `addSway`). The anemone's sway had never run before this: its shader read an unbound `uTime`.
+- **Rubble**: angular coral and shell fragments collect at the rock feet.
 
-### Motion check
+### Checks (`node tools/check.mjs`)
+
+Headless, in software GL; the page's console is printed. `--seeds=7,42` runs one per seed.
+
+```bash
+node tools/check.mjs motion --seconds=300
+node tools/check.mjs motion --night=1
+node tools/check.mjs look --at=5,30 --close=station,chromis
+```
+
+- **`look`** (`lookCheck.js`) renders the tank at the given simulated seconds. It saves `out/look-<tag>-<t>s.png` (git-ignored), close-ups of the cleaning station or a species, and the frame's mean luminance and saturation. Add `--light=0.35` for dusk or `--tone=aces` for a tone A/B. The reef-light bake (`--reeflight=1`) followed by a live render overloads software GL, so judge the reef light from the Roku bake's backdrop instead.
+- **`motion`** reports, besides what is listed below:
+  - shoal structure: median nearest-neighbour distance in body lengths, polarisation, and how many subgroups;
+  - the share of fish in shelter;
+  - fear passed on versus seen first-hand, per minute;
+  - cleaning sessions and clients;
+  - lionfish lunges, and truces between territorial fish.
+
+  `--night=1` runs it at night, `--light=0.35` at dusk. Seed 7: by day the chromis keep 1.9 body lengths apart at polarisation 0.38, splitting and re-forming; at night they pack into their coral (0.8 BL) and a third of all fish are in shelter. In 5 minutes there are about 5 cleaning sessions; at dusk the lionfish lunges about 8 times.
 
 `?check=motion` steps the tank for two simulated minutes without drawing (`&seconds=N` to change that; add `&reeflight=0` to skip the slow light bake) and reports in the console and `window.motionCheck`:
 - each fish's fastest climb, in body lengths per second (a snap up a coral head shows as a spike);
@@ -188,7 +217,12 @@ The bake takes as much as it can from the live tank:
 - **Fish**: lit by the live rig at full daylight (sun 2.65, ambient 0.75, exposure 1.25) and rendered through the live water (absorption, inscatter and the reef-depth white balance), placed mid-way up the window and seen from the live camera's distance, so sprites match the reef they swim over.
 - **Marine snow**: the live particles, carried by the pump current, are in the water loop. Two copies of the simulation run forward to the two moments each loop frame blends.
 - **Bubbles**: the airstone's column uses sprites baked with the live bubble shader, sent up by the player at the live rise speed, about 25 cm/s, which is too fast for a 4 fps loop.
-- **Not carried over**: caustics moving over the fish (a frozen pattern would slide with the sprite), fish shadows on the reef, and the screen-space AO between fish and rock.
+- **Brains**: the bake exports the shelters in screen space, and the predator and nocturnal flags. The player (`roku.js`, the model for the BrightScript port) runs a reduced brain:
+  - schooling by pairwise rules on the nearest three shoalmates;
+  - prey fear of a predator heading their way;
+  - fear passed between shoalmates after a 0.25 s reaction delay, weaker by a hop;
+  - a dash to the fish's shelter, where it may drop behind the foreground reef.
+- **Not carried over**: motion blur, night colours, cleaning and stalking (yet), caustics moving over the fish (a frozen pattern would slide with the sprite), fish shadows on the reef, and the screen-space AO between fish and rock.
 
 With the zoomed view (`?zoom=1.6`, the default; bake with `--zoom=1` for the whole tank), the backdrop is baked as the strip the screen shows: one screen wide, or with `--pan=1` 1.6 screens wide for the pan, cut into 512 px columns (`scenery/<key>-<n>.jpg`, and `-fg-<n>.png` for the foreground, each cropped to its reef). The player draws everything shifted by the pan and loads only the columns on screen plus the next one the pan reaches. Fish off screen hold no textures. Fish sprites are baked at 120 × zoom px per unit to stay sharp at the larger size. Everything (fish, backdrop, foreground and water loop) is rendered at 2× and filtered down, because the headless GPU's MSAA alone left about a quarter of the reef's outline pixels hard-stepped. This cut hard steps in the foreground by about 90%, with a scenery bake of about 29 min.
 

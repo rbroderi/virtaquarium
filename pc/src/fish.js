@@ -30,7 +30,7 @@ const ST = 0.3;          // Strouhal number
 const TAIL_AMP = 0.2;    // tail-tip amplitude / L
 
 const _d = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vector3();
-const _lat = new THREE.Vector3(), _flow = new THREE.Vector3();
+const _lat = new THREE.Vector3(), _flow = new THREE.Vector3(), _gaze = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
@@ -153,6 +153,30 @@ export class Fish {
 
   get mass() { return this.size ** 3; }
 
+  updateGaze(dt, out) {
+    const b = this.brain, st = this.gazeState || (this.gazeState = { t: 0, fx: 0, fy: 0, x: 0, y: 0 });
+    st.t -= dt;
+    if (st.t <= 0) {
+      const look = b.focus?.pos || b.focusFood?.pos || b.threat?.pos || b.neighbors[0]?.pos || null;
+      if (look) {
+        // Target in the fish's frame: forward along dir, up along the body's up.
+        _gaze.subVectors(look, this.pos);
+        const d = _gaze.length() || 1, fwd = _gaze.dot(this.dir) / d;
+        st.fx = clamp(fwd, -0.6, 1) * 0.07;
+        st.fy = clamp((_gaze.y - this.dir.y * _gaze.dot(this.dir)) / d, -1, 1) * 0.05;
+      } else {
+        st.fx = range(Math.random, -0.03, 0.05);   // idle scanning
+        st.fy = range(Math.random, -0.02, 0.02);
+      }
+      st.t = range(Math.random, 1, 4) * (b.mode === 'rest' ? 2 : 1);
+    }
+    // Saccades are fast (~50 ms); the counter-roll is continuous.
+    const k = Math.min(1, dt * 20);
+    st.x += (st.fx - st.x) * k;
+    st.y += (st.fy - st.y) * k;
+    out.set(st.x, st.y - this.pitch * 0.06);
+  }
+
   update(dt, world) {
     const sp = this.sp, sw = sp.swim, brain = this.brain, L = this.size;
     brain.update(dt, world);
@@ -231,7 +255,11 @@ export class Fish {
     const B = world.bounds;
     this.pos.x = clamp(this.pos.x, B.x0, B.x1);
     this.pos.z = clamp(this.pos.z, B.z0, B.z1);
-    const rock = world.reefHeight(this.pos.x, this.pos.z) - 0.1;
+    // A fish in its shelter is under the rock's top (the height field holds only the top): keep it
+    // between the gap's floor and roof instead.
+    const sh = brain.sheltered;
+    const rock = sh ? sh.floor : world.reefHeight(this.pos.x, this.pos.z) - 0.1;
+    if (sh && this.pos.y > sh.top - 0.1 * L) this.pos.y = sh.top - 0.1 * L;
     if (this.pos.y < rock) {
       this.pos.y = Math.min(rock, this.pos.y + Math.max(0.5 * L, 2 * U) * dt);
       if (this.vel.y < 0) this.vel.y = 0;
@@ -247,7 +275,10 @@ export class Fish {
     _up.set(0, 1, 0).addScaledVector(this.dir, -this.dir.y).normalize();
     // Bank slightly with the centripetal acceleration; reef fish stay close to upright (sw.bank, ~5-12 deg).
     const lean = clamp((U * this.yawRate) / (sw.aLat * 0.7), -1, 1) * sw.bank;
-    this.roll = lerp(this.roll, lean, Math.min(1, dt * 3));
+    // Resting postures in shelter (sp.brain.shelterRoll): tangs wedge in on their side; the gramma hangs
+    // upside down under its ledge.
+    const tuck = brain.sheltered && brain.mode === 'rest' ? (sp.brain.shelterRoll || 0) : 0;
+    this.roll = lerp(this.roll, lean + tuck, Math.min(1, dt * (tuck ? 0.8 : 3)));
     _up.applyAxisAngle(this.dir, this.roll);
     _side.crossVectors(this.dir, _up);
     _basis.makeBasis(this.dir, _up, _side);
@@ -320,6 +351,18 @@ export class Fish {
       // Resting in its crevice, an eel holds the front of its body up and out.
       u.uLift.value = lerp(u.uLift.value, brain.mode === 'lurk' ? 0.35 : 0, Math.min(1, dt * 0.8));
     }
+
+    // Colour change: night colours come on over a few minutes as the light goes (sleeping fish fully),
+    // and a client posing at the cleaning station shows them partly (many clients darken or pale to
+    // signal they want cleaning).
+    if (u.uNight) {
+      const nightT = clamp((1 - world.light) * (brain.mode === 'rest' ? 1 : 0.7) + (brain.posing ? 0.5 : 0), 0, 1);
+      u.uNight.value += (nightT - u.uNight.value) * Math.min(1, dt / (brain.posing ? 3 : 40));
+    }
+    // Eyes: saccades every 1-4 s to whatever the brain attends to (food, a chase, a threat, the cleaner,
+    // a shoalmate), held between jumps; and counter-rolling against pitch, so the gaze stays level as the
+    // body tilts (vestibulo-ocular reflex).
+    if (u.uGaze) this.updateGaze(dt, u.uGaze.value);
 
     // Median fins: balistiform swimmers undulate dorsal + anal fins for thrust; others ripple gently.
     const finDrive = sw.mode === 'balistiform' ? finShare * (0.5 + blEq * 1.5) : 0.3 + 0.2 * blEq;

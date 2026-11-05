@@ -42,6 +42,7 @@
   "coral_leather": {
     "file": "scenery/coral_leather.glb",
     "kind": "coral",
+    "sway": 1,
     "task": "7fbf03ee-22d6-408d-8c4c-655544d54a41"
   },
   "coral_fan": {
@@ -66,5 +67,37 @@
       24.4,
       0
     ]
+  },
+  "rock_e": {
+    "file": "scenery/rock_e.glb",
+    "kind": "rock",
+    "task": "a2a04708-afc4-4d7b-9851-3f7f06f64d53"
+  },
+  "rock_f": {
+    "file": "scenery/rock_f.glb",
+    "kind": "rock",
+    "task": "ca4f0c16-cb93-490a-aa21-376772f2dc65"
+  },
+  "rock_g": {
+    "file": "scenery/rock_g.glb",
+    "kind": "rock",
+    "task": "0dc363c1-3ad1-40f1-9cb7-d6a55ededfa4"
+  },
+  "rock_h": {
+    "file": "scenery/rock_h.glb",
+    "kind": "rock",
+    "task": "f885aeb6-28e9-449e-99ae-504233f27d3a"
+  },
+  "plant_halimeda": {
+    "file": "scenery/plant_halimeda.glb",
+    "kind": "plant",
+    "stiff": 0.8,
+    "task": "e68695e3-7a7e-4aa3-8b61-7bd241dc40ca"
+  },
+  "plant_caulerpa": {
+    "file": "scenery/plant_caulerpa.glb",
+    "kind": "plant",
+    "stiff": 0.35,
+    "task": "79947196-1e41-441e-8430-fd707372c1c0"
   }
 }

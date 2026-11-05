@@ -383,7 +383,45 @@ export const SPECIES = [
     pectoral: null,
     brain: { maxSpeed: 0.6, turn: 1.5, zone: [0.9, 1.0], school: 0, grazer: 0, territorial: 0.3, boldness: 0.6, curiosity: 0.3, activity: 0.2, predator: true, nocturnal: true, lurker: true, tailHz: 1.0 },
   },
+  {
+    id: 'cleanerwrasse', name: 'Bluestreak Cleaner Wrasse', sci: 'Labroides dimidiatus',
+    fact: 'Keeps a cleaning station: other fish queue up and hold still while it picks parasites off them.',
+    // ~10 cm in aquaria (wild max 14 cm). Slender (depth ~22% SL), a black stripe from the snout through the
+    // eye that widens to fill the tail, pale head and belly, electric blue over the rear of the back.
+    size: 0.8, count: 1,
+    anatomy: { bodyDepthSL: [0.2, 0.26] },
+    body: { len: 0.84, depth: 0.22, width: 0.5, m: 0.38, headP: 0.75, tailP: 1.0, ped: 0.5 },
+    eye: { u: 0.1, v: -0.12, r: 0.04, iris: '#1c2433' },
+    mouth: { u: 0.03, v: 0.06, v0: 0.0 },   // small, terminal, thick-lipped picker
+    pattern: [
+      { op: 'vgrad', stops: [[-1, '#7f9ed8'], [-0.35, '#c9d6ea'], [0.3, '#eef1f5'], [1, '#f7f8f8']] },
+      { op: 'blob', u: 0.78, v: -0.55, ru: 0.32, rv: 0.6, color: '#2d6ff0', soft: 0.6 },
+      { op: 'poly', color: '#101116', pts: [[0, -0.05], [0.3, -0.13], [0.6, -0.22], [0.88, -0.34], [1.02, -0.42], [1.02, 0.42], [0.88, 0.32], [0.6, 0.18], [0.3, 0.1], [0, 0.04]] },
+    ],
+    fins: [
+      { pos: 'top', u0: 0.22, u1: 0.95, pts: [[0, 0.03], [0.3, 0.07], [0.8, 0.08], [1, 0.03]], sweep: 0.15, fill: '#1b2238', alpha: 0.8, edge: '#4a8af0', edgeW: 0.006 },
+      { pos: 'bottom', u0: 0.52, u1: 0.95, pts: [[0, 0.03], [0.4, 0.07], [1, 0.03]], sweep: 0.15, fill: '#1b2238', alpha: 0.8, edge: '#4a8af0', edgeW: 0.006 },
+    ],
+    caudal: { type: 'truncate', spread: 0.14, fill: '#121318', edge: '#4f8ff0', edgeW: 0.012 },
+    pectoral: { u: 0.26, v: 0.1, len: 0.11, w: 0.05, fill: '#e8eef5', alpha: 0.25 },
+    brain: { maxSpeed: 1.2, turn: 4.0, zone: [0.5, 1.0], school: 0, grazer: 0, territorial: 0, boldness: 0.75, curiosity: 0.5, activity: 0.8, prey: true, cleaner: true, tailHz: 5.0 },
+  },
 ];
+// Fish that visit the cleaning station (Grutter 1995: on the Great Barrier Reef clients of Labroides are
+// mostly larger herbivores and invertivores; parasite loads build up over hours).
+for (const id of ['bluetang', 'yellowtang', 'moorishidol', 'emperorangel', 'coralbeauty', 'copperband', 'longnose', 'clowntrigger', 'lionfish']) {
+  const sp = SPECIES.find((s) => s.id === id);
+  if (sp) sp.brain.client = true;
+}
+// Night colours (fishModel.js uNight): yellow tangs show a pale lateral patch and blue tangs fade at
+// night; chromis, idols, butterflyfish, angels, triggers and the cleaner darken (Hobson 1972; aquarium
+// observations). Others keep their day colours.
+const NIGHT = { yellowtang: 'pale', bluetang: 'pale', chromis: 'dark', moorishidol: 'dark', copperband: 'dark', longnose: 'dark', emperorangel: 'dark', clowntrigger: 'dark', cleanerwrasse: 'dark' };
+for (const sp of SPECIES) if (NIGHT[sp.id]) sp.night = NIGHT[sp.id];
+// Resting roll in shelter (rad, fish.js): tangs wedge into crevices on their side; the royal gramma
+// orients its belly to the nearest surface, so under a ledge it hangs upside down.
+const SHELTER_ROLL = { bluetang: 1.1, yellowtang: 1.1, royalgramma: Math.PI };
+for (const sp of SPECIES) if (SHELTER_ROLL[sp.id]) sp.brain.shelterRoll = SHELTER_ROLL[sp.id];
 applyFitted(SPECIES);
 
 export const FISH_NAMES = ['Pip', 'Marlow', 'Coral', 'Finn', 'Juno', 'Ripple', 'Sable', 'Wren', 'Tango', 'Opal', 'Basil', 'Kiko',
@@ -413,6 +451,7 @@ export const SWIM = {
   chromis: { mode: 'labriform', maxBL: 4.5, burstBL: 10, gait: 2.5, rmin: 0.2, hoverTurn: 2.5 },
   coralbeauty: { mode: 'labriform', maxBL: 3.0, burstBL: 7, gait: 2.0, rmin: 0.25, hoverTurn: 2.0 },
   moray: { mode: 'anguilliform', maxBL: 0.6, burstBL: 2, gait: 0, rmin: 0.2, hoverTurn: 0.6 },   // curls round tightly
+  cleanerwrasse: { mode: 'labriform', maxBL: 4.0, burstBL: 9, gait: 2.5, rmin: 0.2, hoverTurn: 2.4 },   // wrasses row with the pectorals
 };
 
 // Turning and posture (merged into sp.swim). Turns speed up and slow down gradually; at low speed a
@@ -443,6 +482,7 @@ export const MOTION = {
   chromis: { aLat: 0.12, aLatBurst: 0.7, wide: 1.8, turnDrag: 0.4, pitchCruise: 25, pitchSlow: 40, climb: 0.7, pitchRate: [60, 170], bank: 12 },
   coralbeauty: { aLat: 0.09, aLatBurst: 0.6, wide: 1.8, turnDrag: 0.5, pitchCruise: 20, pitchSlow: 50, climb: 0.6, pitchRate: [55, 150], bank: 9 },
   moray: { aLat: 0.05, aLatBurst: 0.3, wide: 1.5, turnDrag: 0.3, pitchCruise: 20, pitchSlow: 35, climb: 0.5, pitchRate: [30, 90], bank: 3 },
+  cleanerwrasse: { aLat: 0.1, aLatBurst: 0.7, wide: 1.8, turnDrag: 0.5, pitchCruise: 25, pitchSlow: 45, climb: 0.7, pitchRate: [60, 170], bank: 10 },
 };
 
 // Pace: the speed each behaviour asks for, as a fraction of the species' max sustained speed (maxBL).
@@ -466,6 +506,7 @@ export const PACE = {
   chromis: { cruise: [0.2, 0.2], school: 0.4 },                    // active schooling planktivore
   coralbeauty: { cruise: [0.12, 0.2], rest: [0.3, 0.06] },         // darts between rocks
   moray: { cruise: [0.3, 0.2], feed: [0.9, 0.5], flee: 1.0 },       // slow prowl along the bottom at night
+  cleanerwrasse: { cruise: [0.15, 0.2] },
 };
 
 const DEG = Math.PI / 180, G_UNITS = 9.81 / 0.125;   // g in world units/s^2
@@ -497,5 +538,6 @@ export const SKIN = {
   chromis: { scales: 28, hump: 0.07 },
   coralbeauty: { scales: 45, hump: 0.06 },
   moray: { scales: 0, hump: 0.02 },   // scaleless
+  cleanerwrasse: { scales: 52, hump: 0.03 },
 };
 for (const sp of SPECIES) Object.assign(sp.body, SKIN[sp.id]);

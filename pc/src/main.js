@@ -13,14 +13,17 @@ import {
 import { UI } from './ui.js';
 import { loadTank } from './tank.js';
 import { PhotoCamera } from './photo.js';
-import { LightRig } from './rig.js';
+import { LightRig, toneFor, LIGHTS } from './rig.js';
 import { viewOptions, panAt, setView, windowTopY } from './view.js';
 import { bakeReefLight, reefLightUniforms, ScreenAO } from './reefLight.js';
 import { JELLY_SPECIES, Jelly, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES, Cuttlefish, Octopus, Turtle } from './critters.js';
 
 const params = new URLSearchParams(location.search);
-fishRender.finDepth = params.has('photo') && params.get('photo') !== '0';
+// The camera model (photo.js) is on by default: a photo of a tank has depth of field, lens fall-off and
+// sensor grain, and a render without them reads as CG. ?photo=0 turns it off (and saves ~2 ms a frame).
+const PHOTO = params.get('photo') !== '0';
+fishRender.finDepth = PHOTO;
 const tank = await loadTank(params);
 const SEED = tank.seed;
 const CLOCK = tank.clock;              // follow local time of day (lights dim at night)
@@ -29,11 +32,12 @@ const DRIFT = tank.drift;              // gentle camera parallax
 
 const rng = mulberry32(SEED * 101 + 3);
 const canvas = document.getElementById('tank');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: params.has('capture') });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: params.has('capture') || params.get('check') === 'look' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);   // CSS keeps the canvas full-window
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+const TONE = toneFor(params);
+renderer.toneMapping = TONE.mapping;
+renderer.toneMappingExposure = 1.05 * TONE.gain;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -59,8 +63,8 @@ const frameView = (t) => setView(camera, canvas.clientWidth || window.innerWidth
 frameView(0);
 
 // Lighting: sun through the surface + sky/sand bounce.
-const sun = new THREE.DirectionalLight(0xfff2dc, 2.6);
-sun.position.set(3, 22, 7);
+const sun = new THREE.DirectionalLight(0xfff2dc, LIGHTS.sun);
+sun.position.set(...LIGHTS.sunPos);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 const sc = sun.shadow.camera;
@@ -77,9 +81,11 @@ const water = new WaterRenderer(renderer);
 const hemi = new THREE.HemisphereLight(0xdcecff, 0x8a7458, 1.0);   // white downwelling (aquarium lights) + sand bounce
 scene.add(hemi);
 const rig = new LightRig(scene, sun, params.get('rig') || 'sun');
-// ?photo=1: render through a camera model (depth of field, lens and sensor effects; see photo.js).
+// Render through a camera model (depth of field, lens and sensor effects; see photo.js), unless ?photo=0.
 const _ndc = new THREE.Vector3();   // autofocus scratch
-const photo = params.has('photo') && params.get('photo') !== '0' ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 2.8 }) : null;
+// f/5.6 keeps most of the reef sharp with the far rock and near-glass motes softened, as a typical tank
+// photo; gentler grain than a high-ISO shot. ?fstop=2.8 for a shallower look.
+const photo = PHOTO ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 5.6, iso: 0.6 }) : null;
 
 // Optional Tripo3D / GLB models replace procedural fish species by species.
 const customModels = await loadCustomModels(SPECIES);
@@ -96,6 +102,7 @@ if (JELLY_TANK) {
   const scenery = await loadScenery();
   if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
   reef = buildReef(scene, TANK_W, SEED, scenery, CAM_BASE);
+  console.info('Planted:', JSON.stringify(reef.planted), 'plants loaded:', Object.keys(scenery.plants).join(', '));
 }
 // Light the static reef once by ray casting (reefLight.js): soft sun shadows, ambient occlusion and
 // coloured bounce light, per pixel from the camera's rest view and in a grid for the fish.
@@ -105,7 +112,7 @@ if (!JELLY_TANK && params.get('reeflight') !== '0') {
   rig.apply(1);   // baked at full daylight; the live light level scales it
   bakeReefLight(renderer, reef, {
     sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
-    sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(0.75), ground: hemi.groundColor.clone().multiplyScalar(0.75),
+    sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(LIGHTS.ambient), ground: hemi.groundColor.clone().multiplyScalar(LIGHTS.ambient),
     camera,
   });
   // Only the fish cast live shadows now; soft ones, as from a broad light through moving water.
@@ -126,6 +133,13 @@ const speciesById = new Map(SPECIES.map((sp) => [sp.id, sp]));
 const chosen = new Set(tank.fish.flatMap((e) => e.names));
 const names = FISH_NAMES.filter((n) => !chosen.has(n));
 const homes = reef.homes.slice();
+// The cleaning station: a prominent rock top in the front half at mid height, where clients can be seen
+// queuing (Labroides stations are on conspicuous outcrops). Held by the first cleaner wrasse.
+if (!JELLY_TANK && tank.fish.some((e) => speciesById.get(e.species)?.brain.cleaner && e.count > 0)) {
+  const spots = reef.homes.filter((h) => h.z > -1.2 && h.y > 1.0 && h.y < 4.0);
+  const pick = (spots.length ? spots : reef.homes).slice().sort((a, b) => Math.abs(a.x) - Math.abs(b.x))[Math.floor(rng() * Math.min(3, spots.length || 1))];
+  world.station = { pos: pick.clone(), cleaner: null, client: null };
+}
 const jellies = [];
 const jellyById = new Map(JELLY_SPECIES.map((sp) => [sp.id, sp]));
 const critterById = new Map(CRITTER_SPECIES.map((sp) => [sp.id, sp]));
@@ -177,6 +191,10 @@ for (const entry of tank.fish) {
       f.pos.copy(f.brain.home);
       f.dir.copy(cave.dir); f.yaw = Math.atan2(cave.dir.z, cave.dir.x);
       f.brain.mode = 'lurk';
+    } else if (sp.brain.cleaner && world.station && !world.station.cleaner) {
+      world.station.cleaner = f;
+      f.brain.home.copy(world.station.pos);
+      f.pos.copy(world.station.pos).add(new THREE.Vector3(0, 0.4, 0));
     } else {
       // Shy fish choose low homes; everyone else takes a random spot on the reef.
       homes.sort((a, b) => (sp.brain.shy ? a.y - b.y : 0) || 0);
@@ -186,8 +204,47 @@ for (const entry of tank.fish) {
     world.addFish(f);
   }
 }
+// Each fish knows a shelter near its home (reef.shelters): shoaling chromis share their staghorn, the
+// rest take the nearest ledge whose gap fits their body, at most three to a ledge. Clownfish have the
+// anemone and eels their cave.
+if (!JELLY_TANK && reef.shelters) {
+  const used = new Map(), coral = reef.shelters.find((s) => s.kind === 'coral');
+  for (const f of world.fish) {
+    const b = f.sp.brain;
+    if (b.host || b.lurker) continue;
+    if (b.school >= 0.8 && coral) { f.brain.shelter = coral; f.brain.home.copy(reef.shoalCoral.pos); continue; }
+    const depth = f.size * f.sp.body.depth;
+    let best = null, bd = Infinity;
+    for (const s of reef.shelters) {
+      if (s.kind !== 'ledge' || s.top - s.floor < depth + 0.12 || (used.get(s) || 0) >= 3) continue;
+      const d = s.pos.distanceTo(f.brain.home);
+      if (d < bd) { bd = d; best = s; }
+    }
+    if (best) { f.brain.shelter = best; used.set(best, (used.get(best) || 0) + 1); }
+  }
+  console.info('Shelters:', reef.shelters.length, 'assigned:', world.fish.filter((f) => f.brain.shelter).length);
+}
 
 const ui = new UI({ world, camera, renderer, onFeed: (x) => world.dropFood(x) });
+
+// The viewer: pointer movement over the tank, as a point just behind the glass with an activity level
+// that fades in a few seconds (brain.js: bold fish come to look, shy ones back off, both get used to it).
+{
+  const ndc = new THREE.Vector2(), ray = new THREE.Raycaster(), glass = new THREE.Plane(new THREE.Vector3(0, 0, 1), -(bounds.z1 - 0.4)), hit = new THREE.Vector3();
+  let last = null;
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    if (!ray.ray.intersectPlane(glass, hit)) return;
+    hit.x = clamp(hit.x, bounds.x0, bounds.x1); hit.y = clamp(hit.y, bounds.y0 + 0.5, bounds.y1);
+    const moved = last ? Math.min(1, hit.distanceTo(last) * 0.5) : 0.3;
+    last = hit.clone();
+    world.viewer = world.viewer || { pos: new THREE.Vector3(), activity: 0 };
+    world.viewer.pos.copy(hit);
+    world.viewer.activity = Math.min(1, world.viewer.activity + moved);
+  });
+}
 
 // ---------- day / night ----------
 
@@ -207,15 +264,15 @@ function applyLight(l) {
   rig.apply(l);
   // Ambient water light is occluded by the baked reef light, so it can sit lower against the sun
   // and let the shadows read (without the bake, the old balance).
-  const amb = reefLightUniforms.uRLOn.value ? 0.75 : 1.0;
+  const amb = reefLightUniforms.uRLOn.value ? LIGHTS.ambient : 1.0;
   hemi.intensity = amb * k;
   reefLightUniforms.uRLLight.value = k;
   hemi.color.setRGB(lerp(0.30, 0.86, l), lerp(0.45, 0.92, l), 1.0);   // moonlight is bluer
-  scene.environmentIntensity = 0.35 * amb * k;
+  scene.environmentIntensity = LIGHTS.env * amb * k;
   waterUniforms.uCaustic.value = l;
   scene.fog.color.copy(INSCATTER_DAY).multiplyScalar(0.06 + 0.94 * l);
   backdrop.material.uniforms.uBase.value.copy(scene.fog.color);
-  renderer.toneMappingExposure = 1.25 * (0.45 + 0.55 * l);
+  renderer.toneMappingExposure = 1.25 * TONE.gain * (0.45 + 0.55 * l);
   surface.material.uniforms.uLight.value = l;
   surface.material.uniforms.uBase.value.copy(scene.fog.color);
   if (reef.backdrop) reef.backdrop.material.uniforms.uLight.value = 0.08 + 0.92 * l;   // the jelly tank's light panel
@@ -239,7 +296,17 @@ function frame() {
   requestAnimationFrame(frame);
   fitCanvas();
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (paused) { present(); return; }
+  if (!paused) step(dt);
+  present();
+}
+
+// One step of the tank: light, feeder, fish, critters, water. The checks (lookCheck.js) drive it too.
+function step(dt) {
+  // Motion blur (water.js): poses before this step are the previous ones; shutter 1/100 s, as video.
+  if (params.get('blur') !== '0') {
+    water.markPrev(world.fish.map((f) => f.model), camera);
+    water.blurScale = Math.min(1, (1 / 100) / Math.max(dt, 1e-3));
+  }
   t += dt;
   waterUniforms.uTime.value = t;
 
@@ -247,6 +314,7 @@ function frame() {
   applyLight(clamp(lerp(world.light, light, Math.min(1, dt * 0.8)), 0, 1));
 
   nextFeed -= dt;
+  world.feedIn = nextFeed;   // fish learn the schedule (brain.js feeding anticipation)
   if (nextFeed <= 0) {
     world.dropFood(range(rng, bounds.x0 + 2, bounds.x1 - 2));
     nextFeed = FEED_MIN * 60;
@@ -268,10 +336,9 @@ function frame() {
   frameView(t);
   ui.update(dt);
   if (photo) autofocus(dt);
-  present();
 }
-// The motion check steps the tank itself and draws nothing.
-if (params.get('check') !== 'motion') frame();
+// The checks step the tank themselves (the motion check draws nothing).
+if (!params.has('check') || params.get('check') === 'critters') frame();
 
 function present() {
   if (!photo) water.render(scene, camera, sun);
@@ -308,9 +375,11 @@ function fitCanvas() {
 }
 
 // Exposed for the Roku exporter and debugging.
-window.aquarium = { THREE, scene, camera, renderer, world, reef, jellies, SPECIES, caustics, water, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); } };
+window.aquarium = { THREE, scene, camera, renderer, world, reef, jellies, SPECIES, caustics, water, snow, bubbles, surface, setLight: (l) => { light = l; applyLight(l); }, step, present, fitCanvas };
 
 // ?check=critters: the critters' shape checks (critterCheck.js).
 if (params.get('check') === 'critters') import('./critterCheck.js').then((m) => m.main(window.aquarium));
 // ?check=motion: fish climb, bobbing and eel-in-roof checks (motionCheck.js).
 if (params.get('check') === 'motion') import('./motionCheck.js').then((m) => m.main(window.aquarium));
+// ?check=look: render fixed moments to out/look-*.png, with close-ups (lookCheck.js).
+if (params.get('check') === 'look') import('./lookCheck.js').then((m) => m.main(window.aquarium));

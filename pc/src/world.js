@@ -15,6 +15,8 @@ export class World {
     this.critters = [];   // cuttlefish, octopus, turtle (critters.js)
     this.light = 1;
     this.time = 0;
+    this.feedIn = Infinity;    // seconds to the next scheduled feed (main.js)
+    this.viewer = null;        // { pos, activity }: the pointer at the glass (main.js)
     this.goals = new Map();
     this.speciesById = new Map();
 
@@ -60,6 +62,18 @@ export class World {
   }
   anemoneFor() { return this.reef.anemones[0]; }
 
+  // Can a fish at a see b? Samples along the sightline against the reef top and cave roofs (the height
+  // field is a conservative grid, hence the allowance). No raycasts: cheap enough for every pair at 5 Hz.
+  lineOfSight(a, b) {
+    for (const k of [0.2, 0.4, 0.6, 0.8]) {
+      const x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k, z = a.z + (b.z - a.z) * k;
+      if (y < this.reefHeight(x, z) - 0.15) return false;
+      const r = this.roofAt(x, z);
+      if (r && y > r.y && y < r.top) return false;
+    }
+    return true;
+  }
+
   addFish(f) {
     this.fish.push(f);
     this.speciesById.set(f.sp.id, f.sp);
@@ -83,13 +97,19 @@ export class World {
 
   dropFood(x, count = 14) {
     const B = this.bounds;
+    this.lastFeedX = x;
+    this.feeds = (this.feeds || 0) + 1;
+    // The zoomed view (view.js) cuts off the surface, where flakes would float out of frame: they come in
+    // just above the top of the window, already sinking, so the feeding is seen. With the whole tank in
+    // view they start on the surface film.
+    const surface = B.y1 > 9.0, y0 = surface ? 9.38 : B.y1 + 0.5;
     for (let i = 0; i < count; i++) {
       if (this.food.length >= this.maxFood) break;
       this.food.push({
-        pos: new THREE.Vector3(clamp(x + range(this.rng, -0.8, 0.8), B.x0, B.x1), 9.38, range(this.rng, -1.5, 2.0)),
+        pos: new THREE.Vector3(clamp(x + range(this.rng, -0.8, 0.8), B.x0, B.x1), y0 + range(this.rng, 0, surface ? 0 : 0.6), range(this.rng, -1.5, 2.0)),
         // Flakes float on the surface film for a few seconds, then settle at ~1-2.5 cm/s
         // (thin plates sink slowly and flutter side to side like a falling leaf).
-        vy: range(this.rng, 0.01, 0.025) / 0.125, float: range(this.rng, 1.5, 9), ph: this.rng() * 6, spin: this.rng() * 6, age: 0, eaten: false, resting: false,
+        vy: range(this.rng, 0.01, 0.025) / 0.125, float: surface ? range(this.rng, 1.5, 9) : 0, ph: this.rng() * 6, spin: this.rng() * 6, age: 0, eaten: false, resting: false,
         color: new THREE.Color(FLAKE_COLORS[i % FLAKE_COLORS.length]),
       });
     }
@@ -99,6 +119,7 @@ export class World {
 
   update(dt) {
     this.time += dt;
+    if (this.viewer) this.viewer.activity *= Math.exp(-dt / 3);
     for (const g of this.goals.values()) g.t -= dt;
     // Food sinks with a gentle flutter, settles on rock or sand, then dissolves.
     let n = 0;

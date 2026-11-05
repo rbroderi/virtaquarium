@@ -82,6 +82,34 @@ function stdMat(opts, caustic = 0.7) {
   return addCaustics(new THREE.MeshStandardMaterial(opts), caustic);
 }
 
+// Soft tissue and plants sway with the water. h = height up the model (0 at the base, 1 at the top,
+// position.y / hTop in model units) and the bend grows with h^2. ax, az: tip displacement along the model's
+// own x and z (scaled with the model); hz: main frequency. The phase comes from where each piece stands,
+// so neighbours don't move in step, and a second harmonic keeps it from looking mechanical.
+function addSway(mat, key, { ax = 0.05, az = 0.035, hz = 1.0, hTop = 1 } = {}) {
+  const prev = mat.onBeforeCompile;
+  const f = (x) => x.toFixed(4);
+  mat.onBeforeCompile = (shader, r) => {
+    prev(shader, r);
+    shader.uniforms.uTime = waterUniforms.uTime;
+    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace('#include <begin_vertex>', `
+      vec3 transformed = vec3(position);
+      {
+        #ifdef USE_INSTANCING
+        vec3 swayAt = instanceMatrix[3].xyz;
+        #else
+        vec3 swayAt = modelMatrix[3].xyz;
+        #endif
+        float h = clamp(position.y / ${f(hTop)}, 0.0, 1.0), ph = swayAt.x * 1.7 + swayAt.z * 2.3;
+        float s = sin(uTime * ${f(hz)} + ph) + 0.35 * sin(uTime * ${f(hz * 2.3)} + ph * 1.9);
+        transformed.x += s * ${f(ax)} * h * h;
+        transformed.z += cos(uTime * ${f(hz * 0.8)} + ph * 1.3) * ${f(az)} * h * h;
+      }`);
+  };
+  mat.customProgramCacheKey = () => key;
+  return mat;
+}
+
 // ---------- rock ----------
 
 function rockGeometry(rng, noise, sx, sy, sz) {
@@ -306,22 +334,8 @@ function anemone(rng) {
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
   tg.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const mat = stdMat({ vertexColors: true, roughness: 0.55 }, 0.5);
-  const prevCompile = mat.onBeforeCompile;
-  mat.onBeforeCompile = (shader, r) => {
-    prevCompile(shader, r);
-    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace('#include <begin_vertex>', `
-      vec3 transformed = vec3(position);
-      #ifdef USE_INSTANCING
-      {
-        vec3 ip = instanceMatrix[3].xyz;
-        float h = clamp(position.y / 0.42, 0.0, 1.0);
-        transformed.x += sin(uTime * 1.2 + ip.x * 7.0 + ip.z * 5.0) * 0.09 * h * h;
-        transformed.z += cos(uTime * 0.9 + ip.x * 4.0 - ip.z * 3.0) * 0.07 * h * h;
-      }
-      #endif`);
-  };
-  mat.customProgramCacheKey = () => 'anemone';
+  // (Before addSway existed this read an unbound uTime, so the tentacles never moved.)
+  const mat = addSway(stdMat({ vertexColors: true, roughness: 0.55 }, 0.5), 'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: 0.42 });
   const count = 320;
   const tent = new THREE.InstancedMesh(tg, mat, count);
   const golden = Math.PI * (3 - Math.sqrt(5));
@@ -404,9 +418,9 @@ class HeightField {
 // Loads pc/models/scenery.json. Each model is centred on x/z with its base at y=0 and scaled to a
 // unit bounding box (rocks per axis, corals and props uniformly by their largest side), so the layout
 // code can fit it to a footprint. `rotate` ([x, y, z] degrees) stands a model up first, for one built
-// in another pose. Returns { rocks: [], coral: {}, props: {} }.
+// in another pose. Returns { rocks: [], coral: {}, props: {}, plants: {} }.
 export async function loadScenery(base = './models/') {
-  const out = { rocks: [], coral: {}, props: {} };
+  const out = { rocks: [], coral: {}, props: {}, plants: {} };
   let manifest;
   try {
     const r = await fetch(base + 'scenery.json', { cache: 'no-cache' });
@@ -422,6 +436,17 @@ export async function loadScenery(base = './models/') {
       obj.name = id;   // GLB scene names repeat ("Scene"), so sort by the manifest id below
       if (cfg.kind === 'rock') out.rocks.push(obj);
       else if (cfg.kind === 'prop') out.props[id] = obj;
+      else if (cfg.kind === 'coral' && cfg.sway) {
+        // Soft corals (leather) flex a little with the current; stony ones don't.
+        const n = obj.userData.natural, hTop = n.y / Math.max(n.x, n.y, n.z);
+        obj.traverse((o) => { if (o.isMesh) addSway(o.material, 'coral-' + id, { ax: 0.03 * cfg.sway, az: 0.025 * cfg.sway, hz: 0.6, hTop }); });
+        out.coral[id.replace(/^coral_/, '')] = obj;
+      } else if (cfg.kind === 'plant') {
+        // Macroalgae bend with the current; calcified Halimeda much less than soft Caulerpa.
+        const n = obj.userData.natural, hTop = n.y / Math.max(n.x, n.y, n.z), stiff = cfg.stiff ?? 0.5;
+        obj.traverse((o) => { if (o.isMesh) addSway(o.material, 'plant-' + id, { ax: 0.08 * (1 - stiff), az: 0.06 * (1 - stiff), hz: 0.8, hTop }); });
+        out.plants[id.replace(/^plant_/, '')] = obj;
+      }
       else out.coral[id.replace(/^coral_/, '')] = obj;
     } catch (e) {
       console.warn(`Scenery ${id} failed to load, using procedural`, e);
@@ -453,6 +478,7 @@ function normaliseScenery(root, caustic, uniform) {
     group.add(mesh);
   });
   group.name = root.name;
+  group.userData.natural = size.clone();   // the model's own proportions (rocks are stretched to fit slots)
   return group;
 }
 
@@ -479,7 +505,7 @@ function swapCoral(parent, proc, model) {
 
 // scenery: optional { rocks, coral } from loadScenery(); generated models replace procedural ones.
 // view: the camera's rest position (main.js CAM_BASE, bake.js), which the moray caves must face.
-export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {}, props: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
+export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {}, props: {}, plants: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
   const rng = mulberry32(seed);
   const noise = new Noise(mulberry32(seed + 1));
   const sx = width / 16;   // layout scales with the tank width
@@ -510,21 +536,34 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   const rockMat = stdMat({ vertexColors: true, map: rockDetailTexture(rng), roughness: 0.95, bumpMap: pores, bumpScale: 3.0 }, 0.7);
   const rocks = new THREE.Group();
   reef.add(rocks);
+  // A generated rock for a w x h x d slot, stretched by kx (sideways) and ky (up). Rocks stay near their
+  // own proportions: each slot takes one of the two whose shape fits it best, turned a quarter if that
+  // fits better (a branching piece stretched into a low slab reads as melted).
+  const fitRock = (r, w, h, d, kx, ky, yaw) => {
+    const err = (n, a, b) => Math.log((a / h) / (n.x / n.y)) ** 2 + Math.log((b / h) / (n.z / n.y)) ** 2;
+    const ranked = scenery.rocks.map((m) => {
+      const n = m.userData.natural || new THREE.Vector3(1, 1, 1), e = err(n, w, d), e2 = err(n, d, w);
+      return { m, e: Math.min(e, e2), swap: e2 < e };
+    }).sort((p, q) => p.e - q.e);
+    const pick = ranked[Math.min(ranked.length - 1, Math.floor(r() * 2))], m = pick.m.clone();
+    if (pick.swap) { m.scale.set(d * kx, h * ky, w * kx); m.rotation.y = yaw + Math.PI / 2; }
+    else { m.scale.set(w * kx, h * ky, d * kx); m.rotation.y = yaw; }
+    return m;
+  };
   const addRock = (x, z, w, h, d, sink = 0) => {
     const ground = Math.max(hf.sample(x, z), 0);
     let m;
     if (scenery.rocks.length) {
-      // Generated rock stretched to the footprint, base slightly buried in the sand.
-      m = scenery.rocks[Math.floor(rng() * scenery.rocks.length)].clone();
-      // Scanned rocks fill less of their bounding box than the procedural blobs, so enlarge them
-      // to keep the piles continuous.
-      m.scale.set(w * 1.45, h * 1.3, d * 1.45);
+      // Generated rock stretched to the footprint, base slightly buried in the sand. Scanned rocks fill
+      // less of their bounding box than the procedural blobs, so enlarge them to keep the piles continuous.
+      // (Any yaw: the footprint's two sides are interchangeable.)
+      m = fitRock(rng, w, h, d, 1.45, 1.3, rng() * Math.PI * 2);
       m.position.set(x, ground - sink - h * 0.15, z);
     } else {
       m = new THREE.Mesh(rockGeometry(rng, noise, w, h, d), rockMat);
       m.position.set(x, ground + h * 0.55 - sink, z);
+      m.rotation.y = rng() * Math.PI * 2;
     }
-    m.rotation.y = rng() * Math.PI * 2;
     m.castShadow = m.receiveShadow = true;
     rocks.add(m);
     hf.splatObject(m);
@@ -574,7 +613,8 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     return y;
   };
 
-  // Staghorn on the central pile
+  // Staghorn on the central pile (the first is the chromis shoal's home coral)
+  let stagMain = null;
   {
     const mat = stdMat({ vertexColors: true, roughness: 0.7, bumpMap: pores, bumpScale: 1.0 }, 0.9);
     for (const [x, z, s] of [[-0.6, -1.4, 1.25], [4.6, -1.3, 0.7], [-6.0, -2.6, 0.6]]) {
@@ -583,7 +623,8 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       m.rotation.y = rng() * 6;
       m.castShadow = m.receiveShadow = true;
       corals.add(m);
-      swapCoral(corals, m, scenery.coral.staghorn);
+      const g = swapCoral(corals, m, scenery.coral.staghorn);
+      if (!stagMain) stagMain = g;
     }
   }
   // White finger dome (left) and lavender cauliflower
@@ -641,8 +682,11 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   }
   // Sea fan, back left
   {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 2.8), stdMat({ map: seaFanTexture(rng), transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, roughness: 0.8 }, 0.5));
-    m.position.set(-6.8 * sx, top(-6.8 * sx, -3.0) + 1.2, -3.0);
+    // A gorgonian flexes with the surge across its face (plane local z), its base fixed (the plane runs
+    // y -1.4..1.4, so only the upper half moves, growing towards the rim).
+    const fanGeo = new THREE.PlaneGeometry(2.8, 2.8);
+    fanGeo.translate(0, 1.4, 0);
+    const m = new THREE.Mesh(fanGeo, addSway(stdMat({ map: seaFanTexture(rng), transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, roughness: 0.8 }, 0.5), 'seafan', { ax: 0.04, az: 0.2, hz: 0.5, hTop: 2.8 }));    m.position.set(-6.8 * sx, top(-6.8 * sx, -3.0) - 0.2, -3.0);   // base at the geometry's y = 0
     m.rotation.y = 0.35;
     m.userData.noHeight = true;
     corals.add(m);
@@ -699,6 +743,132 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   }
 
   hf.splatObject(corals);
+
+  // Sea grass and macroalgae, placed after the corals are in the height field so they find clear sand.
+  // Their own random stream leaves the rest of the seeded layout as it was. Fish swim through them (not
+  // in the height field), as they do through real grass beds.
+  const planted = { grass: 0, clumps: 0 };
+  {
+    const grng = mulberry32(seed + 13);
+    const SAND = 0.12;   // height-field level that still counts as open sand
+    const clear = (x, z, r) => {
+      if (hf.sample(x, z) > SAND) return false;
+      for (let i = 0; i < 8; i++) if (hf.sample(x + Math.cos(i * Math.PI / 4) * r, z + Math.sin(i * Math.PI / 4) * r) > SAND) return false;
+      return true;
+    };
+    const spots = [];
+    const findSpot = (r, z0, z1, apart) => {
+      for (let i = 0; i < 80; i++) {
+        const x = range(grng, -6.6, 6.6) * sx, z = range(grng, z0, z1);
+        if (clear(x, z, r) && spots.every((s) => Math.hypot(s.x - x, s.z - z) > apart + s.r)) { spots.push({ x, z, r }); return [x, z]; }
+      }
+      return null;
+    };
+    // Turtle grass (Thalassia testudinum): strap blades 4-12 mm wide and 10-30 cm long, in shoots of 2-5
+    // from a buried rhizome; green, browning and speckled with epiphytes towards the tips.
+    const blade = new THREE.PlaneGeometry(1, 1, 1, 10);
+    blade.translate(0, 0.5, 0);
+    {
+      const p = blade.attributes.position, col = new Float32Array(p.count * 3), c = new THREE.Color();
+      const base = C('#3b5a2a'), mid = C('#5a7a36'), tip = C('#8a8248');   // olive, as in field photos
+      for (let i = 0; i < p.count; i++) {
+        const h = p.getY(i);
+        c.copy(base).lerp(mid, clamp(h * 2, 0, 1)).lerp(tip, clamp((h - 0.7) / 0.3, 0, 1) * 0.8);
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      }
+      blade.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    }
+    const grassMat = addSway(stdMat({ vertexColors: true, roughness: 0.55, side: THREE.DoubleSide }, 0.8), 'seagrass', { ax: 0, az: 0.16, hz: 0.7 });
+    for (let patch = 0; patch < 3; patch++) {
+      const at = findSpot(0.3, -0.4, 1.8, 1.2);
+      if (!at) break;
+      const [cx, cz] = at, shoots = Math.floor(range(grng, 45, 65)), blades = [];
+      for (let s = 0; s < shoots; s++) {
+        const a = grng() * Math.PI * 2, r = Math.sqrt(grng()) * 0.6;
+        const x = Math.cos(a) * r * 1.4, z = Math.sin(a) * r * 0.8, yaw = grng() * Math.PI * 2;
+        if (hf.sample(cx + x, cz + z) > SAND) { grng(); grng(); continue; }   // grass grows in sand, not on rock
+        const n = 2 + Math.floor(grng() * 4), L = range(grng, 0.8, 1.8) * (1 - r * 0.5);   // shorter at the edge
+        const y = groundAt(cx + x, cz + z) - 0.04;   // the sand undulates and isn't in the height field
+        for (let b = 0; b < n; b++) blades.push({ x, y, z, yaw: yaw + range(grng, -0.35, 0.35), lean: range(grng, 0.08, 0.4), w: range(grng, 0.04, 0.085), L: L * range(grng, 0.7, 1.05) });
+      }
+      const mesh = new THREE.InstancedMesh(blade, grassMat, blades.length);
+      const e = new THREE.Euler(), tint = new THREE.Color();
+      blades.forEach((b, i) => {
+        _q.setFromEuler(e.set(b.lean, b.yaw, 0, 'YXZ'));
+        _m.compose(_p.set(b.x, b.y, b.z), _q, _s.set(b.w, b.L, b.L));
+        mesh.setMatrixAt(i, _m);
+        // Per-blade tint around white (instance colour multiplies the vertex colour): a little hue and
+        // brightness variation, some blades older and browner.
+        mesh.setColorAt(i, tint.setHSL(0.2 + range(grng, -0.04, 0.05), 0.18, range(grng, 0.36, 0.5)).multiplyScalar(1.9));
+      });
+      mesh.position.set(cx, 0, cz);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.userData.noHeight = true;
+      mesh.name = 'seagrass';
+      corals.add(mesh);
+    }
+    // Macroalgae clumps from scenery.json: Halimeda on sand and rubble, Caulerpa on sand and low rock.
+    const plants = scenery.plants || {};
+    const clump = (model, cm, n, z0, z1) => {
+      if (!model) return;
+      for (let i = 0; i < n; i++) {
+        const k = cm * range(grng, 0.75, 1.15) / 12.5;
+        const at = findSpot(0.15 * k + 0.05, z0, z1, 0.5);
+        if (!at) return;
+        const m = model.clone();
+        m.scale.setScalar(k);
+        m.rotation.y = grng() * Math.PI * 2;
+        m.position.set(at[0], top(at[0], at[1], 0.3 * k) - 0.02 * k, at[1]);
+        m.traverse((o) => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.userData.noHeight = true; } });
+        m.userData.noHeight = true;
+        corals.add(m);
+      }
+    };
+    clump(plants.halimeda, 15, 3, -0.6, 1.4);
+    clump(plants.caulerpa, 11, 4, -0.4, 1.5);
+    // Rubble: broken coral and shell fragments (2-5 cm) collect at the feet of the rock, where it meets
+    // the sand; it softens the hard line between them. One instanced mesh of lumpy low-poly pieces.
+    {
+      // Broken pieces are angular: a coarse, strongly jittered polyhedron, flat shaded so the facets read.
+      let g = new THREE.IcosahedronGeometry(1, 1);
+      g.deleteAttribute('uv');
+      g = mergeVertices(g);
+      const p = g.attributes.position, v = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i);
+        v.multiplyScalar(0.55 + 0.9 * noise.fbm3(v.x * 2.1 + 5, v.y * 2.1, v.z * 2.1, 2)).multiply(_s.set(1.2, 0.5, 0.7));
+        p.setXYZ(i, v.x, v.y, v.z);
+      }
+      g = g.toNonIndexed();
+      g.computeVertexNormals();
+      const N = 260, mesh = new THREE.InstancedMesh(g, stdMat({ color: 0xffffff, roughness: 1, flatShading: true, bumpMap: pores, bumpScale: 2.5 }, 0.7), N);
+      // Bleached skeleton and shell, dulled by a film of algae and detritus; a little old coralline.
+      const tints = ['#b8ad96', '#a89c84', '#c4b9a2', '#9a9080', '#8e8a7a', '#a8968e'].map(C);
+      const e = new THREE.Euler();
+      let n = 0;
+      for (let i = 0; i < 3000 && n < N; i++) {
+        const x = range(grng, -7.2, 7.2) * sx, z = range(grng, -3.0, 1.9);
+        if (hf.sample(x, z) > SAND) continue;
+        let near = 0;
+        for (let k = 0; k < 6; k++) near = Math.max(near, hf.sample(x + Math.cos(k * 1.05) * 0.45, z + Math.sin(k * 1.05) * 0.45));
+        if (near < 0.5) continue;
+        const s = range(grng, 0.05, 0.18);
+        _q.setFromEuler(e.set(range(grng, -0.5, 0.5), grng() * 6.3, range(grng, -0.5, 0.5)));
+        _m.compose(_p.set(x, groundAt(x, z) + s * 0.15, z), _q, _s.set(s, s, s));
+        mesh.setMatrixAt(n, _m);
+        mesh.setColorAt(n, tints[Math.floor(grng() * tints.length)]);
+        n++;
+      }
+      mesh.count = n;
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.userData.noHeight = true;
+      mesh.name = 'rubble';
+      corals.add(mesh);
+      planted.rubble = n;
+    }
+    planted.grass = corals.children.filter((o) => o.name === 'seagrass').length;
+    planted.clumps = spots.length - planted.grass;
+  }
 
   // Moray caves: an arch of rock (two side stones and a back stone under a flat roof) with its mouth to
   // the front, so every tank has a crevice for an eel. They draw from their own random stream, so the
@@ -760,14 +930,13 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       const stone = (x, y, z, w, h, d, solid) => {
         let m;
         if (scenery.rocks.length) {
-          m = scenery.rocks[Math.floor(crng() * scenery.rocks.length)].clone();
-          m.scale.set(w * 1.1, h * 1.05, d * 1.1);
+          m = fitRock(crng, w, h, d, 1.1, 1.05, range(crng, -0.3, 0.3));
           m.position.set(x, y - h * 0.1, z);
         } else {
           m = new THREE.Mesh(rockGeometry(crng, noise, w, h, d), rockMat);
           m.position.set(x, y + h * 0.5, z);
+          m.rotation.y = range(crng, -0.3, 0.3);
         }
-        m.rotation.y = range(crng, -0.3, 0.3);
         m.castShadow = m.receiveShadow = true;
         if (!solid) m.userData.noHeight = true;
         cave.add(m);
@@ -807,6 +976,53 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     homes.push(new THREE.Vector3(x, hf.sample(x, z) + 0.35, z));
   }
 
+  // Shelters: where a fish can tuck in for the night or dive when scared. Gaps under rock (a ray up from
+  // the sand meets rock overhead, the front is open, and there is room for a fish), and the branches of
+  // the home staghorn. { pos (middle of the gap), floor, top (rock above), r (how near counts as in it),
+  // kind }. The height field holds the rock's top, so a fish inside one is let below it (fish.js).
+  const shelters = [];
+  {
+    reef.updateMatrixWorld(true);
+    // From the open water in front of each rock face, look back into it at two heights: where the low
+    // sightline goes clearly deeper than the high one, the face is undercut. The shelter is just inside
+    // the lip, and a ray up from there finds the roof. (Rays start in open water: three.js ignores
+    // back faces, so a ray from inside the rock would see nothing.)
+    const ray = new THREE.Raycaster(), UPV = new THREE.Vector3(0, 1, 0), BACK = new THREE.Vector3(0, 0, -1);
+    const hit = (o, d, far) => { ray.set(o, d); ray.far = far; return ray.intersectObject(rocks, true)[0] || null; };
+    for (let x = -7 * sx; x <= 7 * sx && shelters.length < 14; x += 0.3) {
+      let zr = 1.8;
+      while (zr > -2.8 && hf.sample(x, zr) < 0.5) zr -= 0.2;
+      if (zr <= -2.8) continue;
+      const zf = zr + 0.7, floor = Math.max(0, groundAt(x, zf)) + 0.05;
+      const lo = hit(new THREE.Vector3(x, floor + 0.2, zf), BACK, 3), hi = hit(new THREE.Vector3(x, floor + 0.8, zf), BACK, 3);
+      if (!lo || !hi || lo.distance - hi.distance < 0.3) continue;
+      const p = new THREE.Vector3(x, floor + 0.2, zf - hi.distance - 0.15);
+      const up = hit(p, UPV, 2);
+      if (!up || up.distance < 0.2) continue;
+      if (shelters.some((s) => s.pos.distanceTo(p) < 1.0)) continue;
+      const topY = p.y + up.distance;
+      shelters.push({ pos: new THREE.Vector3(p.x, (floor + topY) / 2, p.z), floor, top: topY, r: 0.45, kind: 'ledge' });
+    }
+    // Crevices: low spots between rocks, walled left, right and behind, open to the front. The fish
+    // stays below the lower rim, so the walls hide it.
+    for (let x = -7 * sx; x <= 7 * sx && shelters.length < 16; x += 0.25) {
+      for (let z = -2.6; z <= 1.2; z += 0.25) {
+        const h = hf.sample(x, z), wl = hf.sample(x - 0.6, z), wr = hf.sample(x + 0.6, z);
+        if (wl < h + 0.5 || wr < h + 0.5 || hf.sample(x, z - 0.6) < h + 0.4 || hf.sample(x, z + 0.6) > h + 0.2) continue;
+        const p = new THREE.Vector3(x, h + 0.3, z);
+        if (shelters.some((s) => s.pos.distanceTo(p) < 1.0)) continue;
+        shelters.push({ pos: p, floor: h + 0.05, top: Math.min(wl, wr), r: 0.35, kind: 'ledge' });
+      }
+    }
+  }
+  let shoalCoral = null;
+  if (stagMain) {
+    const b = new THREE.Box3().setFromObject(stagMain), c = b.getCenter(new THREE.Vector3());
+    shoalCoral = { pos: new THREE.Vector3(c.x, b.min.y + (b.max.y - b.min.y) * 0.75, c.z), top: b.max.y, r: Math.max(b.max.x - b.min.x, b.max.z - b.min.z) * 0.4 };
+    // Chromis dive in among the branches: down to halfway up the colony.
+    shelters.push({ pos: new THREE.Vector3(c.x, b.min.y + (b.max.y - b.min.y) * 0.55, c.z), floor: b.min.y + (b.max.y - b.min.y) * 0.4, top: b.max.y + 0.2, r: shoalCoral.r, kind: 'coral' });
+  }
+
   return {
     group: reef,
     heightAt: (x, z) => hf.sample(x, z),
@@ -815,6 +1031,9 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     bubbler: new THREE.Vector3(6.3 * sx, 0.6, -3.4),
     homes,
     caves,
+    planted,   // { grass: patches, clumps: algae clumps } that found clear sand
+    shelters,
+    shoalCoral,   // the chromis' home staghorn: { pos (upper middle), top, r }
   };
 }
 

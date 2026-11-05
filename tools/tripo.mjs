@@ -33,12 +33,19 @@ export const JOBS = {
   rock_b: { kind: 'rock', faces: 30000, prompt: 'Tall jagged reef aquarium live rock pillar, honeycomb porous calcium carbonate, deep pockets and overhangs, encrusted with purple coralline algae and brown film algae' },
   rock_c: { kind: 'rock', faces: 30000, prompt: 'Flat wide reef aquarium live rock shelf slab, porous dead coral skeleton texture, small holes, pink coralline algae crust on top, beige underneath' },
   rock_d: { kind: 'rock', faces: 30000, prompt: 'Arched reef aquarium live rock with a natural cave opening, very porous branching coral rubble texture, mottled pink, mauve and cream coralline algae' },
+  rock_e: { kind: 'rock', faces: 30000, prompt: 'Reef aquarium live rock ledge with a deep shaded overhang underneath, porous limestone, crevices big enough for a small fish, crust of pink and violet coralline algae on the upper surface, grey-beige below' },
+  rock_f: { kind: 'rock', faces: 30000, prompt: 'Low wide mound of reef live rock rubble, many fist-sized porous coral fragments cemented together, small gaps between pieces, cream and tan with scattered purple coralline algae and short green turf algae' },
+  rock_g: { kind: 'rock', faces: 30000, prompt: 'Rounded reef aquarium live rock boulder, dense pitted surface with many small boreholes from worms and sponges, mottled ochre, rust and grey with patches of maroon coralline algae' },
+  rock_h: { kind: 'rock', faces: 30000, prompt: 'Branching reef aquarium live rock made of old dead acropora skeleton, thick knobbly arms reaching sideways, rough porous texture, bleached cream with pink coralline algae on the arm tops' },
   coral_staghorn: { kind: 'coral', faces: 40000, prompt: 'Living staghorn acropora coral colony, many thick cylindrical branches forking upward, bright orange tissue with paler yellow growing tips, tiny polyp bumps along the branches' },
   coral_finger: { kind: 'coral', faces: 40000, prompt: 'Dome-shaped colony of white finger coral (Porites), hundreds of short blunt cream-white fingers packed into a hemisphere' },
   coral_cauliflower: { kind: 'coral', faces: 40000, prompt: 'Lavender cauliflower coral colony (Pocillopora), rounded bush of short knobby lumpy branches, soft lavender-purple with pale tips' },
   coral_brain: { kind: 'coral', faces: 30000, prompt: 'Round brain coral (Diploria) boulder, deep meandering grooves and ridges over the whole dome, olive green ridges with tan valleys' },
   coral_leather: { kind: 'coral', faces: 30000, prompt: 'Toadstool leather coral (Sarcophyton), short thick smooth stalk with a wide wavy folded mushroom cap, pale green-yellow cap covered in fine polyp texture' },
   coral_fan: { kind: 'coral', faces: 30000, prompt: 'Pink ruffled lettuce coral (Pectinia), clusters of thin wavy upright plates with frilly edges, pink and magenta with lighter edges' },
+  // Plants: 'plant' kind, placed on sand and rock feet by reef.js, swaying with the current in the shader.
+  plant_halimeda: { kind: 'plant', faces: 30000, prompt: 'Clump of Halimeda cactus macroalgae, many upright branching chains of small flat green coin-shaped calcified segments, bright green with pale lime edges, growing from a small holdfast in sand' },
+  plant_caulerpa: { kind: 'plant', faces: 30000, prompt: 'Clump of Caulerpa racemosa grape macroalgae, upright stalks densely covered in small glossy round green bead-like vesicles, short creeping runners at the base, rich green' },
   fish_clownfish: { kind: 'fish', species: 'clownfish', faces: 20000, prompt: 'Single Ocellaris clownfish (Amphiprion ocellaris), oval laterally compressed body, bright orange, three white vertical bands (behind the eye, mid-body bulging forward, at the tail base) each with a thin black edge, rounded orange fins with black margins, large dark eye' },
 };
 

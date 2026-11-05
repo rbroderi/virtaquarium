@@ -10,7 +10,7 @@ export const TANK_VERSION = 1;
 export const SCENERY = ['reef'];       // layouts buildReef() knows (bake.js bakes each); more to come
 // Every tank kind: the reef layouts, and the jelly tank (jelly.js: a backlit blue kreisel, no scenery).
 export const TANK_SCENERY = [...SCENERY, 'jelly'];
-export const LIMITS = { perSpecies: 12, totalFish: 30, nameLength: 20, feedMinutes: 120 };
+export const LIMITS = { perSpecies: 12, totalFish: 32, nameLength: 20, feedMinutes: 120 };   // default stock is 31 with the critters
 // Which animals each kind of tank can hold: jellies live only in the jelly tank, and it holds only jellies.
 const HABITAT = { reef: [...SPECIES, ...CRITTER_SPECIES], jelly: JELLY_SPECIES };
 const defaultFish = (scenery) => HABITAT[scenery === 'jelly' ? 'jelly' : 'reef'].map((sp) => ({ species: sp.id, count: sp.count }));

@@ -113,7 +113,7 @@ $('light').oninput = (e) => setLight(e.target.value / 100);
 $('rig').value = rig.preset; $('rig').onchange = (e) => { rig.preset = e.target.value; setLight(); };
 const TONE = { aces: THREE.ACESFilmicToneMapping, neutral: THREE.NeutralToneMapping, agx: THREE.AgXToneMapping, none: THREE.NoToneMapping };
 const setTone = (k) => { renderer.toneMapping = TONE[k] ?? TONE.aces; for (const m of fish) m.traverse((o) => { if (o.material) [].concat(o.material).forEach((x) => (x.needsUpdate = true)); }); };
-$('tone').value = params.get('tone') || 'aces'; $('tone').onchange = (e) => setTone(e.target.value);
+$('tone').value = params.get('tone') || 'neutral'; $('tone').onchange = (e) => setTone(e.target.value);
 setTone($('tone').value);
 setLight(1);
 await show(sel.value);

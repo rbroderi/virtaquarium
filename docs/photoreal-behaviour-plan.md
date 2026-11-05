@@ -42,6 +42,7 @@ The mid-laptop budget is about 3 ms more before integrated GPUs drop under 60 fp
   - Night colouring: pale clownfish and tangs, darker chromis.
   - No GPU cost. Not carried to the Roku: night sprites would break the memory budget.
 - **R7. Glass (optional).** A faint double-contour refraction.
+- **R8. Lighting from above (user request, 2026-11-05).** The renders still look flat. Make the sun (or the tank's lamp) clearly the dominant light from overhead and cut the fake ambient fill: hemisphere light, environment intensity and the ambient water light in `main.js` `applyLight` and `bake.js`. Shadows, undersides and form should then read. Check with look-check renders, and keep the bake on the same values.
 
 ## 3. Brains
 
@@ -116,7 +117,7 @@ The existing climb, jitter and roof numbers stay as regression gates. A `tools/c
 |---|---|---|---|
 | P1 | R1 tone/grade, R3 scale specular, R6 eyes and night colour, B1 perception, B3 fear contagion | 3 days | `albedoGain` refit; rebake all sprites |
 | P2 | B0 blended steering, B2 schooling, B4 shelter and dusk, behaviour check | 4 days | shelter bypass must not regress climb/jitter |
-| P3 | R4 scenery pass | 5 days | bake time +10% |
+| P3 | R8 lighting from above, R4 scenery pass | 5 days | bake time +10% |
 | P4 | R2 motion blur, R5 particulates and DoF by default | 2 days | integrated-GPU budget; keep `?photo=0` |
 | P5 | B5 dominance, B6 hunting, B7 feeding, B8 viewer | 4 days | tuning time |
 | P6 | Roku 2D brain port and shelter export | 3 days | BrightScript CPU |

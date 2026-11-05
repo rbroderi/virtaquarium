@@ -360,7 +360,12 @@ export function makeWaterBackdrop() {
         // Start the infinite path at the glass, at the height the ray crosses it.
         float t = (UW_GLASS - cameraPosition.z) / min(-1e-3, dir.z);
         float y = cameraPosition.y + dir.y * max(t, 0.0);
-        gl_FragColor = vec4(uwInscatter(uBase, dir, y) * UW_WB, 1.0);
+        // Underwater radiance falls steeply away from the light: looking up towards the lamp is several
+        // times brighter than looking level, and downward light is dimmer still (the radiance
+        // distribution of the water column). Across the window this reads as open water fading darker
+        // towards the bottom of the frame instead of a flat teal.
+        float grade = mix(0.55, 1.3, smoothstep(-0.3, 0.35, dir.y));
+        gl_FragColor = vec4(uwInscatter(uBase, dir, y) * UW_WB * grade, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
@@ -415,6 +420,8 @@ uniform mat4 uViewInv;
 uniform vec3 uCamPos;
 uniform vec3 uSunColor;
 uniform float uScatter;
+uniform sampler2D tVel;
+uniform float uBlur;
 varying vec2 vUv;
 const float PI4 = 12.566371;
 float hg(float c, float g) { float g2 = g * g; return (1.0 - g2) / (PI4 * pow(1.0 + g2 - 2.0 * g * c, 1.5)); }
@@ -422,6 +429,19 @@ float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00
 void main() {
   vec3 col = texture2D(tColor, vUv).rgb;
   float d = texture2D(tDepth, vUv).x;
+  // Motion blur: where a moving fish is the visible surface, average the frame along its motion over
+  // the shutter time (a video camera's ~1/100 s), centred on the pixel.
+  if (uBlur > 0.0) {
+    vec4 vel = texture2D(tVel, vUv);
+    if (vel.w > 0.5 && abs(vel.z - d) < 0.0006) {
+      vec2 v = vel.xy * uBlur;
+      if (dot(v, v) > 1e-8) {
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < 7; i++) acc += texture2D(tColor, vUv + v * (float(i) / 6.0 - 0.5)).rgb;
+        col = acc / 7.0;
+      }
+    }
+  }
   vec4 vp = uProjInv * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
   vp /= vp.w;
   vec3 wp = (uViewInv * vp).xyz;
@@ -461,7 +481,9 @@ export class WaterRenderer {
       uProjInv: { value: new THREE.Matrix4() }, uViewInv: { value: new THREE.Matrix4() },
       uCamPos: { value: new THREE.Vector3() }, uSunColor: { value: new THREE.Color() },
       uScatter: { value: scatterPerMetre * METRES_PER_UNIT },
+      tVel: { value: null }, uBlur: { value: 0 },
     };
+    this.blurScale = 0;
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
       uniforms: this.uniforms, depthTest: false, depthWrite: false,
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
@@ -474,6 +496,54 @@ export class WaterRenderer {
     this._size = new THREE.Vector2();
   }
 
+  // Motion blur for moving models (the fish). Call at the start of each simulation step, before they
+  // move, with the models and the camera: their poses now are the "previous" ones for the next render.
+  // blurScale (set by the caller) = shutter time / step time; 0 turns the blur off (the bake).
+  markPrev(models, camera) {
+    if (!this.vel) {
+      this.vel = {
+        target: new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: true }),
+        prevVP: new THREE.Matrix4(),
+        mat: new THREE.ShaderMaterial({
+          side: THREE.DoubleSide,
+          uniforms: { uPrevModel: { value: new THREE.Matrix4() }, uPrevVP: { value: new THREE.Matrix4() } },
+          vertexShader: `uniform mat4 uPrevModel, uPrevVP; varying vec4 vCur, vPrev;
+            void main() { vCur = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+              vPrev = uPrevVP * uPrevModel * vec4(position, 1.0); gl_Position = vCur; }`,
+          // Motion in texture units since the previous step, and this surface's depth (for the composite
+          // to blur only where the fish is what's seen).
+          fragmentShader: `varying vec4 vCur, vPrev;
+            void main() { gl_FragColor = vec4((vCur.xy / vCur.w - vPrev.xy / vPrev.w) * 0.5, gl_FragCoord.z, 1.0); }`,
+        }),
+        _m: new THREE.Matrix4(),
+      };
+      this.uniforms.tVel.value = this.vel.target.texture;
+    }
+    const V = this.vel;
+    for (const g of models) {
+      g.updateMatrixWorld();
+      const ud = g.userData;
+      (ud.prevWorld ||= new THREE.Matrix4()).copy(g.matrixWorld);
+      if (ud.velHooked) continue;
+      ud.velHooked = true;
+      // Velocity pass: these meshes (layer 1) with the velocity material; each draw sets its own previous
+      // world matrix (the model's previous pose times the mesh's place in the model).
+      const inv = new THREE.Matrix4();
+      g.traverse((o) => {
+        if (!o.isMesh) return;
+        o.layers.enable(1);
+        o.onBeforeRender = (r, s, cam, geo, mat) => {
+          if (mat !== V.mat) return;
+          inv.copy(g.matrixWorld).invert();
+          V.mat.uniforms.uPrevModel.value.multiplyMatrices(ud.prevWorld, V._m.multiplyMatrices(inv, o.matrixWorld));
+          V.mat.uniformsNeedUpdate = true;
+        };
+      });
+    }
+    camera.updateMatrixWorld();
+    V.prevVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  }
+
   // output: render target for the composited frame (e.g. PhotoCamera.begin()), or null for the screen.
   render(scene, camera, sun, output = null) {
     const r = this.renderer;
@@ -481,6 +551,26 @@ export class WaterRenderer {
     if (this.target.width !== this._size.x || this.target.height !== this._size.y) this.target.setSize(this._size.x, this._size.y);
     r.setRenderTarget(this.target);
     r.render(scene, camera);
+    const V = this.vel, blur = V && this.blurScale > 0;
+    this.uniforms.uBlur.value = blur ? this.blurScale : 0;
+    if (blur) {
+      const w = Math.max(1, this._size.x >> 1), h = Math.max(1, this._size.y >> 1);
+      if (V.target.width !== w || V.target.height !== h) V.target.setSize(w, h);
+      const mask = camera.layers.mask, bg = scene.background, cc = r.getClearColor(new THREE.Color()), ca = r.getClearAlpha();
+      V.mat.uniforms.uPrevVP.value.copy(V.prevVP);
+      camera.layers.set(1);
+      scene.overrideMaterial = V.mat; scene.background = null;
+      r.setRenderTarget(V.target);
+      r.setClearColor(0x000000, 0);
+      r.clear();
+      const shadows = r.shadowMap.autoUpdate;
+      r.shadowMap.autoUpdate = false;   // the main pass already drew them
+      r.render(scene, camera);
+      r.shadowMap.autoUpdate = shadows;
+      scene.overrideMaterial = null; scene.background = bg;
+      camera.layers.mask = mask;
+      r.setClearColor(cc, ca);
+    }
     r.setRenderTarget(null);
     const u = this.uniforms;
     u.uProjInv.value.copy(camera.projectionMatrixInverse);

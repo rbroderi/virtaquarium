@@ -1060,6 +1060,8 @@ function eyeGeometry(prof, sp, side) {
     .multiply(new THREE.Matrix4().makeRotationFromQuaternion(q))
     .multiply(new THREE.Matrix4().makeScale(e.r, e.r, e.r * 0.3));
   geo.applyMatrix4(m);
+  // Which eye (+1 right, -1 left): the gaze shader moves the iris forward on both.
+  geo.setAttribute('eyeSide', new THREE.Float32BufferAttribute(new Float32Array(p.count).fill(side), 1));
   return geo;
 }
 
@@ -1223,6 +1225,19 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         transformed.y = p0.y + liftY(p0.x);
         transformed.z = swH + swZ * swC;`);
     if (tissue?.kind === 'fin') shader.defines = { ...shader.defines, FISH_FIN: '' };
+    if (tissue?.night) {
+      // Night (and stress) colours: chromatophores contract or expand over minutes (Hobson 1972: at dusk
+      // many diurnal reef fish pale or blotch, others darken). uNight 0..1, set in fish.js.
+      //   pale: desaturates towards a light mottled grey (yellow tang's white night patch, blue tang's fade)
+      //   dark: desaturates and darkens (chromis, idol)
+      const pale = tissue.night === 'pale';
+      shader.fragmentShader = 'uniform float uNight;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+        { float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          ${pale
+    ? 'float blot = 0.5 + 0.5 * sin(vMapUv.x * 23.0 + sin(vMapUv.y * 9.0) * 2.0); vec3 night = mix(vec3(l), vec3(0.75 + 0.2 * blot), 0.45);'
+    : 'vec3 night = vec3(l) * 0.45 + diffuseColor.rgb * 0.12;'}
+          diffuseColor.rgb = mix(diffuseColor.rgb, night, uNight * 0.8); }`);
+    }
     if (tissue?.jaw) {
       shader.defines = { ...shader.defines, FISH_JAW: '' };
       shader.vertexShader = 'attribute float aJaw;\nattribute float aJawG;\nuniform float uGape;\nuniform vec2 uHinge;\n' + shader.vertexShader;
@@ -1240,7 +1255,7 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         .replace('#include <aomap_fragment>', 'reflectedLight.directSpecular *= 1.0 - vSlit;\n  reflectedLight.indirectSpecular *= 1.0 - vSlit;\n  reflectedLight.directDiffuse *= 1.0 - 0.85 * vSlit;\n  #include <aomap_fragment>');
     }
   };
-  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') : 'plain');
+  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') + (tissue.night ? '-night-' + tissue.night : '') : 'plain');
   return addCaustics(base);   // fish swim through the same focused light as the reef
 }
 
@@ -1601,15 +1616,18 @@ export function buildFishModel(sp, opts = {}) {
   const uniforms = swimUniforms({
     uFinH: { value: a.prof.H }, uXPed: { value: a.prof.xPed },
     uAnguil: { value: sp.swim?.mode === 'anguilliform' ? 1 : 0 },
-    uGape: { value: 0 }, uHinge: { value: new THREE.Vector2(9, 9) },
+    uGape: { value: 0 }, uHinge: { value: new THREE.Vector2(9, 9) }, uNight: { value: 0 },
   });
   const M = mouthOf(sp);   // the lower jaw hinges at the corner of the mouth
   uniforms.uHinge.value.set(a.prof.x(M.u), a.prof.centre(M.u) - M.v * a.prof.half(M.u));
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
-    roughness: sp.body.scales === 0 ? 0.3 : 0.42, metalness: 0.0, ior: IN_WATER_IOR,   // scaleless skin: a mucus film
+    roughness: sp.body.scales === 0 ? 0.3 : 0.36, metalness: 0.0, ior: IN_WATER_IOR,   // scaleless skin: a mucus film
+    // Scales overlap in rows along the body, so a light's glint stretches along the flank rather than
+    // sitting as a round spot (the body UV's u runs nose to tail, so the tangent is the body axis).
+    anisotropy: sp.body.scales === 0 ? 0 : 0.45,
     iridescence: sp.iridescent ? 1.0 : 0.35, iridescenceIOR: 1.8, iridescenceThicknessRange: [180, 420],   // guanine platelet stacks
-  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: true, cover: !!gillOf(sp) });
+  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: true, cover: !!gillOf(sp), night: sp.night });
   const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
   }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
@@ -1649,6 +1667,23 @@ export function buildFishModel(sp, opts = {}) {
   const eyeMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR,
   }), uniforms);
+  // Eye movement: the eyeball turns under a nearly flush cornea, so the iris and pupil slide across the
+  // cap. uGaze = (forward, up) in texture units, set per fish in fish.js (saccades and counter-rolling).
+  uniforms.uGaze = { value: new THREE.Vector2() };
+  {
+    const prev = eyeMat.onBeforeCompile, prevKey = eyeMat.customProgramCacheKey.bind(eyeMat);
+    a.eyeTex.wrapS = a.eyeTex.wrapT = THREE.ClampToEdgeWrapping;
+    eyeMat.onBeforeCompile = (s, r) => {
+      prev(s, r);
+      s.uniforms.uGaze = uniforms.uGaze;
+      s.vertexShader = 'attribute float eyeSide;\nvarying float vEyeSide;\n' + s.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\n  vEyeSide = eyeSide;');
+      s.fragmentShader = 'uniform vec2 uGaze;\nvarying float vEyeSide;\n' + s.fragmentShader.replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          diffuseColor *= texture2D(map, vMapUv + vec2(uGaze.x * vEyeSide, -uGaze.y));
+        #endif`);
+    };
+    eyeMat.customProgramCacheKey = () => prevKey() + '-eye';
+  }
   for (const geo of a.eyeGeos) group.add(new THREE.Mesh(geo, eyeMat));
 
   group.userData = { uniforms, pects, fan: p?.kind === 'fan' };

@@ -17,6 +17,7 @@ import { mulberry32 } from './util.js';
 import { SCENERY } from './tank.js';
 import { bakeReefLight, reefLightUniforms } from './reefLight.js';
 import { viewOptions, setStrip, windowTopY, PAN_PERIOD } from './view.js';
+import { toneFor, LIGHTS } from './rig.js';
 
 const params = new URLSearchParams(location.search);
 const FRAMES = Number(params.get('frames') || 8);   // swim-cycle frames per viewing angle
@@ -74,7 +75,8 @@ function cropCanvas(src, [x, y, w, h]) {
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const TONE = toneFor(params);
+renderer.toneMapping = TONE.mapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // The live tank's camera at rest (main.js), framed on the strip the Roku shows (view.js).
@@ -88,8 +90,8 @@ function liveCamera() {
 }
 // The live lights at full daylight: main.js's light rig puts the sun at 2.6 x 1 + 0.05, and lowers the
 // ambient water light to 0.75 against the reef light.
-const SUN = 2.65, AMBIENT = params.get('reeflight') !== '0' ? 0.75 : 1;
-const EXPOSURE = 1.25;   // main.js applyLight at full daylight
+const SUN = LIGHTS.sun + 0.05, AMBIENT = params.get('reeflight') !== '0' ? LIGHTS.ambient : 1;
+const EXPOSURE = 1.25 * TONE.gain;   // main.js applyLight at full daylight
 
 // ---------- fish sprites ----------
 
@@ -102,9 +104,9 @@ function fishScene() {
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(INSCATTER_DAY.clone(), 1.0);
   scene.environment = makeEnvironment(renderer);
-  scene.environmentIntensity = 0.35 * AMBIENT;
+  scene.environmentIntensity = LIGHTS.env * AMBIENT;
   const sun = new THREE.DirectionalLight(0xfff2dc, SUN);
-  sun.position.set(3, 22, 7);
+  sun.position.set(...LIGHTS.sunPos);
   scene.add(sun, new THREE.HemisphereLight(new THREE.Color(0.86, 0.92, 1.0), 0x8a7458, AMBIENT));
   const cam = liveCamera();
   scene.userData.fishY = (0.25 + Math.min(9.2, windowTopY(cam) - 0.5)) / 2;
@@ -190,7 +192,7 @@ async function bakeFish(sp, scene) {
   }
   scene.remove(model);
 
-  const { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host, prey, shy } = sp.brain;
+  const { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host, prey, shy, predator, nocturnal, lurker } = sp.brain;
   return {
     name: sp.name, sci: sp.sci, fact: sp.fact, count: sp.count,
     frameW: cw, frameH: ch, frames: FRAMES, angles,
@@ -200,7 +202,7 @@ async function bakeFish(sp, scene) {
     turnRate: +(sp.swim.hoverTurn * 180 / Math.PI).toFixed(0),   // deg/s, pectoral-sculling turn at low speed
     lengthPx: Math.round(size.x * PX_PER_UNIT),
     ...(eel && { tailHz: sp.brain.tailHz }),   // eels beat far slower than the player's default rate
-    brain: { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host: !!host, prey: !!prey, shy: shy || 0 },
+    brain: { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host: !!host, prey: !!prey, shy: shy || 0, predator: !!predator && !lurker, nocturnal: !!nocturnal },
   };
 }
 
@@ -221,7 +223,7 @@ async function bakeScenery(scenery, seed) {
   const camera = liveCamera();   // framed on the whole strip the zoomed window shows
 
   const sun = new THREE.DirectionalLight(0xfff2dc, SUN);
-  sun.position.set(3, 22, 7);
+  sun.position.set(...LIGHTS.sunPos);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
@@ -238,12 +240,12 @@ async function bakeScenery(scenery, seed) {
   if (params.get('reeflight') !== '0') {
     bakeReefLight(renderer, reef, {
       sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
-      sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(0.75), ground: hemi.groundColor.clone().multiplyScalar(0.75),
+      sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(LIGHTS.ambient), ground: hemi.groundColor.clone().multiplyScalar(LIGHTS.ambient),
       camera,
     });
   }
   hemi.intensity = AMBIENT;
-  scene.environmentIntensity = 0.35 * AMBIENT;
+  scene.environmentIntensity = LIGHTS.env * AMBIENT;
   const surface = makeSurface(TANK_W);
   scene.add(surface);
   waterUniforms.uCaustic.value = 1;
@@ -355,6 +357,8 @@ async function bakeScenery(scenery, seed) {
     entry: {
       scenery, seed, backdrop: backTiles, foreground: fgTiles, water,
       floor, anemone: project(an.x, an.y, an.z), swimBox: [tl[0], tl[1], br[0], br[1]], bubbler,
+      // Where fish hide (reef.js shelters): screen position, and kind ('ledge' or the shoal's 'coral').
+      shelters: (reef.shelters || []).map((s) => ({ pos: project(s.pos.x, s.pos.y, s.pos.z), kind: s.kind })),
     },
   };
 }

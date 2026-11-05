@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated": "2026-11-05T16:45:25.745Z",
+  "generated": "2026-11-05T18:52:38.188Z",
   "screen": {
     "w": 1920,
     "h": 1080
@@ -134,7 +134,9 @@
         "activity": 0.7,
         "host": true,
         "prey": true,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "bluetang": {
@@ -255,7 +257,9 @@
         "activity": 0.8,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "yellowtang": {
@@ -376,7 +380,9 @@
         "activity": 0.75,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "moorishidol": {
@@ -497,7 +503,9 @@
         "activity": 0.7,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "lionfish": {
@@ -618,7 +626,9 @@
         "activity": 0.3,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": true,
+        "nocturnal": true
       }
     },
     "copperband": {
@@ -739,7 +749,9 @@
         "activity": 0.6,
         "host": false,
         "prey": false,
-        "shy": 0.5
+        "shy": 0.5,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "royalgramma": {
@@ -860,7 +872,9 @@
         "activity": 0.6,
         "host": false,
         "prey": true,
-        "shy": 0.9
+        "shy": 0.9,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "clowntrigger": {
@@ -981,7 +995,9 @@
         "activity": 0.8,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "emperorangel": {
@@ -1102,7 +1118,9 @@
         "activity": 0.7,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "longnose": {
@@ -1223,7 +1241,9 @@
         "activity": 0.65,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "chromis": {
@@ -1344,7 +1364,9 @@
         "activity": 0.9,
         "host": false,
         "prey": true,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "coralbeauty": {
@@ -1465,7 +1487,9 @@
         "activity": 0.7,
         "host": false,
         "prey": false,
-        "shy": 0.7
+        "shy": 0.7,
+        "predator": false,
+        "nocturnal": false
       }
     },
     "moray": {
@@ -1587,7 +1611,132 @@
         "activity": 0.2,
         "host": false,
         "prey": false,
-        "shy": 0
+        "shy": 0,
+        "predator": false,
+        "nocturnal": true
+      }
+    },
+    "cleanerwrasse": {
+      "name": "Bluestreak Cleaner Wrasse",
+      "sci": "Labroides dimidiatus",
+      "fact": "Keeps a cleaning station: other fish queue up and hold still while it picks parasites off them.",
+      "count": 1,
+      "frameW": 176,
+      "frameH": 1274,
+      "frames": 8,
+      "angles": [
+        {
+          "yaw": -90,
+          "sheet": "fish/cleanerwrasse-a0.png",
+          "x": 69,
+          "y": 607,
+          "w": 35,
+          "h": 56,
+          "cols": 8,
+          "mb": 0.06
+        },
+        {
+          "yaw": -67.5,
+          "sheet": "fish/cleanerwrasse-a1.png",
+          "x": 44,
+          "y": 607,
+          "w": 78,
+          "h": 56,
+          "cols": 8,
+          "mb": 0.14
+        },
+        {
+          "yaw": -45,
+          "sheet": "fish/cleanerwrasse-a2.png",
+          "x": 22,
+          "y": 608,
+          "w": 124,
+          "h": 54,
+          "cols": 8,
+          "mb": 0.21
+        },
+        {
+          "yaw": -22.5,
+          "sheet": "fish/cleanerwrasse-a3.png",
+          "x": 10,
+          "y": 608,
+          "w": 152,
+          "h": 54,
+          "cols": 8,
+          "mb": 0.26
+        },
+        {
+          "yaw": 0,
+          "sheet": "fish/cleanerwrasse-a4.png",
+          "x": 9,
+          "y": 608,
+          "w": 158,
+          "h": 54,
+          "cols": 8,
+          "mb": 0.27
+        },
+        {
+          "yaw": 22.5,
+          "sheet": "fish/cleanerwrasse-a5.png",
+          "x": 10,
+          "y": 608,
+          "w": 152,
+          "h": 54,
+          "cols": 8,
+          "mb": 0.26
+        },
+        {
+          "yaw": 45,
+          "sheet": "fish/cleanerwrasse-a6.png",
+          "x": 22,
+          "y": 608,
+          "w": 124,
+          "h": 54,
+          "cols": 8,
+          "mb": 0.21
+        },
+        {
+          "yaw": 67.5,
+          "sheet": "fish/cleanerwrasse-a7.png",
+          "x": 44,
+          "y": 607,
+          "w": 78,
+          "h": 56,
+          "cols": 8,
+          "mb": 0.14
+        },
+        {
+          "yaw": 90,
+          "sheet": "fish/cleanerwrasse-a8.png",
+          "x": 72,
+          "y": 607,
+          "w": 35,
+          "h": 56,
+          "cols": 8,
+          "mb": 0.06
+        }
+      ],
+      "textureMB": 1.6,
+      "cruiseYaw": 20.1,
+      "turnRate": 138,
+      "lengthPx": 156,
+      "brain": {
+        "maxSpeed": 3.2,
+        "zone": [
+          0.5,
+          1
+        ],
+        "school": 0,
+        "grazer": 0,
+        "territorial": 0,
+        "boldness": 0.75,
+        "curiosity": 0.5,
+        "activity": 0.8,
+        "host": false,
+        "prey": true,
+        "shy": 0,
+        "predator": false,
+        "nocturnal": false
       }
     }
   },
@@ -1637,37 +1786,37 @@
         {
           "file": "scenery/reef-7-fg-0.png",
           "rect": [
-            60,
+            62,
             670,
-            395,
-            406
+            355,
+            397
           ]
         },
         {
           "file": "scenery/reef-7-fg-1.png",
           "rect": [
             549,
-            809,
+            799,
             475,
-            254
+            264
           ]
         },
         {
           "file": "scenery/reef-7-fg-2.png",
           "rect": [
             1024,
-            743,
+            779,
             512,
-            337
+            301
           ]
         },
         {
           "file": "scenery/reef-7-fg-3.png",
           "rect": [
             1536,
-            762,
+            786,
             266,
-            294
+            276
           ]
         }
       ],
@@ -1752,9 +1901,9 @@
         },
         "front": {
           "rect": [
-            60,
+            62,
             670,
-            1742,
+            1740,
             410
           ],
           "frames": [
@@ -1828,18 +1977,18 @@
         }
       },
       "floor": [
-        633,
-        633,
-        633,
-        633,
-        633,
-        634,
-        634,
-        637,
-        646,
-        649,
-        675,
-        703,
+        556,
+        556,
+        556,
+        556,
+        556,
+        558,
+        565,
+        583,
+        594,
+        625,
+        662,
+        702,
         704,
         706,
         706,
@@ -1848,55 +1997,55 @@
         763,
         763,
         763,
-        763,
-        733,
-        683,
-        661,
-        642,
-        609,
-        609,
-        609,
-        609,
-        617,
-        679,
-        675,
-        367,
-        357,
-        357,
-        357,
-        357,
-        619,
         711,
-        711,
-        711,
-        712,
-        733,
-        753,
-        753,
-        755,
-        773,
-        838,
-        885,
-        746,
-        697,
-        694,
-        682,
-        671,
-        670,
-        670,
-        670,
-        670,
+        650,
+        634,
+        633,
+        632,
         630,
-        608,
-        591,
-        585,
-        585,
-        585,
-        585
+        628,
+        622,
+        622,
+        622,
+        622,
+        616,
+        353,
+        345,
+        345,
+        345,
+        345,
+        628,
+        729,
+        729,
+        746,
+        762,
+        770,
+        841,
+        922,
+        922,
+        922,
+        922,
+        922,
+        888,
+        725,
+        691,
+        673,
+        632,
+        609,
+        602,
+        594,
+        593,
+        593,
+        588,
+        573,
+        566,
+        566,
+        566,
+        566
       ],
       "anemone": [
         1481,
-        851
+        881
       ],
       "swimBox": [
         -230,
@@ -1911,7 +2060,65 @@
         ],
         "top": -426,
         "pxPerUnit": 128
-      }
+      },
+      "shelters": [
+        {
+          "pos": [
+            189,
+            860
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            885,
+            935
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            1745,
+            860
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            -71,
+            911
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            424,
+            757
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            1026,
+            859
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            1390,
+            802
+          ],
+          "kind": "ledge"
+        },
+        {
+          "pos": [
+            889,
+            341
+          ],
+          "kind": "coral"
+        }
+      ]
     }
   },
   "bubbles": {

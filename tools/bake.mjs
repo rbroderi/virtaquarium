@@ -26,7 +26,7 @@ for (const arg of process.argv.slice(2)) {
   if (m) query.set(m[1], m[2]);
 }
 
-const TIMEOUT_MS = 60 * 60 * 1000;   // two scenes with the reef light and a 32-frame water loop take ~30 min
+const TIMEOUT_MS = 100 * 60 * 1000;   // 14 fish + a 2x-supersampled scene with the reef light and a 32-frame water loop: ~55 min
 let child;
 const server = await startServer(0, (ev) => {
   if (ev.type === 'saved') console.log('  wrote', ev.path);

@@ -203,15 +203,29 @@ async function main() {
         psi: rand() < 0.5 ? 0 : Math.PI, omega: 0, turnSign: 0, tilt: 0,   // heading: 0 right, +pi/2 at the viewer
         u: 0, du: 0,   // shown angle (index into the angle pages) and its rate, for loading ahead
         phase: rand(), tx: 0, ty: 0, timer: 0, mode: 'cruise',
+        fear: 0, fearAge: 9, caughtT: 0, pendingFear: 0, threatX: 0, threatY: 0, shelter: null,
       });
     }
   }
   fish.sort((a, b) => a.depth - b.depth);
+  // Each fish knows a shelter (bake.js: reef.js shelters in screen space): shoalers their coral, the
+  // rest the nearest ledge to where they start. Hosts keep to the anemone.
+  for (const f of fish) {
+    const b = f.sp.brain, list = scene.shelters || [];
+    if (b.host || !list.length) continue;
+    const coral = list.find((s) => s.kind === 'coral');
+    if (b.school >= 0.8 && coral) { f.shelter = coral; continue; }
+    let best = null, bd = Infinity;
+    for (const s of list) if (s.kind === 'ledge') { const d = Math.abs(s.pos[0] - f.x); if (d < bd) { bd = d; best = s; } }
+    f.shelter = best;
+  }
 
   // Vertical limits for a fish at x: under the surface, above the reef line.
   const limits = (f, x) => {
     const h = f.sp.fh * f.scale;
-    return [by0 + h * 0.5, Math.min(by1, floorAt(x)) - h * 0.35];
+    // A fish at its shelter may go down among the rock (behind the foreground layer).
+    const hiding = f.shelter && (f.mode === 'flee' || f.mode === 'rest') && Math.abs(f.x - f.shelter.pos[0]) < 90;
+    return [by0 + h * 0.5, hiding ? Math.min(by1, f.shelter.pos[1] + h * 0.3) : Math.min(by1, floorAt(x)) - h * 0.35];
   };
 
   function pickTarget(f) {
@@ -241,23 +255,65 @@ async function main() {
     f.timer = range(3, 10) / (0.4 + b.activity) * (f.mode === 'cruise' ? 1 : 1.8);
   }
 
+  // Fear, reduced from brain.js for the Roku's CPU: prey fear a predator heading their way; a shoalmate
+  // that has just bolted passes it on after a reaction delay, weaker by a hop; a scared fish dashes for
+  // its shelter (or away from the threat).
+  function feel(f, dt) {
+    const b = f.sp.brain, L = f.sp.lengthPx * f.scale;
+    f.fear *= Math.exp(-dt * 0.45);
+    f.fearAge += dt;
+    const raise = (s, x, y) => { if (s > f.fear + 0.1) f.fearAge = 0; if (s > f.fear) { f.fear = s; f.threatX = x; f.threatY = y; } };
+    if (b.prey) for (const o of fish) {
+      if (!o.sp.brain.predator) continue;
+      const ox = f.x - o.x, oy = f.y - o.y, d = Math.hypot(ox, oy), R = 2.5 * o.sp.lengthPx * o.scale;
+      if (d < R && Math.abs(o.depth - f.depth) < 0.6 && o.vx * ox + o.vy * oy > 0) raise(0.8 * (1 - d / R), o.x, o.y);
+    }
+    if (f.caughtT > 0) { f.caughtT -= dt; if (f.caughtT <= 0) raise(f.pendingFear, f.threatX, f.threatY); }
+    else if (b.school > 0 && f.fear < 0.3) {
+      for (const o of fish) {
+        if (o === f || o.sp !== f.sp || o.fear < 0.45 || o.fearAge > 1 || Math.hypot(f.x - o.x, f.y - o.y) > 4 * L) continue;
+        f.caughtT = 0.25; f.pendingFear = o.fear * 0.6; f.threatX = o.threatX; f.threatY = o.threatY;
+        break;
+      }
+    }
+  }
+
   function step(f, dt) {
     const b = f.sp.brain;
     f.timer -= dt;
+    feel(f, dt);
+    let boost = 1;
+    if (f.fear > 0.4) {
+      f.mode = 'flee'; boost = 2.5; f.timer = Math.max(f.timer, 0.5);
+      if (f.shelter) { f.tx = f.shelter.pos[0]; f.ty = f.shelter.pos[1]; f.tdepth = -0.5; }
+      else { f.tx = Math.min(Math.max(f.x + (f.x - f.threatX) * 2, bx0 + 60), bx1 - 60); f.ty = f.y + (f.y - f.threatY); }
+    } else if (f.mode === 'flee') f.timer = 0;
     const dx = f.tx - f.x, dy = f.ty - f.y, dist = Math.hypot(dx, dy);
     if (f.timer <= 0 || (dist < 20 && f.mode === 'cruise')) pickTarget(f);
 
-    const cruise = b.maxSpeed * pxPerUnit * (0.2 + 0.3 * b.activity);
+    const cruise = b.maxSpeed * pxPerUnit * (0.2 + 0.3 * b.activity) * boost;
     const arrive = Math.min(1, dist / 160);
     let wx = dist > 1 ? (dx / dist) * cruise * arrive : 0;
     let wy = dist > 1 ? (dy / dist) * cruise * arrive : 0;
-    // Schoolers match their mates' heading; everyone keeps a little room from fish at a similar depth.
+    // Everyone keeps a little room from fish at a similar depth. Schoolers follow pairwise rules on their
+    // nearest three mates (as brain.js): apart inside ~0.6 body lengths, together beyond ~1.5, and a
+    // little of their heading.
+    const mates = [];
     for (const o of fish) {
       if (o === f) continue;
       const ox = f.x - o.x, oy = f.y - o.y, d = Math.hypot(ox, oy);
-      if (o.sp === f.sp && b.school > 0 && d < 300) { wx += o.vx * b.school * 0.08; wy += o.vy * b.school * 0.08; }
+      if (o.sp === f.sp && b.school > 0 && d < 400) mates.push([d, o, ox, oy]);
       const room = (f.sp.lengthPx * f.scale + o.sp.lengthPx * o.scale) * 0.55;
       if (d < room && d > 0.01 && Math.abs(f.depth - o.depth) < 0.4) { wx += (ox / d) * cruise * 0.8; wy += (oy / d) * cruise * 0.5; }
+    }
+    if (mates.length) {
+      const L = f.sp.lengthPx * f.scale;
+      mates.sort((p, q) => p[0] - q[0]);
+      for (const [d, o, ox, oy] of mates.slice(0, 3)) {
+        if (d < 0.6 * L && d > 0.01) { wx += (ox / d) * cruise * 0.6; wy += (oy / d) * cruise * 0.4; }
+        else if (d > 1.5 * L) { const k = Math.min(1, (d - 1.5 * L) / (3 * L)) * cruise * 0.5 * b.school; wx -= (ox / d) * k; wy -= (oy / d) * k; }
+        wx += o.vx * b.school * 0.1; wy += o.vy * b.school * 0.1;
+      }
     }
     wy = Math.max(-cruise * 0.45, Math.min(cruise * 0.45, wy));   // fish climb and dive gently
 
