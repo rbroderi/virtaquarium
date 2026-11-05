@@ -19,6 +19,9 @@ const FRAMES = Number(params.get('frames') || 12);
 const SS = 2;                       // supersampling factor
 const SCREEN = { w: 1920, h: 1080 };
 const CAUSTIC_T = 3.0;   // wave time (s) the backdrop's caustics are frozen at
+const WATER_FRAMES = Number(params.get('waterFrames') || 16);   // moving-water loop: frames ...
+const WATER_LOOP = Number(params.get('waterLoop') || 8);        // ... spread over this many seconds
+const WATER_SCALE = 2;              // loop frames are baked at 1/2 resolution and scaled up on the Roku
 const PX_PER_UNIT = 144;            // sprite resolution: ~1.25x on-screen size at 1080p, headroom for near fish
 const YAW = 0.35;                   // swim-row angle towards the viewer (radians)
 const OUT = 'roku/assets/';
@@ -104,7 +107,7 @@ async function bakeFish(sp, scene) {
 
   const { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host, prey, shy } = sp.brain;
   return {
-    name: sp.name, sci: sp.sci, fact: sp.fact,
+    name: sp.name, sci: sp.sci, fact: sp.fact, count: sp.count,
     sheet: `fish/${sp.id}.png`, frameW: cw, frameH: ch, frames: FRAMES, rows: { swim: 0, turn: 1 },
     lengthPx: Math.round(size.x * PX_PER_UNIT),
     brain: { maxSpeed, zone, school, grazer, territorial, boldness, curiosity, activity, host: !!host, prey: !!prey, shy: shy || 0 },
@@ -157,13 +160,13 @@ async function bakeScenery(scenery, seed) {
   updateWaves(CAUSTIC_T);
   const caustics = new Caustics(renderer);
   caustics.update();
-  const water = new WaterRenderer(renderer);
+  const waterRenderer = new WaterRenderer(renderer);
 
   const key = `${scenery}-${seed}`;
   const out = document.createElement('canvas');
   out.width = SCREEN.w; out.height = SCREEN.h;
   const g = out.getContext('2d');
-  water.render(scene, camera, sun);
+  waterRenderer.render(scene, camera, sun);
   g.drawImage(renderer.domElement, 0, 0);
   await save(`scenery/${key}.jpg`, await toBlob(out, 'image/jpeg', 0.9));
 
@@ -174,14 +177,17 @@ async function bakeScenery(scenery, seed) {
     if (!o.isMesh && !o.isInstancedMesh) return;
     const inReef = !!reef.group.getObjectById(o.id);
     const sand = o.userData.noHeight && o.geometry.type === 'PlaneGeometry';
-    if (!inReef || sand || o.getWorldPosition(new THREE.Vector3()).z < FG_Z) { hidden.push(o); o.visible = false; }
+    if (!inReef || sand || o.getWorldPosition(new THREE.Vector3()).z < FG_Z) hidden.push(o);
   });
+  const showFgOnly = (on) => { for (const o of hidden) o.visible = !on; };
+  showFgOnly(true);
   renderer.setClearColor(0x000000, 0);
   renderer.render(scene, camera);
   g.clearRect(0, 0, SCREEN.w, SCREEN.h);
   g.drawImage(renderer.domElement, 0, 0);
   await save(`scenery/${key}-fg.png`, await toBlob(out, 'image/png'));
-  for (const o of hidden) o.visible = true;
+  showFgOnly(false);
+  const water = await bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly);
   renderer.shadowMap.enabled = false;
   // Sprites must not carry a frozen caustic pattern (fish move through it on the Roku).
   causticUniforms.uCauOn.value = 0;
@@ -205,10 +211,99 @@ async function bakeScenery(scenery, seed) {
   return {
     key,
     entry: {
-      scenery, seed, backdrop: `scenery/${key}.jpg`, foreground: `scenery/${key}-fg.png`,
+      scenery, seed, backdrop: `scenery/${key}.jpg`, foreground: `scenery/${key}-fg.png`, water,
       floor, anemone: project(an.x, an.y, an.z), swimBox: [tl[0], tl[1], br[0], br[1]],
     },
   };
+}
+
+// ---------- moving water ----------
+//
+// The Roku can't simulate the surface, so the moving water (caustics on sand and reef, light shafts,
+// surface ripples, swaying soft corals) is baked as a short loop. Each frame is an overlay that, drawn
+// over the static backdrop with plain alpha blending, turns it into that moment of the water:
+// per pixel the smallest alpha a and colour C with B(1 - a) + C a = F. Only pixels that change carry
+// alpha, so the frames crop and compress well. The waves never repeat, so the loop is a crossfade:
+// frame s shows (s/T) F(s) + (1 - s/T) F(s + T), which starts and ends on F(T).
+// A second overlay set covers the foreground reef layer and is drawn over it.
+
+// Overlay that takes base B to target F (both RGBA bytes); mask (0-255 per pixel) limits it. Grows box.
+function encodeOverlay(F, B, mask, box, w) {
+  const out = new Uint8ClampedArray(F.length);
+  for (let p = 0, i = 0; i < F.length; p++, i += 4) {
+    const m = mask ? mask[p] : 255;
+    if (m < 8) continue;
+    let a = 0, big = 0;
+    for (let c = 0; c < 3; c++) {
+      const d = F[i + c] - B[i + c];
+      big = Math.max(big, Math.abs(d));
+      a = Math.max(a, d > 0 ? d / Math.max(1, 255 - B[i + c]) : -d / Math.max(1, B[i + c]));
+    }
+    if (big <= 2) continue;   // below 8-bit noise: leave the backdrop alone
+    const a8 = Math.min(255, Math.ceil(a * 255)), aa = a8 / 255;
+    for (let c = 0; c < 3; c++) out[i + c] = Math.round(B[i + c] + (F[i + c] - B[i + c]) / aa);
+    out[i + 3] = Math.round(a8 * m / 255);
+    const x = p % w, y = (p / w) | 0;
+    box.x0 = Math.min(box.x0, x); box.y0 = Math.min(box.y0, y); box.x1 = Math.max(box.x1, x + 1); box.y1 = Math.max(box.y1, y + 1);
+  }
+  return out;
+}
+
+async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly) {
+  const W = SCREEN.w / WATER_SCALE, H = SCREEN.h / WATER_SCALE;
+  renderer.setSize(W, H, false);
+  const grab = document.createElement('canvas');
+  grab.width = W; grab.height = H;
+  const gg = grab.getContext('2d', { willReadFrequently: true });
+  const read = () => { gg.clearRect(0, 0, W, H); gg.drawImage(renderer.domElement, 0, 0); return gg.getImageData(0, 0, W, H).data; };
+  const setTime = (t, waves = t) => { waterUniforms.uTime.value = t; updateWaves(waves); caustics.update(); };
+  const back = () => { renderer.setClearColor(0x000000, 1); waterRenderer.render(scene, camera, sun); return read(); };
+  const front = () => { showFgOnly(true); renderer.setClearColor(0x000000, 0); renderer.render(scene, camera); const d = read(); showFgOnly(false); return d; };
+  const mix = (a, b, w) => { const o = new Uint8ClampedArray(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] * w + b[i] * (1 - w); return o; };
+
+  // Bases: the backdrop and foreground exactly as baked above, at loop resolution.
+  setTime(0, CAUSTIC_T);
+  const B = back(), G = front();
+  const fgA = new Uint8ClampedArray(W * H), backMask = new Uint8ClampedArray(W * H);
+  for (let p = 0; p < W * H; p++) { fgA[p] = G[p * 4 + 3]; backMask[p] = 255 - fgA[p]; }
+
+  const boxes = [{ x0: W, y0: H, x1: 0, y1: 0 }, { x0: W, y0: H, x1: 0, y1: 0 }], frames = [];
+  for (let i = 0; i < WATER_FRAMES; i++) {
+    const s = (i / WATER_FRAMES) * WATER_LOOP, w = i / WATER_FRAMES;
+    const t0 = CAUSTIC_T + s, t1 = t0 + WATER_LOOP;
+    setTime(t0); const b0 = back(), f0 = front();
+    setTime(t1); const b1 = back(), f1 = front();
+    frames.push([
+      encodeOverlay(mix(b0, b1, w), B, backMask, boxes[0], W),
+      encodeOverlay(mix(f0, f1, w), G, fgA, boxes[1], W),
+    ]);
+    log(`water ${key}: frame ${i + 1}/${WATER_FRAMES}`);
+  }
+  setTime(0, CAUSTIC_T);
+
+  // Crop every frame of a layer to the area that ever changes, and save.
+  const layers = ['', '-fg'].map((suffix, l) => {
+    const b = boxes[l];
+    if (b.x1 <= b.x0) return null;
+    const cw = b.x1 - b.x0, ch = b.y1 - b.y0, c = document.createElement('canvas');
+    c.width = cw; c.height = ch;
+    return { suffix, b, c, files: [], rect: [b.x0, b.y0, cw, ch].map((v) => v * WATER_SCALE) };
+  });
+  for (let i = 0; i < frames.length; i++) {
+    for (let l = 0; l < 2; l++) {
+      const L = layers[l];
+      if (!L) continue;
+      const full = new ImageData(frames[i][l], W, H), cg = L.c.getContext('2d');
+      cg.clearRect(0, 0, L.c.width, L.c.height);
+      cg.putImageData(full, -L.b.x0, -L.b.y0, L.b.x0, L.b.y0, L.c.width, L.c.height);
+      const file = `scenery/${key}-water${L.suffix}-${String(i).padStart(2, '0')}.png`;
+      await save(file, await toBlob(L.c, 'image/png'));
+      L.files.push(file);
+    }
+  }
+  renderer.setSize(SCREEN.w, SCREEN.h, false);
+  const layer = (L) => L && { rect: L.rect, frames: L.files };
+  return { fps: WATER_FRAMES / WATER_LOOP, scale: WATER_SCALE, back: layer(layers[0]), front: layer(layers[1]) };
 }
 
 // ---------- run ----------

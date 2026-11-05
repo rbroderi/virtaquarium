@@ -169,6 +169,10 @@ Roku can't run WebGL, so the plan is to render the scene offline with the same t
 - a BrightScript port of the brain and swimming physics, driving SceneGraph posters;
 - packaged as a channel with `RunScreenSaver()` and `Main()` entry points.
 
+To see the baked assets as the Roku will draw them (a 2D backdrop, sprite fish and foreground reef, no WebGL), open <http://localhost:8080/pc/roku.html> or run `run_baked.bat`, which re-bakes first so the preview matches the current code (`run_baked.bat nobake` skips that). URL options: `?fps=30`, `?scene=reef-7`, `?seed=1`. Press **W** to toggle the moving water.
+
+The moving water (caustics, light shafts, surface ripples, swaying soft corals) is baked as a looping set of half-resolution overlay frames, `scenery/<key>-water-NN.png` plus `-water-fg-NN.png` for the foreground reef. Each frame is drawn over the static backdrop with plain alpha blending, and the player crossfades between neighbouring frames. Tune it with `pc/bake.html?waterFrames=16&waterLoop=8` (frame count, loop length in seconds).
+
 ## Layout
 
 ```
