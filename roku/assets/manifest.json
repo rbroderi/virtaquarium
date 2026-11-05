@@ -1,116 +1,125 @@
 {
   "version": 1,
-  "generated": "2026-11-05T02:52:08.883Z",
+  "generated": "2026-11-05T14:30:17.816Z",
   "screen": {
     "w": 1920,
     "h": 1080
   },
-  "pxPerUnit": 144,
+  "view": {
+    "zoom": 1.6,
+    "pan": false,
+    "period": 120,
+    "strip": {
+      "w": 1920,
+      "h": 1080
+    }
+  },
+  "pxPerUnit": 192,
   "species": {
     "clownfish": {
       "name": "Ocellaris Clownfish",
       "sci": "Amphiprion ocellaris",
       "fact": "Lives among anemone tentacles, protected by a mucus coat that stops the sting.",
       "count": 3,
-      "frameW": 104,
-      "frameH": 60,
+      "frameW": 138,
+      "frameH": 1290,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/clownfish-a0.png",
-          "x": 35,
-          "y": 2,
-          "w": 31,
-          "h": 52,
+          "x": 48,
+          "y": 609,
+          "w": 39,
+          "h": 68,
           "cols": 8,
-          "mb": 0.05
+          "mb": 0.08
         },
         {
           "yaw": -67.5,
           "sheet": "fish/clownfish-a1.png",
-          "x": 26,
-          "y": 2,
-          "w": 48,
-          "h": 52,
+          "x": 35,
+          "y": 608,
+          "w": 63,
+          "h": 69,
           "cols": 8,
-          "mb": 0.08
+          "mb": 0.14
         },
         {
           "yaw": -45,
           "sheet": "fish/clownfish-a2.png",
-          "x": 13,
-          "y": 3,
-          "w": 74,
-          "h": 51,
+          "x": 18,
+          "y": 609,
+          "w": 97,
+          "h": 68,
           "cols": 8,
-          "mb": 0.12
+          "mb": 0.21
         },
         {
           "yaw": -22.5,
           "sheet": "fish/clownfish-a3.png",
-          "x": 6,
-          "y": 3,
-          "w": 90,
-          "h": 51,
+          "x": 9,
+          "y": 609,
+          "w": 118,
+          "h": 68,
           "cols": 8,
-          "mb": 0.15
+          "mb": 0.26
         },
         {
           "yaw": 0,
           "sheet": "fish/clownfish-a4.png",
-          "x": 5,
-          "y": 3,
-          "w": 94,
-          "h": 51,
+          "x": 8,
+          "y": 609,
+          "w": 123,
+          "h": 68,
           "cols": 8,
-          "mb": 0.15
+          "mb": 0.27
         },
         {
           "yaw": 22.5,
           "sheet": "fish/clownfish-a5.png",
-          "x": 6,
-          "y": 3,
-          "w": 90,
-          "h": 51,
+          "x": 8,
+          "y": 609,
+          "w": 119,
+          "h": 68,
           "cols": 8,
-          "mb": 0.15
+          "mb": 0.26
         },
         {
           "yaw": 45,
           "sheet": "fish/clownfish-a6.png",
-          "x": 13,
-          "y": 3,
-          "w": 74,
-          "h": 51,
+          "x": 18,
+          "y": 609,
+          "w": 97,
+          "h": 68,
           "cols": 8,
-          "mb": 0.12
+          "mb": 0.21
         },
         {
           "yaw": 67.5,
           "sheet": "fish/clownfish-a7.png",
-          "x": 26,
-          "y": 2,
-          "w": 48,
-          "h": 52,
+          "x": 35,
+          "y": 609,
+          "w": 63,
+          "h": 68,
           "cols": 8,
-          "mb": 0.08
+          "mb": 0.14
         },
         {
           "yaw": 90,
           "sheet": "fish/clownfish-a8.png",
-          "x": 38,
-          "y": 3,
-          "w": 30,
-          "h": 51,
+          "x": 51,
+          "y": 609,
+          "w": 39,
+          "h": 68,
           "cols": 8,
-          "mb": 0.05
+          "mb": 0.08
         }
       ],
-      "textureMB": 1,
+      "textureMB": 1.7,
       "cruiseYaw": 20.1,
       "turnRate": 126,
-      "lengthPx": 91,
+      "lengthPx": 121,
       "brain": {
         "maxSpeed": 2.17,
         "zone": [
@@ -133,105 +142,105 @@
       "sci": "Paracanthurus hepatus",
       "fact": "A grazing surgeonfish: the scalpel-like spine by its tail is used in territorial spats.",
       "count": 2,
-      "frameW": 174,
-      "frameH": 82,
+      "frameW": 230,
+      "frameH": 1318,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/bluetang-a0.png",
-          "x": 64,
-          "y": 4,
-          "w": 42,
-          "h": 67,
+          "x": 85,
+          "y": 609,
+          "w": 55,
+          "h": 89,
           "cols": 8,
-          "mb": 0.09
+          "mb": 0.16
         },
         {
           "yaw": -67.5,
           "sheet": "fish/bluetang-a1.png",
-          "x": 45,
-          "y": 4,
-          "w": 77,
-          "h": 67,
+          "x": 60,
+          "y": 610,
+          "w": 101,
+          "h": 88,
           "cols": 8,
-          "mb": 0.17
+          "mb": 0.28
         },
         {
           "yaw": -45,
           "sheet": "fish/bluetang-a2.png",
-          "x": 26,
-          "y": 4,
-          "w": 118,
-          "h": 66,
+          "x": 34,
+          "y": 610,
+          "w": 157,
+          "h": 88,
           "cols": 8,
-          "mb": 0.25
+          "mb": 0.44
         },
         {
           "yaw": -22.5,
           "sheet": "fish/bluetang-a3.png",
-          "x": 14,
-          "y": 4,
-          "w": 146,
-          "h": 66,
+          "x": 18,
+          "y": 610,
+          "w": 194,
+          "h": 88,
           "cols": 8,
-          "mb": 0.31
+          "mb": 0.55
         },
         {
           "yaw": 0,
           "sheet": "fish/bluetang-a4.png",
-          "x": 12,
-          "y": 4,
-          "w": 153,
-          "h": 66,
+          "x": 17,
+          "y": 610,
+          "w": 201,
+          "h": 88,
           "cols": 8,
-          "mb": 0.32
+          "mb": 0.57
         },
         {
           "yaw": 22.5,
           "sheet": "fish/bluetang-a5.png",
-          "x": 14,
-          "y": 4,
-          "w": 146,
-          "h": 66,
+          "x": 18,
+          "y": 610,
+          "w": 194,
+          "h": 88,
           "cols": 8,
-          "mb": 0.31
+          "mb": 0.55
         },
         {
           "yaw": 45,
           "sheet": "fish/bluetang-a6.png",
-          "x": 25,
-          "y": 4,
-          "w": 119,
-          "h": 66,
+          "x": 33,
+          "y": 610,
+          "w": 158,
+          "h": 88,
           "cols": 8,
-          "mb": 0.25
+          "mb": 0.44
         },
         {
           "yaw": 67.5,
           "sheet": "fish/bluetang-a7.png",
-          "x": 45,
-          "y": 4,
-          "w": 77,
-          "h": 67,
+          "x": 60,
+          "y": 610,
+          "w": 101,
+          "h": 88,
           "cols": 8,
-          "mb": 0.17
+          "mb": 0.28
         },
         {
           "yaw": 90,
           "sheet": "fish/bluetang-a8.png",
-          "x": 68,
-          "y": 4,
-          "w": 42,
-          "h": 67,
+          "x": 90,
+          "y": 609,
+          "w": 55,
+          "h": 89,
           "cols": 8,
-          "mb": 0.09
+          "mb": 0.16
         }
       ],
-      "textureMB": 2,
+      "textureMB": 3.4,
       "cruiseYaw": 20.1,
       "turnRate": 92,
-      "lengthPx": 153,
+      "lengthPx": 204,
       "brain": {
         "maxSpeed": 3.1500000000000004,
         "zone": [
@@ -254,105 +263,105 @@
       "sci": "Zebrasoma flavescens",
       "fact": "Spends most of the day grazing algae from rock, which keeps reefs healthy.",
       "count": 2,
-      "frameW": 158,
-      "frameH": 96,
+      "frameW": 212,
+      "frameH": 1336,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/yellowtang-a0.png",
-          "x": 60,
-          "y": 5,
-          "w": 34,
-          "h": 84,
+          "x": 82,
+          "y": 610,
+          "w": 44,
+          "h": 111,
           "cols": 8,
-          "mb": 0.09
+          "mb": 0.16
         },
         {
           "yaw": -67.5,
           "sheet": "fish/yellowtang-a1.png",
-          "x": 39,
-          "y": 5,
-          "w": 71,
-          "h": 84,
+          "x": 54,
+          "y": 610,
+          "w": 92,
+          "h": 111,
           "cols": 8,
-          "mb": 0.19
+          "mb": 0.33
         },
         {
           "yaw": -45,
           "sheet": "fish/yellowtang-a2.png",
-          "x": 20,
-          "y": 6,
-          "w": 112,
-          "h": 83,
+          "x": 28,
+          "y": 613,
+          "w": 148,
+          "h": 109,
           "cols": 8,
-          "mb": 0.3
+          "mb": 0.52
         },
         {
           "yaw": -22.5,
           "sheet": "fish/yellowtang-a3.png",
-          "x": 10,
-          "y": 6,
-          "w": 136,
-          "h": 81,
+          "x": 14,
+          "y": 613,
+          "w": 181,
+          "h": 107,
           "cols": 8,
-          "mb": 0.35
+          "mb": 0.62
         },
         {
           "yaw": 0,
           "sheet": "fish/yellowtang-a4.png",
-          "x": 9,
-          "y": 6,
-          "w": 142,
-          "h": 81,
+          "x": 13,
+          "y": 613,
+          "w": 188,
+          "h": 107,
           "cols": 8,
-          "mb": 0.37
+          "mb": 0.64
         },
         {
           "yaw": 22.5,
           "sheet": "fish/yellowtang-a5.png",
-          "x": 10,
-          "y": 6,
-          "w": 136,
-          "h": 81,
+          "x": 14,
+          "y": 613,
+          "w": 181,
+          "h": 107,
           "cols": 8,
-          "mb": 0.35
+          "mb": 0.62
         },
         {
           "yaw": 45,
           "sheet": "fish/yellowtang-a6.png",
-          "x": 20,
-          "y": 5,
-          "w": 112,
-          "h": 84,
+          "x": 28,
+          "y": 611,
+          "w": 148,
+          "h": 110,
           "cols": 8,
-          "mb": 0.3
+          "mb": 0.52
         },
         {
           "yaw": 67.5,
           "sheet": "fish/yellowtang-a7.png",
-          "x": 39,
-          "y": 5,
-          "w": 71,
-          "h": 83,
+          "x": 54,
+          "y": 611,
+          "w": 92,
+          "h": 111,
           "cols": 8,
-          "mb": 0.19
+          "mb": 0.33
         },
         {
           "yaw": 90,
           "sheet": "fish/yellowtang-a8.png",
-          "x": 64,
-          "y": 4,
-          "w": 34,
-          "h": 84,
+          "x": 86,
+          "y": 610,
+          "w": 44,
+          "h": 111,
           "cols": 8,
-          "mb": 0.09
+          "mb": 0.16
         }
       ],
-      "textureMB": 2.2,
+      "textureMB": 3.9,
       "cruiseYaw": 20.1,
       "turnRate": 92,
-      "lengthPx": 140,
+      "lengthPx": 187,
       "brain": {
         "maxSpeed": 2.8499999999999996,
         "zone": [
@@ -375,105 +384,105 @@
       "sci": "Zanclus cornutus",
       "fact": "Named by Moors who believed it a bringer of happiness; trails a long white dorsal filament.",
       "count": 2,
-      "frameW": 252,
-      "frameH": 130,
+      "frameW": 336,
+      "frameH": 1380,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/moorishidol-a0.png",
-          "x": 107,
-          "y": 6,
-          "w": 37,
-          "h": 103,
+          "x": 143,
+          "y": 612,
+          "w": 49,
+          "h": 136,
           "cols": 8,
-          "mb": 0.12
+          "mb": 0.21
         },
         {
           "yaw": -67.5,
           "sheet": "fish/moorishidol-a1.png",
-          "x": 71,
-          "y": 6,
-          "w": 89,
-          "h": 103,
+          "x": 95,
+          "y": 613,
+          "w": 118,
+          "h": 135,
           "cols": 8,
-          "mb": 0.29
+          "mb": 0.51
         },
         {
           "yaw": -45,
           "sheet": "fish/moorishidol-a2.png",
-          "x": 39,
-          "y": 7,
-          "w": 144,
-          "h": 102,
+          "x": 52,
+          "y": 613,
+          "w": 191,
+          "h": 135,
           "cols": 8,
-          "mb": 0.47
+          "mb": 0.83
         },
         {
           "yaw": -22.5,
           "sheet": "fish/moorishidol-a3.png",
-          "x": 21,
-          "y": 7,
-          "w": 176,
-          "h": 102,
+          "x": 28,
+          "y": 613,
+          "w": 235,
+          "h": 135,
           "cols": 8,
-          "mb": 0.57
+          "mb": 1.02
         },
         {
           "yaw": 0,
           "sheet": "fish/moorishidol-a4.png",
-          "x": 18,
-          "y": 7,
-          "w": 184,
-          "h": 102,
+          "x": 24,
+          "y": 613,
+          "w": 245,
+          "h": 135,
           "cols": 8,
-          "mb": 0.6
+          "mb": 1.06
         },
         {
           "yaw": 22.5,
           "sheet": "fish/moorishidol-a5.png",
-          "x": 21,
-          "y": 7,
-          "w": 176,
-          "h": 102,
+          "x": 28,
+          "y": 613,
+          "w": 235,
+          "h": 135,
           "cols": 8,
-          "mb": 0.57
+          "mb": 1.02
         },
         {
           "yaw": 45,
           "sheet": "fish/moorishidol-a6.png",
-          "x": 39,
-          "y": 7,
-          "w": 144,
-          "h": 102,
+          "x": 53,
+          "y": 613,
+          "w": 190,
+          "h": 135,
           "cols": 8,
-          "mb": 0.47
+          "mb": 0.82
         },
         {
           "yaw": 67.5,
           "sheet": "fish/moorishidol-a7.png",
-          "x": 71,
-          "y": 7,
-          "w": 89,
-          "h": 102,
+          "x": 92,
+          "y": 613,
+          "w": 121,
+          "h": 135,
           "cols": 8,
-          "mb": 0.29
+          "mb": 0.52
         },
         {
           "yaw": 90,
           "sheet": "fish/moorishidol-a8.png",
-          "x": 108,
-          "y": 6,
-          "w": 37,
-          "h": 103,
+          "x": 144,
+          "y": 612,
+          "w": 49,
+          "h": 136,
           "cols": 8,
-          "mb": 0.12
+          "mb": 0.21
         }
       ],
-      "textureMB": 3.5,
+      "textureMB": 6.2,
       "cruiseYaw": 20.1,
       "turnRate": 80,
-      "lengthPx": 187,
+      "lengthPx": 250,
       "brain": {
         "maxSpeed": 2.5,
         "zone": [
@@ -496,105 +505,105 @@
       "sci": "Pterois volitans",
       "fact": "Hovers almost motionless, fanning venomous spines; an ambush hunter at dusk.",
       "count": 1,
-      "frameW": 240,
-      "frameH": 170,
+      "frameW": 320,
+      "frameH": 1434,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/lionfish-a0.png",
-          "x": 8,
-          "y": 12,
-          "w": 205,
-          "h": 158,
-          "cols": 8,
-          "mb": 1.04
+          "x": 12,
+          "y": 619,
+          "w": 272,
+          "h": 220,
+          "cols": 7,
+          "mb": 3.35
         },
         {
           "yaw": -67.5,
           "sheet": "fish/lionfish-a1.png",
-          "x": 14,
-          "y": 12,
-          "w": 183,
-          "h": 158,
+          "x": 20,
+          "y": 619,
+          "w": 243,
+          "h": 220,
           "cols": 8,
-          "mb": 0.93
+          "mb": 1.71
         },
         {
           "yaw": -45,
           "sheet": "fish/lionfish-a2.png",
-          "x": 31,
-          "y": 11,
-          "w": 170,
-          "h": 159,
+          "x": 42,
+          "y": 620,
+          "w": 225,
+          "h": 219,
           "cols": 8,
-          "mb": 0.86
+          "mb": 1.58
         },
         {
           "yaw": -22.5,
           "sheet": "fish/lionfish-a3.png",
-          "x": 15,
-          "y": 12,
-          "w": 205,
-          "h": 158,
-          "cols": 8,
-          "mb": 1.04
+          "x": 21,
+          "y": 620,
+          "w": 273,
+          "h": 219,
+          "cols": 7,
+          "mb": 3.35
         },
         {
           "yaw": 0,
           "sheet": "fish/lionfish-a4.png",
-          "x": 13,
-          "y": 12,
-          "w": 214,
-          "h": 158,
-          "cols": 8,
-          "mb": 1.08
+          "x": 18,
+          "y": 620,
+          "w": 284,
+          "h": 237,
+          "cols": 7,
+          "mb": 3.77
         },
         {
           "yaw": 22.5,
           "sheet": "fish/lionfish-a5.png",
-          "x": 15,
-          "y": 12,
-          "w": 205,
-          "h": 158,
-          "cols": 8,
-          "mb": 1.04
+          "x": 20,
+          "y": 620,
+          "w": 274,
+          "h": 235,
+          "cols": 7,
+          "mb": 3.61
         },
         {
           "yaw": 45,
           "sheet": "fish/lionfish-a6.png",
-          "x": 31,
-          "y": 11,
-          "w": 170,
-          "h": 159,
+          "x": 42,
+          "y": 619,
+          "w": 226,
+          "h": 220,
           "cols": 8,
-          "mb": 0.86
+          "mb": 1.59
         },
         {
           "yaw": 67.5,
           "sheet": "fish/lionfish-a7.png",
-          "x": 25,
-          "y": 12,
-          "w": 196,
-          "h": 158,
-          "cols": 8,
-          "mb": 0.99
+          "x": 34,
+          "y": 619,
+          "w": 260,
+          "h": 253,
+          "cols": 7,
+          "mb": 3.68
         },
         {
           "yaw": 90,
           "sheet": "fish/lionfish-a8.png",
-          "x": 27,
-          "y": 12,
-          "w": 205,
-          "h": 158,
-          "cols": 8,
-          "mb": 1.04
+          "x": 36,
+          "y": 619,
+          "w": 272,
+          "h": 220,
+          "cols": 7,
+          "mb": 3.35
         }
       ],
-      "textureMB": 8.9,
+      "textureMB": 26,
       "cruiseYaw": 20.1,
       "turnRate": 52,
-      "lengthPx": 212,
+      "lengthPx": 283,
       "brain": {
         "maxSpeed": 1.74,
         "zone": [
@@ -617,105 +626,105 @@
       "sci": "Chelmon rostratus",
       "fact": "Uses its tweezer snout to pick tiny invertebrates from crevices; the false eyespot confuses predators.",
       "count": 1,
-      "frameW": 142,
-      "frameH": 104,
+      "frameW": 190,
+      "frameH": 1346,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/copperband-a0.png",
-          "x": 58,
-          "y": 5,
-          "w": 26,
-          "h": 82,
+          "x": 78,
+          "y": 612,
+          "w": 34,
+          "h": 107,
           "cols": 8,
-          "mb": 0.07
+          "mb": 0.12
         },
         {
           "yaw": -67.5,
           "sheet": "fish/copperband-a1.png",
-          "x": 35,
-          "y": 5,
-          "w": 64,
-          "h": 82,
+          "x": 48,
+          "y": 612,
+          "w": 84,
+          "h": 107,
           "cols": 8,
-          "mb": 0.17
+          "mb": 0.29
         },
         {
           "yaw": -45,
           "sheet": "fish/copperband-a2.png",
-          "x": 18,
-          "y": 5,
-          "w": 101,
-          "h": 82,
+          "x": 25,
+          "y": 612,
+          "w": 133,
+          "h": 108,
           "cols": 8,
-          "mb": 0.27
+          "mb": 0.46
         },
         {
           "yaw": -22.5,
           "sheet": "fish/copperband-a3.png",
-          "x": 9,
-          "y": 7,
-          "w": 123,
-          "h": 79,
+          "x": 12,
+          "y": 613,
+          "w": 163,
+          "h": 105,
           "cols": 8,
-          "mb": 0.31
+          "mb": 0.55
         },
         {
           "yaw": 0,
           "sheet": "fish/copperband-a4.png",
-          "x": 8,
-          "y": 7,
-          "w": 128,
-          "h": 79,
+          "x": 11,
+          "y": 613,
+          "w": 170,
+          "h": 105,
           "cols": 8,
-          "mb": 0.32
+          "mb": 0.57
         },
         {
           "yaw": 22.5,
           "sheet": "fish/copperband-a5.png",
-          "x": 9,
-          "y": 6,
-          "w": 123,
-          "h": 80,
+          "x": 13,
+          "y": 613,
+          "w": 162,
+          "h": 105,
           "cols": 8,
-          "mb": 0.31
+          "mb": 0.54
         },
         {
           "yaw": 45,
           "sheet": "fish/copperband-a6.png",
-          "x": 18,
-          "y": 6,
-          "w": 101,
-          "h": 81,
+          "x": 25,
+          "y": 611,
+          "w": 133,
+          "h": 108,
           "cols": 8,
-          "mb": 0.26
+          "mb": 0.46
         },
         {
           "yaw": 67.5,
           "sheet": "fish/copperband-a7.png",
-          "x": 35,
-          "y": 5,
-          "w": 64,
-          "h": 82,
+          "x": 48,
+          "y": 612,
+          "w": 84,
+          "h": 107,
           "cols": 8,
-          "mb": 0.17
+          "mb": 0.29
         },
         {
           "yaw": 90,
           "sheet": "fish/copperband-a8.png",
-          "x": 58,
-          "y": 6,
-          "w": 26,
-          "h": 81,
+          "x": 78,
+          "y": 612,
+          "w": 34,
+          "h": 107,
           "cols": 8,
-          "mb": 0.07
+          "mb": 0.12
         }
       ],
-      "textureMB": 2,
+      "textureMB": 3.4,
       "cruiseYaw": 20.1,
       "turnRate": 115,
-      "lengthPx": 126,
+      "lengthPx": 168,
       "brain": {
         "maxSpeed": 2.125,
         "zone": [
@@ -738,105 +747,105 @@
       "sci": "Gramma loreto",
       "fact": "Claims a crevice and defends it; often swims upside-down under ledges.",
       "count": 2,
-      "frameW": 84,
-      "frameH": 42,
+      "frameW": 110,
+      "frameH": 1250,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/royalgramma-a0.png",
-          "x": 31,
-          "y": 6,
-          "w": 21,
-          "h": 35,
+          "x": 41,
+          "y": 606,
+          "w": 26,
+          "h": 45,
           "cols": 8,
-          "mb": 0.02
+          "mb": 0.04
         },
         {
           "yaw": -67.5,
           "sheet": "fish/royalgramma-a1.png",
-          "x": 21,
-          "y": 7,
-          "w": 39,
-          "h": 34,
+          "x": 27,
+          "y": 606,
+          "w": 51,
+          "h": 45,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.07
         },
         {
           "yaw": -45,
           "sheet": "fish/royalgramma-a2.png",
-          "x": 11,
-          "y": 7,
-          "w": 59,
-          "h": 34,
+          "x": 13,
+          "y": 606,
+          "w": 79,
+          "h": 45,
           "cols": 8,
-          "mb": 0.06
+          "mb": 0.11
         },
         {
           "yaw": -22.5,
           "sheet": "fish/royalgramma-a3.png",
-          "x": 5,
-          "y": 7,
-          "w": 72,
-          "h": 34,
+          "x": 6,
+          "y": 606,
+          "w": 96,
+          "h": 45,
           "cols": 8,
-          "mb": 0.08
+          "mb": 0.14
         },
         {
           "yaw": 0,
           "sheet": "fish/royalgramma-a4.png",
-          "x": 5,
-          "y": 7,
-          "w": 75,
-          "h": 34,
+          "x": 6,
+          "y": 606,
+          "w": 99,
+          "h": 45,
           "cols": 8,
-          "mb": 0.08
+          "mb": 0.14
         },
         {
           "yaw": 22.5,
           "sheet": "fish/royalgramma-a5.png",
-          "x": 5,
-          "y": 7,
-          "w": 72,
-          "h": 34,
+          "x": 6,
+          "y": 606,
+          "w": 96,
+          "h": 45,
           "cols": 8,
-          "mb": 0.08
+          "mb": 0.14
         },
         {
           "yaw": 45,
           "sheet": "fish/royalgramma-a6.png",
-          "x": 11,
-          "y": 7,
-          "w": 59,
-          "h": 34,
+          "x": 14,
+          "y": 606,
+          "w": 78,
+          "h": 45,
           "cols": 8,
-          "mb": 0.06
+          "mb": 0.11
         },
         {
           "yaw": 67.5,
           "sheet": "fish/royalgramma-a7.png",
-          "x": 21,
-          "y": 6,
-          "w": 39,
-          "h": 34,
+          "x": 27,
+          "y": 606,
+          "w": 51,
+          "h": 45,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.07
         },
         {
           "yaw": 90,
           "sheet": "fish/royalgramma-a8.png",
-          "x": 32,
-          "y": 6,
-          "w": 21,
-          "h": 35,
+          "x": 43,
+          "y": 606,
+          "w": 26,
+          "h": 45,
           "cols": 8,
-          "mb": 0.02
+          "mb": 0.04
         }
       ],
-      "textureMB": 0.5,
+      "textureMB": 0.9,
       "cruiseYaw": 20.1,
       "turnRate": 103,
-      "lengthPx": 73,
+      "lengthPx": 97,
       "brain": {
         "maxSpeed": 2,
         "zone": [
@@ -859,105 +868,105 @@
       "sci": "Balistoides conspicillum",
       "fact": "Bold and inquisitive; locks itself into crevices with its \"trigger\" dorsal spine.",
       "count": 1,
-      "frameW": 190,
-      "frameH": 102,
+      "frameW": 254,
+      "frameH": 1346,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/clowntrigger-a0.png",
-          "x": 74,
-          "y": 7,
-          "w": 39,
-          "h": 77,
+          "x": 99,
+          "y": 615,
+          "w": 52,
+          "h": 101,
           "cols": 8,
-          "mb": 0.1
+          "mb": 0.17
         },
         {
           "yaw": -67.5,
           "sheet": "fish/clowntrigger-a1.png",
-          "x": 48,
-          "y": 7,
-          "w": 85,
-          "h": 77,
+          "x": 65,
+          "y": 615,
+          "w": 112,
+          "h": 101,
           "cols": 8,
-          "mb": 0.21
+          "mb": 0.36
         },
         {
           "yaw": -45,
           "sheet": "fish/clowntrigger-a2.png",
-          "x": 24,
-          "y": 7,
-          "w": 135,
-          "h": 77,
+          "x": 33,
+          "y": 614,
+          "w": 178,
+          "h": 102,
           "cols": 8,
-          "mb": 0.33
+          "mb": 0.58
         },
         {
           "yaw": -22.5,
           "sheet": "fish/clowntrigger-a3.png",
-          "x": 11,
-          "y": 7,
-          "w": 164,
-          "h": 77,
+          "x": 16,
+          "y": 615,
+          "w": 217,
+          "h": 101,
           "cols": 8,
-          "mb": 0.4
+          "mb": 0.7
         },
         {
           "yaw": 0,
           "sheet": "fish/clowntrigger-a4.png",
-          "x": 10,
-          "y": 7,
-          "w": 171,
-          "h": 77,
+          "x": 14,
+          "y": 615,
+          "w": 227,
+          "h": 101,
           "cols": 8,
-          "mb": 0.42
+          "mb": 0.73
         },
         {
           "yaw": 22.5,
           "sheet": "fish/clowntrigger-a5.png",
-          "x": 11,
-          "y": 7,
-          "w": 164,
-          "h": 77,
+          "x": 16,
+          "y": 615,
+          "w": 217,
+          "h": 101,
           "cols": 8,
-          "mb": 0.4
+          "mb": 0.7
         },
         {
           "yaw": 45,
           "sheet": "fish/clowntrigger-a6.png",
-          "x": 24,
-          "y": 7,
-          "w": 135,
-          "h": 77,
+          "x": 33,
+          "y": 615,
+          "w": 178,
+          "h": 101,
           "cols": 8,
-          "mb": 0.33
+          "mb": 0.58
         },
         {
           "yaw": 67.5,
           "sheet": "fish/clowntrigger-a7.png",
-          "x": 48,
-          "y": 7,
-          "w": 85,
-          "h": 77,
+          "x": 64,
+          "y": 615,
+          "w": 113,
+          "h": 101,
           "cols": 8,
-          "mb": 0.21
+          "mb": 0.37
         },
         {
           "yaw": 90,
           "sheet": "fish/clowntrigger-a8.png",
-          "x": 76,
-          "y": 7,
-          "w": 41,
-          "h": 77,
+          "x": 103,
+          "y": 615,
+          "w": 52,
+          "h": 101,
           "cols": 8,
-          "mb": 0.1
+          "mb": 0.17
         }
       ],
-      "textureMB": 2.5,
+      "textureMB": 4.4,
       "cruiseYaw": 20.1,
       "turnRate": 86,
-      "lengthPx": 169,
+      "lengthPx": 225,
       "brain": {
         "maxSpeed": 2.875,
         "zone": [
@@ -980,105 +989,105 @@
       "sci": "Pomacanthus imperator",
       "fact": "Juveniles wear white rings on blue; adults change completely into this striped livery.",
       "count": 1,
-      "frameW": 220,
-      "frameH": 114,
+      "frameW": 294,
+      "frameH": 1360,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/emperorangel-a0.png",
-          "x": 86,
-          "y": 6,
-          "w": 44,
-          "h": 99,
+          "x": 116,
+          "y": 611,
+          "w": 58,
+          "h": 133,
           "cols": 8,
-          "mb": 0.14
+          "mb": 0.25
         },
         {
           "yaw": -67.5,
           "sheet": "fish/emperorangel-a1.png",
-          "x": 57,
-          "y": 6,
-          "w": 95,
-          "h": 99,
+          "x": 77,
+          "y": 612,
+          "w": 125,
+          "h": 132,
           "cols": 8,
-          "mb": 0.3
+          "mb": 0.53
         },
         {
           "yaw": -45,
           "sheet": "fish/emperorangel-a2.png",
-          "x": 30,
-          "y": 6,
-          "w": 153,
-          "h": 99,
+          "x": 41,
+          "y": 613,
+          "w": 202,
+          "h": 131,
           "cols": 8,
-          "mb": 0.48
+          "mb": 0.85
         },
         {
           "yaw": -22.5,
           "sheet": "fish/emperorangel-a3.png",
-          "x": 16,
-          "y": 6,
-          "w": 187,
-          "h": 98,
+          "x": 22,
+          "y": 613,
+          "w": 249,
+          "h": 129,
           "cols": 8,
-          "mb": 0.59
+          "mb": 1.03
         },
         {
           "yaw": 0,
           "sheet": "fish/emperorangel-a4.png",
-          "x": 14,
-          "y": 6,
-          "w": 196,
-          "h": 98,
-          "cols": 8,
-          "mb": 0.61
+          "x": 20,
+          "y": 613,
+          "w": 259,
+          "h": 129,
+          "cols": 7,
+          "mb": 1.87
         },
         {
           "yaw": 22.5,
           "sheet": "fish/emperorangel-a5.png",
-          "x": 15,
-          "y": 6,
-          "w": 188,
-          "h": 98,
+          "x": 22,
+          "y": 613,
+          "w": 249,
+          "h": 129,
           "cols": 8,
-          "mb": 0.59
+          "mb": 1.03
         },
         {
           "yaw": 45,
           "sheet": "fish/emperorangel-a6.png",
-          "x": 30,
-          "y": 6,
-          "w": 153,
-          "h": 99,
+          "x": 41,
+          "y": 613,
+          "w": 202,
+          "h": 129,
           "cols": 8,
-          "mb": 0.48
+          "mb": 0.83
         },
         {
           "yaw": 67.5,
           "sheet": "fish/emperorangel-a7.png",
-          "x": 57,
-          "y": 6,
-          "w": 95,
-          "h": 99,
+          "x": 76,
+          "y": 612,
+          "w": 126,
+          "h": 132,
           "cols": 8,
-          "mb": 0.3
+          "mb": 0.53
         },
         {
           "yaw": 90,
           "sheet": "fish/emperorangel-a8.png",
-          "x": 89,
-          "y": 5,
-          "w": 45,
-          "h": 100,
+          "x": 120,
+          "y": 612,
+          "w": 58,
+          "h": 131,
           "cols": 8,
-          "mb": 0.14
+          "mb": 0.24
         }
       ],
-      "textureMB": 3.6,
+      "textureMB": 7.2,
       "cruiseYaw": 20.1,
       "turnRate": 74,
-      "lengthPx": 194,
+      "lengthPx": 258,
       "brain": {
         "maxSpeed": 3.25,
         "zone": [
@@ -1101,105 +1110,105 @@
       "sci": "Forcipiger flavissimus",
       "fact": "Its elongated snout reaches into coral branches to pluck tube-worm tentacles.",
       "count": 1,
-      "frameW": 140,
-      "frameH": 94,
+      "frameW": 186,
+      "frameH": 1304,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/longnose-a0.png",
-          "x": 57,
-          "y": 16,
-          "w": 26,
-          "h": 69,
+          "x": 76,
+          "y": 611,
+          "w": 33,
+          "h": 92,
           "cols": 8,
-          "mb": 0.06
+          "mb": 0.1
         },
         {
           "yaw": -67.5,
           "sheet": "fish/longnose-a1.png",
-          "x": 36,
-          "y": 16,
-          "w": 60,
-          "h": 69,
+          "x": 48,
+          "y": 611,
+          "w": 80,
+          "h": 91,
           "cols": 8,
-          "mb": 0.13
+          "mb": 0.23
         },
         {
           "yaw": -45,
           "sheet": "fish/longnose-a2.png",
-          "x": 20,
-          "y": 16,
-          "w": 95,
-          "h": 69,
+          "x": 27,
+          "y": 611,
+          "w": 125,
+          "h": 91,
           "cols": 8,
-          "mb": 0.21
+          "mb": 0.36
         },
         {
           "yaw": -22.5,
           "sheet": "fish/longnose-a3.png",
-          "x": 12,
-          "y": 16,
-          "w": 115,
-          "h": 69,
+          "x": 16,
+          "y": 611,
+          "w": 152,
+          "h": 91,
           "cols": 8,
-          "mb": 0.25
+          "mb": 0.44
         },
         {
           "yaw": 0,
           "sheet": "fish/longnose-a4.png",
-          "x": 11,
-          "y": 16,
-          "w": 120,
-          "h": 69,
+          "x": 14,
+          "y": 611,
+          "w": 159,
+          "h": 91,
           "cols": 8,
-          "mb": 0.26
+          "mb": 0.46
         },
         {
           "yaw": 22.5,
           "sheet": "fish/longnose-a5.png",
-          "x": 12,
-          "y": 16,
-          "w": 115,
-          "h": 69,
+          "x": 16,
+          "y": 611,
+          "w": 152,
+          "h": 91,
           "cols": 8,
-          "mb": 0.25
+          "mb": 0.44
         },
         {
           "yaw": 45,
           "sheet": "fish/longnose-a6.png",
-          "x": 20,
-          "y": 16,
-          "w": 95,
-          "h": 69,
+          "x": 27,
+          "y": 611,
+          "w": 125,
+          "h": 94,
           "cols": 8,
-          "mb": 0.21
+          "mb": 0.38
         },
         {
           "yaw": 67.5,
           "sheet": "fish/longnose-a7.png",
-          "x": 36,
-          "y": 16,
-          "w": 60,
-          "h": 69,
+          "x": 49,
+          "y": 611,
+          "w": 79,
+          "h": 91,
           "cols": 8,
-          "mb": 0.13
+          "mb": 0.23
         },
         {
           "yaw": 90,
           "sheet": "fish/longnose-a8.png",
-          "x": 57,
-          "y": 16,
-          "w": 26,
-          "h": 69,
+          "x": 77,
+          "y": 611,
+          "w": 33,
+          "h": 91,
           "cols": 8,
-          "mb": 0.06
+          "mb": 0.1
         }
       ],
-      "textureMB": 1.6,
+      "textureMB": 2.7,
       "cruiseYaw": 20.1,
       "turnRate": 103,
-      "lengthPx": 121,
+      "lengthPx": 161,
       "brain": {
         "maxSpeed": 2,
         "zone": [
@@ -1222,105 +1231,105 @@
       "sci": "Chromis viridis",
       "fact": "Shoals of these damselfish hover above branching coral and dart into it when threatened.",
       "count": 9,
-      "frameW": 64,
-      "frameH": 28,
+      "frameW": 84,
+      "frameH": 1244,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/chromis-a0.png",
-          "x": 23,
-          "y": 1,
-          "w": 17,
-          "h": 24,
+          "x": 30,
+          "y": 605,
+          "w": 22,
+          "h": 31,
           "cols": 8,
-          "mb": 0.01
+          "mb": 0.02
         },
         {
           "yaw": -67.5,
           "sheet": "fish/chromis-a1.png",
-          "x": 15,
-          "y": 1,
-          "w": 31,
-          "h": 24,
+          "x": 20,
+          "y": 605,
+          "w": 40,
+          "h": 31,
           "cols": 8,
-          "mb": 0.02
+          "mb": 0.04
         },
         {
           "yaw": -45,
           "sheet": "fish/chromis-a2.png",
-          "x": 8,
-          "y": 1,
-          "w": 46,
-          "h": 24,
+          "x": 10,
+          "y": 605,
+          "w": 61,
+          "h": 31,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.06
         },
         {
           "yaw": -22.5,
           "sheet": "fish/chromis-a3.png",
-          "x": 4,
-          "y": 1,
-          "w": 56,
-          "h": 24,
+          "x": 5,
+          "y": 605,
+          "w": 73,
+          "h": 31,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.07
         },
         {
           "yaw": 0,
           "sheet": "fish/chromis-a4.png",
-          "x": 3,
-          "y": 1,
-          "w": 58,
-          "h": 24,
+          "x": 4,
+          "y": 605,
+          "w": 77,
+          "h": 31,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.08
         },
         {
           "yaw": 22.5,
           "sheet": "fish/chromis-a5.png",
-          "x": 4,
-          "y": 1,
-          "w": 56,
-          "h": 24,
+          "x": 5,
+          "y": 605,
+          "w": 73,
+          "h": 31,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.07
         },
         {
           "yaw": 45,
           "sheet": "fish/chromis-a6.png",
-          "x": 8,
-          "y": 1,
-          "w": 46,
-          "h": 25,
+          "x": 10,
+          "y": 605,
+          "w": 61,
+          "h": 31,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.06
         },
         {
           "yaw": 67.5,
           "sheet": "fish/chromis-a7.png",
-          "x": 15,
-          "y": 1,
-          "w": 31,
-          "h": 24,
+          "x": 20,
+          "y": 605,
+          "w": 40,
+          "h": 31,
           "cols": 8,
-          "mb": 0.02
+          "mb": 0.04
         },
         {
           "yaw": 90,
           "sheet": "fish/chromis-a8.png",
-          "x": 24,
-          "y": 1,
-          "w": 17,
-          "h": 24,
+          "x": 32,
+          "y": 605,
+          "w": 22,
+          "h": 31,
           "cols": 8,
-          "mb": 0.01
+          "mb": 0.02
         }
       ],
-      "textureMB": 0.3,
+      "textureMB": 0.5,
       "cruiseYaw": 20.1,
       "turnRate": 143,
-      "lengthPx": 56,
+      "lengthPx": 75,
       "brain": {
         "maxSpeed": 1.71,
         "zone": [
@@ -1343,105 +1352,105 @@
       "sci": "Centropyge bispinosa",
       "fact": "A dwarf angelfish that rarely strays far from rockwork, darting between caves.",
       "count": 1,
-      "frameW": 102,
-      "frameH": 64,
+      "frameW": 134,
+      "frameH": 1294,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/coralbeauty-a0.png",
-          "x": 38,
-          "y": 3,
-          "w": 25,
-          "h": 49,
+          "x": 50,
+          "y": 609,
+          "w": 32,
+          "h": 64,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.07
         },
         {
           "yaw": -67.5,
           "sheet": "fish/coralbeauty-a1.png",
-          "x": 26,
-          "y": 3,
-          "w": 45,
-          "h": 49,
+          "x": 34,
+          "y": 609,
+          "w": 59,
+          "h": 64,
           "cols": 8,
-          "mb": 0.07
+          "mb": 0.12
         },
         {
           "yaw": -45,
           "sheet": "fish/coralbeauty-a2.png",
-          "x": 13,
-          "y": 4,
-          "w": 72,
-          "h": 48,
+          "x": 17,
+          "y": 610,
+          "w": 95,
+          "h": 63,
           "cols": 8,
-          "mb": 0.11
+          "mb": 0.19
         },
         {
           "yaw": -22.5,
           "sheet": "fish/coralbeauty-a3.png",
-          "x": 6,
-          "y": 4,
-          "w": 88,
-          "h": 48,
+          "x": 8,
+          "y": 610,
+          "w": 116,
+          "h": 63,
           "cols": 8,
-          "mb": 0.14
+          "mb": 0.23
         },
         {
           "yaw": 0,
           "sheet": "fish/coralbeauty-a4.png",
-          "x": 6,
-          "y": 4,
-          "w": 91,
-          "h": 48,
+          "x": 8,
+          "y": 610,
+          "w": 120,
+          "h": 63,
           "cols": 8,
-          "mb": 0.14
+          "mb": 0.24
         },
         {
           "yaw": 22.5,
           "sheet": "fish/coralbeauty-a5.png",
-          "x": 6,
-          "y": 4,
-          "w": 88,
-          "h": 48,
+          "x": 8,
+          "y": 610,
+          "w": 116,
+          "h": 63,
           "cols": 8,
-          "mb": 0.14
+          "mb": 0.23
         },
         {
           "yaw": 45,
           "sheet": "fish/coralbeauty-a6.png",
-          "x": 13,
-          "y": 3,
-          "w": 72,
-          "h": 49,
+          "x": 17,
+          "y": 610,
+          "w": 95,
+          "h": 63,
           "cols": 8,
-          "mb": 0.11
+          "mb": 0.19
         },
         {
           "yaw": 67.5,
           "sheet": "fish/coralbeauty-a7.png",
-          "x": 25,
-          "y": 3,
-          "w": 46,
-          "h": 49,
+          "x": 34,
+          "y": 609,
+          "w": 59,
+          "h": 64,
           "cols": 8,
-          "mb": 0.07
+          "mb": 0.12
         },
         {
           "yaw": 90,
           "sheet": "fish/coralbeauty-a8.png",
-          "x": 39,
-          "y": 3,
-          "w": 25,
-          "h": 49,
+          "x": 52,
+          "y": 609,
+          "w": 32,
+          "h": 64,
           "cols": 8,
-          "mb": 0.04
+          "mb": 0.07
         }
       ],
-      "textureMB": 0.9,
+      "textureMB": 1.5,
       "cruiseYaw": 20.1,
       "turnRate": 115,
-      "lengthPx": 89,
+      "lengthPx": 119,
       "brain": {
         "maxSpeed": 1.7999999999999998,
         "zone": [
@@ -1464,108 +1473,108 @@
       "sci": "Echidna nebulosa",
       "fact": "Spends the day with its head out of a crevice, gulping water through its mouth; hunts crabs at night.",
       "count": 1,
-      "frameW": 528,
-      "frameH": 46,
+      "frameW": 922,
+      "frameH": 1290,
       "frames": 8,
       "angles": [
         {
           "yaw": -90,
           "sheet": "fish/moray-a0.png",
-          "x": 219,
-          "y": 2,
-          "w": 89,
-          "h": 40,
+          "x": 384,
+          "y": 608,
+          "w": 154,
+          "h": 69,
           "cols": 8,
-          "mb": 0.11
+          "mb": 0.34
         },
         {
           "yaw": -67.5,
           "sheet": "fish/moray-a1.png",
-          "x": 137,
-          "y": 1,
-          "w": 237,
-          "h": 41,
-          "cols": 8,
-          "mb": 0.31
+          "x": 240,
+          "y": 608,
+          "w": 413,
+          "h": 69,
+          "cols": 4,
+          "mb": 0.91
         },
         {
           "yaw": -45,
           "sheet": "fish/moray-a2.png",
-          "x": 71,
-          "y": 3,
-          "w": 374,
-          "h": 39,
-          "cols": 5,
-          "mb": 0.58
+          "x": 124,
+          "y": 611,
+          "w": 652,
+          "h": 65,
+          "cols": 3,
+          "mb": 1.53
         },
         {
           "yaw": -22.5,
           "sheet": "fish/moray-a3.png",
-          "x": 34,
-          "y": 3,
-          "w": 455,
-          "h": 38,
-          "cols": 4,
-          "mb": 0.55
+          "x": 60,
+          "y": 611,
+          "w": 793,
+          "h": 65,
+          "cols": 2,
+          "mb": 1.65
         },
         {
           "yaw": 0,
           "sheet": "fish/moray-a4.png",
-          "x": 32,
-          "y": 3,
-          "w": 469,
-          "h": 38,
-          "cols": 4,
-          "mb": 0.57
+          "x": 56,
+          "y": 611,
+          "w": 818,
+          "h": 65,
+          "cols": 2,
+          "mb": 1.7
         },
         {
           "yaw": 22.5,
           "sheet": "fish/moray-a5.png",
-          "x": 34,
-          "y": 3,
-          "w": 455,
-          "h": 38,
-          "cols": 4,
-          "mb": 0.55
+          "x": 60,
+          "y": 611,
+          "w": 793,
+          "h": 65,
+          "cols": 2,
+          "mb": 1.65
         },
         {
           "yaw": 45,
           "sheet": "fish/moray-a6.png",
-          "x": 71,
-          "y": 3,
-          "w": 374,
-          "h": 39,
-          "cols": 5,
-          "mb": 0.58
+          "x": 124,
+          "y": 611,
+          "w": 652,
+          "h": 65,
+          "cols": 3,
+          "mb": 1.53
         },
         {
           "yaw": 67.5,
           "sheet": "fish/moray-a7.png",
-          "x": 137,
-          "y": 1,
-          "w": 237,
-          "h": 41,
-          "cols": 8,
-          "mb": 0.31
+          "x": 239,
+          "y": 608,
+          "w": 414,
+          "h": 69,
+          "cols": 4,
+          "mb": 0.91
         },
         {
           "yaw": 90,
           "sheet": "fish/moray-a8.png",
-          "x": 219,
-          "y": 1,
-          "w": 89,
-          "h": 41,
+          "x": 384,
+          "y": 608,
+          "w": 154,
+          "h": 69,
           "cols": 8,
-          "mb": 0.12
+          "mb": 0.34
         }
       ],
-      "textureMB": 3.7,
+      "textureMB": 10.6,
       "cruiseYaw": 34.4,
       "turnRate": 34,
-      "lengthPx": 466,
+      "lengthPx": 816,
       "tailHz": 1,
       "brain": {
-        "maxSpeed": 1.92,
+        "maxSpeed": 2.52,
         "zone": [
           0.9,
           1
@@ -1586,13 +1595,81 @@
     "reef-7": {
       "scenery": "reef",
       "seed": 7,
-      "backdrop": "scenery/reef-7.jpg",
-      "foreground": "scenery/reef-7-fg.png",
-      "foregroundRect": [
-        77,
-        763,
-        1765,
-        269
+      "backdrop": [
+        {
+          "file": "scenery/reef-7-0.jpg",
+          "rect": [
+            0,
+            0,
+            512,
+            1080
+          ]
+        },
+        {
+          "file": "scenery/reef-7-1.jpg",
+          "rect": [
+            512,
+            0,
+            512,
+            1080
+          ]
+        },
+        {
+          "file": "scenery/reef-7-2.jpg",
+          "rect": [
+            1024,
+            0,
+            512,
+            1080
+          ]
+        },
+        {
+          "file": "scenery/reef-7-3.jpg",
+          "rect": [
+            1536,
+            0,
+            384,
+            1080
+          ]
+        }
+      ],
+      "foreground": [
+        {
+          "file": "scenery/reef-7-fg-0.png",
+          "rect": [
+            60,
+            670,
+            395,
+            406
+          ]
+        },
+        {
+          "file": "scenery/reef-7-fg-1.png",
+          "rect": [
+            549,
+            809,
+            475,
+            254
+          ]
+        },
+        {
+          "file": "scenery/reef-7-fg-2.png",
+          "rect": [
+            1024,
+            743,
+            512,
+            337
+          ]
+        },
+        {
+          "file": "scenery/reef-7-fg-3.png",
+          "rect": [
+            1536,
+            762,
+            266,
+            294
+          ]
+        }
       ],
       "water": {
         "fps": 4,
@@ -1675,10 +1752,10 @@
         },
         "front": {
           "rect": [
-            78,
-            762,
-            1764,
-            270
+            60,
+            670,
+            1742,
+            410
           ],
           "frames": [
             "scenery/reef-7-water-fg-00.png",
@@ -1751,82 +1828,101 @@
         }
       },
       "floor": [
-        920,
-        920,
-        920,
-        879,
-        838,
-        823,
-        820,
-        820,
-        806,
-        766,
-        753,
-        742,
-        740,
-        740,
-        740,
-        740,
-        741,
-        748,
-        761,
-        784,
-        785,
-        796,
-        822,
-        821,
-        821,
-        808,
-        761,
-        744,
-        725,
-        725,
-        725,
-        769,
-        573,
-        568,
-        568,
-        684,
-        789,
-        789,
-        792,
-        815,
-        816,
-        837,
-        904,
-        792,
-        777,
-        766,
-        763,
-        763,
+        633,
+        633,
+        633,
+        633,
+        633,
+        634,
+        634,
+        637,
+        646,
+        649,
+        675,
+        703,
+        704,
+        706,
+        706,
         755,
-        724,
-        710,
-        710,
-        710,
-        710,
-        719,
-        736,
-        829,
-        840,
-        888,
-        920,
-        920,
-        920,
-        920,
-        920,
-        920
+        765,
+        763,
+        763,
+        763,
+        763,
+        733,
+        683,
+        661,
+        642,
+        609,
+        609,
+        609,
+        609,
+        617,
+        679,
+        675,
+        367,
+        357,
+        357,
+        357,
+        357,
+        619,
+        711,
+        711,
+        711,
+        712,
+        733,
+        753,
+        753,
+        755,
+        773,
+        838,
+        885,
+        746,
+        697,
+        694,
+        682,
+        671,
+        670,
+        670,
+        670,
+        670,
+        630,
+        608,
+        591,
+        585,
+        585,
+        585,
+        585
       ],
       "anemone": [
-        1286,
-        876
+        1481,
+        851
       ],
       "swimBox": [
-        207,
-        8,
-        1692,
-        896
-      ]
+        -230,
+        80,
+        2131,
+        883
+      ],
+      "bubbler": {
+        "pos": [
+          1805,
+          714
+        ],
+        "top": -426,
+        "pxPerUnit": 128
+      }
     }
+  },
+  "bubbles": {
+    "sheet": "fish/bubbles.png",
+    "cell": 16,
+    "mm": [
+      1.5,
+      2.5,
+      3.5,
+      5
+    ],
+    "pxPerUnit": 220.8
   }
 }

@@ -399,8 +399,15 @@ export class Brain {
     if (pos.z < B.z0 + 0.5) dir.z += (B.z0 + 0.5 - pos.z) * 3;
     if (pos.z > B.z1 - 0.4) dir.z -= (pos.z - B.z1 + 0.4) * 3;
     if (pos.y > B.y1 - 0.4) dir.y -= (pos.y - B.y1 + 0.4) * 3;
-    // Look ahead for rock.
-    const ahead = world.reefHeight(pos.x + me.dir.x * 1.2, pos.z + me.dir.z * 1.2) + clearance;
+    // Look ahead for rock: the highest reef along the next second or so of travel, so a fish starts its
+    // climb before a coral head rather than at its foot. Over branching coral the height field is bumpy
+    // cell to cell, so the remembered top sinks back slowly and the fish glides level across instead of
+    // bobbing into every gap.
+    const reach = 0.3 + Math.max(0, me.speed) * 1.2, hd = Math.hypot(me.dir.x, me.dir.z) || 1;
+    let top = world.reefHeight(pos.x, pos.z);
+    for (const k of [0.33, 0.67, 1]) top = Math.max(top, world.reefHeight(pos.x + (me.dir.x / hd) * reach * k, pos.z + (me.dir.z / hd) * reach * k));
+    this.reefSeen = top >= (this.reefSeen ?? -Infinity) ? top : Math.max(top, this.reefSeen - 0.6 * dt);
+    const ahead = this.reefSeen + clearance;
     const below = world.reefHeight(pos.x, pos.z) + clearance;
     if (pos.y < below) dir.y += (below - pos.y) * 4 + 0.5;
     else if (pos.y < ahead && !anchored) dir.y += (ahead - pos.y) * 1.5;

@@ -32,6 +32,18 @@ export class World {
   }
 
   reefHeight(x, z) { return this.reef.heightAt(x, z); }
+  // The cave roof over (x, z) as { y: underside, top }, or null in the open. Roofs overhang, so the
+  // height field doesn't hold them (reef.js caves[].roof).
+  roofAt(x, z) {
+    for (const c of this.reef.caves || []) {
+      const r = c.roof;
+      if (!r) continue;
+      const dx = x - c.x, dz = z - c.z, cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+      const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+      if (Math.abs(lx) < r.hx && lz > r.z0 && lz < r.z1) return r;
+    }
+    return null;
+  }
 
   // Water velocity (units/s) from the return pump: one slow overturning cell across the tank,
   // built from a stream function psi = A sin(pi x'/W) sin(pi y/H), so it is divergence-free.

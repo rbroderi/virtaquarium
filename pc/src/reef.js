@@ -402,9 +402,11 @@ class HeightField {
 // ---------- scanned / generated scenery (Tripo3D GLBs, see tools/tripo.mjs) ----------
 
 // Loads pc/models/scenery.json. Each model is centred on x/z with its base at y=0 and scaled to a
-// unit bounding box (rocks per axis, corals uniformly by their largest side), so the layout code can fit it to a footprint. Returns { rocks: [], coral: {} }.
+// unit bounding box (rocks per axis, corals and props uniformly by their largest side), so the layout
+// code can fit it to a footprint. `rotate` ([x, y, z] degrees) stands a model up first, for one built
+// in another pose. Returns { rocks: [], coral: {}, props: {} }.
 export async function loadScenery(base = './models/') {
-  const out = { rocks: [], coral: {} };
+  const out = { rocks: [], coral: {}, props: {} };
   let manifest;
   try {
     const r = await fetch(base + 'scenery.json', { cache: 'no-cache' });
@@ -415,9 +417,11 @@ export async function loadScenery(base = './models/') {
   await Promise.all(Object.entries(manifest).map(async ([id, cfg]) => {
     try {
       const gltf = await loader.loadAsync(base + cfg.file);
+      if (cfg.rotate) gltf.scene.rotation.set(...cfg.rotate.map((d) => (d * Math.PI) / 180));
       const obj = cfg.kind === 'rock' ? normaliseScenery(gltf.scene, 0.7, false) : normaliseScenery(gltf.scene, 0.9, true);
       obj.name = id;   // GLB scene names repeat ("Scene"), so sort by the manifest id below
       if (cfg.kind === 'rock') out.rocks.push(obj);
+      else if (cfg.kind === 'prop') out.props[id] = obj;
       else out.coral[id.replace(/^coral_/, '')] = obj;
     } catch (e) {
       console.warn(`Scenery ${id} failed to load, using procedural`, e);
@@ -475,7 +479,7 @@ function swapCoral(parent, proc, model) {
 
 // scenery: optional { rocks, coral } from loadScenery(); generated models replace procedural ones.
 // view: the camera's rest position (main.js CAM_BASE, bake.js), which the moray caves must face.
-export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
+export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {}, props: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
   const rng = mulberry32(seed);
   const noise = new Noise(mulberry32(seed + 1));
   const sx = width / 16;   // layout scales with the tank width
@@ -672,6 +676,28 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   an.traverse((o) => (o.userData.noHeight = true));
   corals.add(an);
 
+  // Shells on the open sand at the front: a starfish lying flat and a conch on its side. Their own
+  // random stream keeps the rest of the seeded layout as it was; no procedural stand-ins.
+  // facing: turn the model's +z to the viewer (the conch's opening, after its scenery.json rotate,
+  // which tips it back so the opening looks along +z at about the camera's height).
+  {
+    const prng = mulberry32(seed + 11);
+    const place = (model, cm, x, z, facing = false) => {
+      if (!model) return;
+      const m = model.clone(), k = cm / 12.5;   // largest side, cm -> units
+      m.scale.setScalar(k);
+      const spin = prng() * Math.PI * 2;
+      m.rotation.y = facing ? Math.atan2(view.x - x, view.z - z) + (spin / Math.PI - 1) * 0.2 : spin;
+      m.position.set(x, top(x, z, 0.4 * k) - 0.01 * k, z);
+      m.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+      corals.add(m);
+    };
+    const props = scenery.props || {};
+    // Far enough back to sit whole above the bottom of the zoomed window (view.js), which cuts the sand at z ~2.
+    place(props.starfish, 17, (0.2 + range(prng, -0.3, 0.3)) * sx, range(prng, 1.4, 1.7));
+    place(props.conch, 16, (4.4 + range(prng, -0.3, 0.3)) * sx, range(prng, 1.1, 1.4), true);
+  }
+
   hf.splatObject(corals);
 
   // Moray caves: an arch of rock (two side stones and a back stone under a flat roof) with its mouth to
@@ -758,8 +784,9 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
         dir: out,                                                                     // facing out of the cave
         yaw, ground, x: cx, z: cz, seen: bestV,                                      // share of sight lines clear
         // The roof isn't in the height field (it overhangs the floor): its underside, over cave-local
-        // x within ±hx and z from z0 (back) to z1 (front), for animals that move inside.
-        roof: { y: ground + 0.68, hx: 1.1, z0: -0.9, z1: 0.72 },
+        // x within ±hx and z from z0 (back) to z1 (front), for animals that move inside; top is its
+        // upper surface, for those that pass over it.
+        roof: { y: ground + 0.68, top: ground + 1.2, hx: 1.1, z0: -0.9, z1: 0.72 },
       });
     }
   }

@@ -306,8 +306,12 @@ export function bakeReefLight(renderer, reef, {
   let eye = null, scrRT = null, gRT = null, sw = 0, shh = 0;
   if (camera) {
     eye = camera.clone();
+    // The whole frame, not a zoomed window into it (view.js pans that window across the frame), at
+    // enough pixels that the window still gets about one bake pixel per screen pixel.
+    const zoom = camera.view && camera.view.enabled ? camera.view.fullWidth / camera.view.width : 1;
+    eye.clearViewOffset();
     eye.fov = camera.fov * 1.15; eye.updateProjectionMatrix(); eye.updateMatrixWorld();
-    sw = Math.min(maxTex, 2048); shh = Math.round(sw / eye.aspect);
+    sw = Math.min(maxTex, Math.round(2048 * Math.min(zoom, 1.5))); shh = Math.round(sw / eye.aspect);
     scrRT = new THREE.WebGLRenderTarget(sw, shh, { type: THREE.HalfFloatType, depthBuffer: false, count: 2, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     gRT = new THREE.WebGLRenderTarget(sw, shh, { type: THREE.FloatType, depthBuffer: true, count: 2, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
   }

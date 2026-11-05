@@ -100,15 +100,8 @@ const randomTarget = (rng, world, lo, hi) => {
 // Underside of a cave roof over (x, z), or Infinity in the open (roofs overhang, so the height field
 // doesn't hold them: see reef.js caves[].roof).
 function ceilingAt(world, x, z) {
-  let y = Infinity;
-  for (const c of world.reef.caves || []) {
-    const r = c.roof;
-    if (!r) continue;
-    const dx = x - c.x, dz = z - c.z, cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
-    const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
-    if (Math.abs(lx) < r.hx && lz > r.z0 && lz < r.z1) y = Math.min(y, r.y);
-  }
-  return y;
+  const r = world.roofAt(x, z);
+  return r ? r.y : Infinity;
 }
 // Floor for things lying on the bottom. The height field holds the cave roof's top, dilated for the
 // fishes' clearance, so just outside the mouth (open sand under the overhang's edge) it reads as rock;

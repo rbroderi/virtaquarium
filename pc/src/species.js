@@ -357,7 +357,8 @@ export const SPECIES = [
   {
     id: 'moray', name: 'Snowflake Moray', sci: 'Echidna nebulosa',
     fact: 'Spends the day with its head out of a crevice, gulping water through its mouth; hunts crabs at night.',
-    size: 3.2, count: 1,
+    // 52.5 cm: adult aquarium size is commonly 50-75 cm (wild maximum ~1 m).
+    size: 4.2, count: 1,
     // Anguilliform: no pectoral or pelvic fins, one continuous fin fold (dorsal from just ahead of the gill
     // opening, anal from the vent at mid-body) running round the tail; scaleless, mucus-covered skin.
     // Proportions from the side-on references (pc/ref/moray): depth ~6.5% TL, head ~12% TL.

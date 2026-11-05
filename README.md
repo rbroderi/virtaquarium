@@ -23,6 +23,8 @@ Open <http://localhost:8080/pc/> and press **F11** for full screen.
 | Space | pause |
 | H | help |
 
+**View**: the camera is pushed in towards the glass like Aquatic Life's: the screen shows a 1/1.6 window of the tank, near the bottom so the sand and reef stay in frame (`pc/src/view.js`). Fish stay below the top of the window. `?zoom=1` shows the whole tank. `?pan=1` pans the window slowly across the tank every 2 minutes; it is off by default because on the Roku it measured 53–66 MB of texture memory against a 50 MB target. The Roku bake uses the same framing.
+
 URL options: `?clock=1` (lights follow your local time), `?feed=4` (auto-feeder interval in minutes, `0` = off), `?drift=0` (no camera parallax), `?seed=7` (reef layout). `?scenery=jelly` opens the jelly tank: moon jellies only, in a backlit deep-blue kreisel with no reef, sand or surface (`jelly.js`; a tank file's `"scenery": "jelly"` does the same, and jellies are dropped from reef tanks). `?reeflight=0` skips the baked reef light: at load the static reef is ray cast on the GPU (`reefLight.js`, about a second) for soft sun shadows from a light of finite size, the share of the water's ambient light each point can see, and coloured light bounced off the reef (two bounces), per pixel from the camera's rest view and in a 3D grid that the fish use. Live, a screen-space AO pass adds contact shading for the fish, and only the fish cast real-time shadows (Roku bake notes: `docs/roku_bake.md`). `?rig=led` lights the tank with an aquarium LED bar (a softer key plus fills; the lab offers the same rig). `?photo=1` renders through a camera model (`photo.js`, `&fstop=2.8`): thin-lens depth of field with autofocus on the fish nearest the centre, lateral chromatic aberration, cos⁴ vignetting and shot-noise grain, all in linear light before tone mapping. The lab takes `?photo=1` too.
 
 ## How it works
@@ -161,6 +163,16 @@ The first command shows the jobs and prompts. The second generates every missing
 - **Credits**: API credits are separate from a Studio subscription. Each model costs roughly 10–40 credits (1 credit = $0.01).
 - **Output**: models go to `pc/models/scenery/` and are listed in `pc/models/scenery.json`.
 - **Placement**: rocks are stretched onto the procedural rock-pile layout. Each coral replaces its procedural counterpart (staghorn, finger, cauliflower, brain, leather, fan), fitted to the same size and spot. The reef heightfield the fish use follows the new shapes. Anything missing stays procedural.
+- **Props** (`kind: "prop"`): a starfish and a conch, from your own GLBs (`starfish.glb`, `conch.glb`, textures shrunk with `node tools/optimize-scenery.mjs starfish conch`), lie on the open sand at the front at life size (17 and 16 cm). `rotate: [x, y, z]` in degrees turns a model before it is fitted; the starfish was modelled upright, so it gets `[-90, 0, 0]` to lie flat.
+
+### Motion check
+
+`?check=motion` steps the tank for two simulated minutes without drawing (`&seconds=N` to change that; add `&reeflight=0` to skip the slow light bake) and reports in the console and `window.motionCheck`:
+- each fish's fastest climb, in body lengths per second (a snap up a coral head shows as a spike);
+- quick up-down reversals per minute (bobbing over branching coral);
+- for each eel, the frames in which its body is inside a cave roof.
+
+Measured on seed 7, before and after the fish started looking about a second ahead for the reef top and the rock stopped snapping them upwards: the fastest climb fell from 67 to 11.5 body lengths per second, reversals from 0.39 to 0.15 per fish per minute, and the eel's frames inside its roof from 3598 of 3600 to 0.
 
 ## Roku (in progress)
 
@@ -170,6 +182,15 @@ Roku can't run WebGL, so the plan is to render the scene offline with the same t
 - packaged as a channel with `RunScreenSaver()` and `Main()` entry points.
 
 To see the baked assets as the Roku will draw them (a 2D backdrop, sprite fish and foreground reef, no WebGL), open <http://localhost:8080/pc/roku.html> or run `run_baked.bat`, which re-bakes first so the preview matches the current code (`run_baked.bat nobake` skips that). URL options: `?fps=30`, `?scene=reef-7`, `?seed=1`. Press **W** to toggle the moving water.
+
+The bake takes as much as it can from the live tank:
+- **Reef light**: the PC tank's ray-cast reef light (`reefLight.js`: soft sun shadows, ambient occlusion, coloured bounce), with the same inputs as `main.js` and the ambient water light lowered against it as `main.js` does (`?reeflight=0` to compare).
+- **Fish**: lit by the live rig at full daylight (sun 2.65, ambient 0.75, exposure 1.25) and rendered through the live water (absorption, inscatter and the reef-depth white balance), placed mid-way up the window and seen from the live camera's distance, so sprites match the reef they swim over.
+- **Marine snow**: the live particles, carried by the pump current, are in the water loop. Two copies of the simulation run forward to the two moments each loop frame blends.
+- **Bubbles**: the airstone's column uses sprites baked with the live bubble shader, sent up by the player at the live rise speed, about 25 cm/s, which is too fast for a 4 fps loop.
+- **Not carried over**: caustics moving over the fish (a frozen pattern would slide with the sprite), fish shadows on the reef, and the screen-space AO between fish and rock.
+
+With the zoomed view (`?zoom=1.6`, the default; bake with `--zoom=1` for the whole tank), the backdrop is baked as the strip the screen shows: one screen wide, or with `--pan=1` 1.6 screens wide for the pan, cut into 512 px columns (`scenery/<key>-<n>.jpg`, and `-fg-<n>.png` for the foreground, each cropped to its reef). The player draws everything shifted by the pan and loads only the columns on screen plus the next one the pan reaches. Fish off screen hold no textures. Fish sprites are baked at 120 × zoom px per unit to stay sharp at the larger size.
 
 The moving water (caustics, light shafts, surface ripples, swaying soft corals) is baked as a looping set of half-resolution overlay frames, `scenery/<key>-water-NN.png` plus `-water-fg-NN.png` for the foreground reef. Each frame is drawn over the static backdrop with plain alpha blending. Between frames, a step overlay `-water-step-NN.png` (encoded against exactly what frame NN leaves on screen) is drawn over it at opacity t, which gives the true linear blend towards the next frame. Fading one partly transparent frame over another instead shows both caustic networks at once, brightening through each step and snapping back: a pulse 4 times a second. Each frame's caustic contrast is also matched to the average, so the loop's own crossfade doesn't dim it mid-loop. Tune it with `pc/bake.html?waterFrames=32&waterLoop=8` (frame count, loop length in seconds).
 

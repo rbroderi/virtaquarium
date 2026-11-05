@@ -10,9 +10,13 @@ import { buildFishModel, loadCustomModels, posePectoral } from './fishModel.js';
 import { buildReef, loadScenery } from './reef.js';
 import {
   waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, makeSurface,
-  Caustics, WaterRenderer, causticUniforms, updateWaves, setSunDirection,
+  Caustics, WaterRenderer, causticUniforms, updateWaves, setSunDirection, MarineSnow, Bubbles, SURFACE_Y,
 } from './water.js';
+import { World } from './world.js';
+import { mulberry32 } from './util.js';
 import { SCENERY } from './tank.js';
+import { bakeReefLight, reefLightUniforms } from './reefLight.js';
+import { viewOptions, setStrip, windowTopY, PAN_PERIOD } from './view.js';
 
 const params = new URLSearchParams(location.search);
 const FRAMES = Number(params.get('frames') || 8);   // swim-cycle frames per viewing angle
@@ -23,11 +27,18 @@ const YAWS = Number(params.get('yaws') || 9);
 const MAX_SHEET = 2048;             // Roku's recommended largest bitmap side; cells wrap to stay inside it
 const SS = 2;                       // supersampling factor
 const SCREEN = { w: 1920, h: 1080 };
+// Zoomed view (view.js): the screen is a 1/zoom window into the tank; with ?pan=1 it pans along a strip
+// zoom times as wide, otherwise the strip is just that window.
+const VIEW = viewOptions(params);
+const STRIP = { w: VIEW.pan ? Math.round(SCREEN.w * VIEW.zoom) : SCREEN.w, h: SCREEN.h };   // as setStrip
+const TILE = 512;   // the strip's backdrop and foreground are cut into columns this wide, loaded as they come into view
 const CAUSTIC_T = 3.0;   // wave time (s) the backdrop's caustics are frozen at
 const WATER_FRAMES = Number(params.get('waterFrames') || 32);   // moving-water loop: frames ...
 const WATER_LOOP = Number(params.get('waterLoop') || 8);        // ... spread over this many seconds
 const WATER_SCALE = 2;              // loop frames are baked at 1/2 resolution and scaled up on the Roku
-const PX_PER_UNIT = 144;            // sprite resolution: ~1.25x on-screen size at 1080p, headroom for near fish
+// Sprite resolution: ~1.2x the on-screen size at 1080p (99 px/unit at mid depth, times the zoom),
+// headroom for fish swimming nearer the glass.
+const PX_PER_UNIT = Math.round(120 * VIEW.zoom);
 const CRUISE_YAW = 0.35;            // the player shows cruising fish turned this far towards the viewer (rad)
 const OUT = 'roku/assets/';
 const only = params.get('species')?.split(',');
@@ -66,15 +77,38 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserv
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+// The live tank's camera at rest (main.js), framed on the strip the Roku shows (view.js).
+function liveCamera() {
+  const camera = new THREE.PerspectiveCamera(40, SCREEN.w / SCREEN.h, 0.1, 120);
+  camera.position.set(0, 4.6, 15);
+  camera.lookAt(0, 3.9, 0);
+  camera.updateMatrixWorld();
+  setStrip(camera, SCREEN.w, SCREEN.h, VIEW);
+  return camera;
+}
+// The live lights at full daylight: main.js's light rig puts the sun at 2.6 x 1 + 0.05, and lowers the
+// ambient water light to 0.75 against the reef light.
+const SUN = 2.65, AMBIENT = params.get('reeflight') !== '0' ? 0.75 : 1;
+const EXPOSURE = 1.25;   // main.js applyLight at full daylight
+
 // ---------- fish sprites ----------
 
+// Lit as the live tank lights a fish in open water, and seen through the same water: the medium
+// (absorption by depth and path, inscatter, the reef-depth white balance) works from world positions,
+// so each fish is rendered where live fish mostly swim, mid-way up the window, from the live camera's
+// distance.
 function fishScene() {
+  installUnderwaterMedium();
   const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(INSCATTER_DAY.clone(), 1.0);
   scene.environment = makeEnvironment(renderer);
-  scene.environmentIntensity = 0.35;
-  const sun = new THREE.DirectionalLight(0xfff2dc, 2.65);
+  scene.environmentIntensity = 0.35 * AMBIENT;
+  const sun = new THREE.DirectionalLight(0xfff2dc, SUN);
   sun.position.set(3, 22, 7);
-  scene.add(sun, new THREE.HemisphereLight(new THREE.Color(0.86, 0.92, 1.0), 0x8a7458, 1.0));
+  scene.add(sun, new THREE.HemisphereLight(new THREE.Color(0.86, 0.92, 1.0), 0x8a7458, AMBIENT));
+  const cam = liveCamera();
+  scene.userData.fishY = (0.25 + Math.min(9.2, windowTopY(cam) - 0.5)) / 2;
+  scene.userData.eyeZ = cam.position.z;
   return scene;
 }
 
@@ -97,7 +131,10 @@ function pose(model, i, n, amp = 0.55) {
 async function bakeFish(sp, scene) {
   const model = buildFishModel(sp);
   model.scale.setScalar(sp.size);
+  const Y = scene.userData.fishY, Z = scene.userData.eyeZ;
+  model.position.set(0, Y, 0);
   scene.add(model);
+  renderer.toneMappingExposure = EXPOSURE;
 
   // Cell big enough for every pose: length for the side view, plus the widest point seen mid-turn.
   const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3());
@@ -105,9 +142,9 @@ async function bakeFish(sp, scene) {
   const extY = Math.max(Math.abs(box.min.y), Math.abs(box.max.y)) * 1.12;
   const cw = Math.ceil(ext * 2 * PX_PER_UNIT / 2) * 2, ch = Math.ceil(extY * 2 * PX_PER_UNIT / 2) * 2;
 
-  const cam = new THREE.OrthographicCamera(-cw / 2 / PX_PER_UNIT, cw / 2 / PX_PER_UNIT, ch / 2 / PX_PER_UNIT, -ch / 2 / PX_PER_UNIT, 0.1, 20);
-  cam.position.set(0, 0, 10);
-  cam.lookAt(0, 0, 0);
+  const cam = new THREE.OrthographicCamera(-cw / 2 / PX_PER_UNIT, cw / 2 / PX_PER_UNIT, ch / 2 / PX_PER_UNIT, -ch / 2 / PX_PER_UNIT, 0.1, Z + 10);
+  cam.position.set(0, Y, Z);
+  cam.lookAt(0, Y, 0);
   renderer.setPixelRatio(1);
   renderer.setSize(cw * SS, ch * SS, false);
   renderer.setClearColor(0x000000, 0);
@@ -181,21 +218,32 @@ async function bakeScenery(scenery, seed) {
   scene.environment = makeEnvironment(renderer);
   scene.environmentIntensity = 0.35;
   backdrop.material.uniforms.uBase.value.copy(scene.fog.color);
-  const camera = new THREE.PerspectiveCamera(40, aspect, 0.1, 120);
-  camera.position.set(0, 4.6, 15);
-  camera.lookAt(0, 3.9, 0);
-  camera.updateMatrixWorld();
+  const camera = liveCamera();   // framed on the whole strip the zoomed window shows
 
-  const sun = new THREE.DirectionalLight(0xfff2dc, 2.65);
+  const sun = new THREE.DirectionalLight(0xfff2dc, SUN);
   sun.position.set(3, 22, 7);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
   sc.left = -TANK_W * 0.75; sc.right = TANK_W * 0.75; sc.top = 9; sc.bottom = -9; sc.near = 5; sc.far = 40;
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 4;
-  scene.add(sun, new THREE.HemisphereLight(new THREE.Color(0.86, 0.92, 1.0), 0x8a7458, 1.0));
+  const hemi = new THREE.HemisphereLight(new THREE.Color(0.86, 0.92, 1.0), 0x8a7458, 1.0);
+  scene.add(sun, hemi);
   // Generated rocks and corals (pc/models/scenery.json), as in main.js; missing ones stay procedural.
-  const reef = buildReef(scene, TANK_W, seed, await loadScenery());
+  const reef = buildReef(scene, TANK_W, seed, await loadScenery(), camera.position);
+  // The PC tank's reef light (reefLight.js), with the same inputs as main.js at full daylight: soft sun
+  // shadows, ambient occlusion and coloured bounce light ray cast once, with the ambient water light
+  // lowered against it as main.js does. (main.js's live screen-space AO shades fish against the reef;
+  // the Roku's fish are sprites drawn over this, so it has nothing to add here.)
+  if (params.get('reeflight') !== '0') {
+    bakeReefLight(renderer, reef, {
+      sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
+      sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(0.75), ground: hemi.groundColor.clone().multiplyScalar(0.75),
+      camera,
+    });
+  }
+  hemi.intensity = AMBIENT;
+  scene.environmentIntensity = 0.35 * AMBIENT;
   const surface = makeSurface(TANK_W);
   scene.add(surface);
   waterUniforms.uCaustic.value = 1;
@@ -203,9 +251,26 @@ async function bakeScenery(scenery, seed) {
 
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMappingExposure = 1.25;
+  renderer.toneMappingExposure = EXPOSURE;
   renderer.setPixelRatio(1);
-  renderer.setSize(SCREEN.w, SCREEN.h, false);
+  renderer.setSize(STRIP.w, STRIP.h, false);
+
+  // Marine snow as in main.js, carried by the pump current (world.js). It moves, so it lives only in
+  // the water loop, never the static layers; two copies (the same particles) are simulated forward to
+  // the two moments each loop frame blends, t and t + loop length.
+  const swim = { x0: -TANK_W / 2 + 0.9, x1: TANK_W / 2 - 0.9, y0: 0.25, y1: Math.min(9.2, windowTopY(camera) - 0.5), z0: -3.0, z1: 2.7 };
+  const world = new World(scene, reef, swim, mulberry32(seed));
+  const flow = (p, o) => world.flow(p, o);
+  const snowSims = [0, 1].map(() => ({ s: new MarineSnow(scene, TANK_W * 1.4, mulberry32(seed * 101 + 3)), t: 0 }));
+  const snow = {
+    at(k, t) {
+      const sim = snowSims[k];
+      for (; sim.t < t - 1e-6; sim.t += 1 / 30) { world.time = sim.t; sim.s.update(Math.min(1 / 30, t - sim.t), sim.t, flow); }
+      snowSims.forEach((o, i) => { o.s.points.visible = i === k; });
+    },
+    off() { for (const o of snowSims) o.s.points.visible = false; },
+  };
+  snow.off();
   renderer.setClearColor(0x000000, 1);
 
   // The same simulated caustics and light shafts as the PC tank, frozen at one moment of the waves.
@@ -217,11 +282,17 @@ async function bakeScenery(scenery, seed) {
 
   const key = `${scenery}-${seed}`;
   const out = document.createElement('canvas');
-  out.width = SCREEN.w; out.height = SCREEN.h;
-  const g = out.getContext('2d');
+  out.width = STRIP.w; out.height = STRIP.h;
+  const g = out.getContext('2d', { willReadFrequently: true });
   waterRenderer.render(scene, camera, sun);
   g.drawImage(renderer.domElement, 0, 0);
-  await save(`scenery/${key}.jpg`, await toBlob(out, 'image/jpeg', 0.9));
+  // The strip is cut into TILE-wide columns, so the Roku holds only those in view as the window pans.
+  const backTiles = [];
+  for (let x = 0, n = 0; x < STRIP.w; x += TILE, n++) {
+    const rect = [x, 0, Math.min(TILE, STRIP.w - x), STRIP.h], file = `scenery/${key}-${n}.jpg`;
+    await save(file, await toBlob(cropCanvas(out, rect), 'image/jpeg', 0.9));
+    backTiles.push({ file, rect });
+  }
 
   // Foreground: only reef meshes near the glass, on a transparent background. Rendered without the
   // shaft pass (which is opaque); the reef keeps its caustic lighting so it matches the backdrop.
@@ -236,22 +307,29 @@ async function bakeScenery(scenery, seed) {
   showFgOnly(true);
   renderer.setClearColor(0x000000, 0);
   renderer.render(scene, camera);
-  g.clearRect(0, 0, SCREEN.w, SCREEN.h);
+  g.clearRect(0, 0, STRIP.w, STRIP.h);
   g.drawImage(renderer.domElement, 0, 0);
-  // Crop to the pixels that hold reef: texture memory goes by bitmap size (4 bytes a pixel), so a
-  // mostly empty full-screen layer costs 8 MB on the Roku for ~2 MB of reef.
-  const fgRect = alphaBox(g.getImageData(0, 0, SCREEN.w, SCREEN.h));
-  await save(`scenery/${key}-fg.png`, await toBlob(cropCanvas(out, fgRect), 'image/png'));
+  // Columns like the backdrop's, each cropped to the pixels that hold reef: texture memory goes by
+  // bitmap size (4 bytes a pixel), so empty layer costs as much as reef.
+  const fgTiles = [];
+  for (let x = 0, n = 0; x < STRIP.w; x += TILE, n++) {
+    const w = Math.min(TILE, STRIP.w - x), [bx, by, bw, bh] = alphaBox(g.getImageData(x, 0, w, STRIP.h));
+    if (bw <= 1) continue;
+    const rect = [x + bx, by, bw, bh], file = `scenery/${key}-fg-${n}.png`;
+    await save(file, await toBlob(cropCanvas(out, rect), 'image/png'));
+    fgTiles.push({ file, rect });
+  }
   showFgOnly(false);
-  const water = await bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly);
+  const water = await bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly, snow);
   renderer.shadowMap.enabled = false;
   // Sprites must not carry a frozen caustic pattern (fish move through it on the Roku).
   causticUniforms.uCauOn.value = 0;
+  reefLightUniforms.uRLOn.value = 0;   // nor this reef's light
 
   // Screen-space helpers for the Roku's 2D brains: reef top line at mid depth, anemone, swim box.
   const project = (x, y, z) => {
     const v = new THREE.Vector3(x, y, z).project(camera);
-    return [Math.round((v.x + 1) / 2 * SCREEN.w), Math.round((1 - v.y) / 2 * SCREEN.h)];
+    return [Math.round((v.x + 1) / 2 * STRIP.w), Math.round((1 - v.y) / 2 * STRIP.h)];
   };
   const floor = [];
   for (let i = 0; i <= 64; i++) {
@@ -262,13 +340,18 @@ async function bakeScenery(scenery, seed) {
     floor.push(project(x, reef.heightAt(x, 0), 0)[1]);
   }
   const an = reef.anemones[0].pos;
-  const bounds = { x0: -TANK_W / 2 + 0.9, x1: TANK_W / 2 - 0.9, y0: 0.25, y1: 9.2 };
+  // As main.js: fish stay below the top of the zoomed window.
+  const bounds = swim;
   const tl = project(bounds.x0, bounds.y1, 0), br = project(bounds.x1, bounds.y0, 0);
+  // The airstone, for the player's bubble column: where it is, how far up the bubbles go (the surface,
+  // usually above the strip) and the scale at its depth.
+  const bo = reef.bubbler, bp = bo && project(bo.x, bo.y, bo.z);
+  const bubbler = bo ? { pos: bp, top: project(bo.x, SURFACE_Y, bo.z)[1], pxPerUnit: Math.abs(project(bo.x + 1, bo.y, bo.z)[0] - bp[0]) } : null;
   return {
     key,
     entry: {
-      scenery, seed, backdrop: `scenery/${key}.jpg`, foreground: `scenery/${key}-fg.png`, foregroundRect: fgRect, water,
-      floor, anemone: project(an.x, an.y, an.z), swimBox: [tl[0], tl[1], br[0], br[1]],
+      scenery, seed, backdrop: backTiles, foreground: fgTiles, water,
+      floor, anemone: project(an.x, an.y, an.z), swimBox: [tl[0], tl[1], br[0], br[1]], bubbler,
     },
   };
 }
@@ -306,8 +389,8 @@ function encodeOverlay(F, B, mask, box, w) {
   return out;
 }
 
-async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly) {
-  const W = SCREEN.w / WATER_SCALE, H = SCREEN.h / WATER_SCALE;
+async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showFgOnly, snow) {
+  const W = STRIP.w / WATER_SCALE, H = STRIP.h / WATER_SCALE;
   renderer.setSize(W, H, false);
   const grab = document.createElement('canvas');
   grab.width = W; grab.height = H;
@@ -349,6 +432,7 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
 
   // Bases: the backdrop and foreground exactly as baked above, at loop resolution.
   setTime(0, CAUSTIC_T);
+  snow.off();   // the bases match the static layers, which have no snow
   const B = back(), G = front();
   const fgA = new Uint8ClampedArray(W * H), backMask = new Uint8ClampedArray(W * H);
   for (let p = 0; p < W * H; p++) { fgA[p] = G[p * 4 + 3]; backMask[p] = 255 - fgA[p]; }
@@ -356,8 +440,9 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
   const boxes = [{ x0: W, y0: H, x1: 0, y1: 0 }, { x0: W, y0: H, x1: 0, y1: 0 }], frames = [], shots = [];
   for (let i = 0; i < WATER_FRAMES; i++) {
     const t0 = CAUSTIC_T + (i / WATER_FRAMES) * WATER_LOOP, t1 = t0 + WATER_LOOP;
-    setTime(t0); const b0 = back(), f0 = front();
-    setTime(t1); const b1 = back(), f1 = front();
+    // Snow shows in the backdrop layer's frames (the foreground layer covers only the near reef).
+    setTime(t0); snow.at(0, t0); const b0 = back(); snow.off(); const f0 = front();
+    setTime(t1); snow.at(1, t1); const b1 = back(); snow.off(); const f1 = front();
     shots.push({ b0, f0, b1, f1 });
     log(`water ${key}: frame ${i + 1}/${WATER_FRAMES}`);
   }
@@ -406,16 +491,49 @@ async function bakeWater(key, scene, camera, sun, waterRenderer, caustics, showF
       }
     }
   }
-  renderer.setSize(SCREEN.w, SCREEN.h, false);
+  renderer.setSize(STRIP.w, STRIP.h, false);
   const layer = (L) => L && { rect: L.rect, frames: L.files, steps: L.steps };
   return { fps: WATER_FRAMES / WATER_LOOP, scale: WATER_SCALE, back: layer(layers[0]), front: layer(layers[1]) };
+}
+
+// ---------- bubbles ----------
+
+// Bubble sprites: the live bubble shader (water.js Bubbles) on single bubbles of a few sizes, flattened
+// as they are live (aspect 1 + 0.16 d[mm]), for the Roku player to send up the airstone's column with
+// the same rise speed.
+const BUBBLE_MM = [1.5, 2.5, 3.5, 5];
+async function bakeBubbles(scene) {
+  const b = new Bubbles(scene, new THREE.Vector3(), mulberry32(5));
+  b.mesh.count = 1;
+  const px = PX_PER_UNIT * 1.15;   // a little over mid-depth scale, for bubbles nearer the glass
+  const cell = Math.ceil((BUBBLE_MM[BUBBLE_MM.length - 1] / 1000 / 0.125) * px * 1.3) + 4;
+  const cam = new THREE.OrthographicCamera(-cell / 2 / px, cell / 2 / px, cell / 2 / px, -cell / 2 / px, 0.1, 20);
+  cam.position.set(0, 0, 10);
+  cam.lookAt(0, 0, 0);
+  renderer.setPixelRatio(1);
+  renderer.setSize(cell * SS, cell * SS, false);
+  renderer.setClearColor(0x000000, 0);
+  renderer.toneMappingExposure = EXPOSURE;
+  const sheet = document.createElement('canvas');
+  sheet.width = cell * BUBBLE_MM.length; sheet.height = cell;
+  const g = sheet.getContext('2d');
+  BUBBLE_MM.forEach((mm, i) => {
+    const r = mm / 2000 / 0.125, aspect = 1 + 0.16 * Math.max(0, mm - 1);
+    b.mesh.setMatrixAt(0, new THREE.Matrix4().makeScale(r * Math.cbrt(aspect), r / Math.pow(aspect, 2 / 3), r * Math.cbrt(aspect)));
+    b.mesh.instanceMatrix.needsUpdate = true;
+    renderer.render(scene, cam);
+    g.drawImage(renderer.domElement, i * cell, 0, cell, cell);
+  });
+  scene.remove(b.mesh);
+  await save('fish/bubbles.png', await toBlob(sheet, 'image/png'));
+  return { sheet: 'fish/bubbles.png', cell, mm: BUBBLE_MM, pxPerUnit: +px.toFixed(1) };
 }
 
 // ---------- run ----------
 
 async function run() {
   const t0 = performance.now();
-  const manifest = { version: 1, generated: new Date().toISOString(), screen: SCREEN, pxPerUnit: PX_PER_UNIT, species: {}, scenery: {} };
+  const manifest = { version: 1, generated: new Date().toISOString(), screen: SCREEN, view: { zoom: VIEW.zoom, pan: VIEW.pan, period: PAN_PERIOD, strip: STRIP }, pxPerUnit: PX_PER_UNIT, species: {}, scenery: {} };
   const custom = await loadCustomModels(species);
   if (custom.length) log(`custom models: ${custom.join(', ')}`);
 
@@ -424,6 +542,7 @@ async function run() {
     manifest.species[sp.id] = await bakeFish(sp, fs);
     log(`fish ${sp.id}: ${manifest.species[sp.id].frameW}x${manifest.species[sp.id].frameH} x ${YAWS} angles x ${FRAMES}, ${manifest.species[sp.id].textureMB} MB`);
   }
+  manifest.bubbles = await bakeBubbles(fs);
   for (const scenery of SCENERY) {
     for (const seed of seeds) {
       const { key, entry } = await bakeScenery(scenery, seed);

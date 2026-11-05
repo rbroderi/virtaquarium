@@ -7,6 +7,8 @@
 // nearest angles (two posters on the Roku).
 // Texture memory is budgeted as on the Roku (see Textures): pages are loaded ahead of need and freed
 // when no poster shows them, so the total stays under ?budget= MB however many angles were baked.
+// The view is zoomed in and pans slowly (view.js): everything lives on a strip wider than the screen,
+// drawn shifted by the pan; backdrop and foreground columns, and fish, out of view hold no textures.
 //   /pc/roku.html?scene=reef-7&fps=30&seed=1&budget=40&latency=80
 // Keys: H hud, W moving water on/off, Space pause.
 const params = new URLSearchParams(location.search);
@@ -124,14 +126,50 @@ async function main() {
 
   const tex = new Textures(BUDGET_MB, LATENCY);
   const { w: SW, h: SH } = manifest.screen;
-  const fgRect = scene.foregroundRect || [0, 0, SW, SH];
-  const backBytes = SW * SH * 4, frontBytes = fgRect[2] * fgRect[3] * 4;
+  // The strip the screen pans along (as wide as the screen when not zoomed).
+  const framing = manifest.view || { zoom: 1, pan: false, period: 120, strip: manifest.screen };
+  const STRIP_W = framing.strip.w;
+  const panAt = (t) => (STRIP_W - SW) * (framing.pan ? 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / framing.period) : 0.5);
+  if (!Array.isArray(scene.backdrop)) throw new Error('backdrop is not tiled; re-bake');
+  const tileBytes = (t) => t.rect[2] * t.rect[3] * 4;
   // Moving water: a loop of overlay frames for the backdrop and for the foreground reef, streamed:
   // only the frames being shown and the next one are held.
   const water = scene.water;
   const waterLayers = water ? [water.back, water.front].map((L) => L && {
     ...L, bytes: Math.round(L.rect[2] / water.scale) * Math.round(L.rect[3] / water.scale) * 4, last: null,
   }) : [null, null];
+  // The airstone's bubble column: sprites baked with the live bubble shader, sent up at the live rise
+  // speed (water.js, Mendelson's wave analogy: U = sqrt(2.14 sigma / (rho d) + 0.505 g d)), zig-zagging
+  // once over 2 mm. A bubble a frame is released at the live rate (~90 in the column at once).
+  const B = manifest.bubbles, stone = scene.bubbler;
+  const bubbles = B && stone ? { list: [], bytes: B.cell * B.mm.length * B.cell * 4, t: 0 } : null;
+  const riseU = (mm) => { const d = mm / 1000; return Math.sqrt((2.14 * 0.072) / (1000 * d) + 0.505 * 9.81 * d) / 0.125; };   // units/s
+  const spawnBubble = (b, y) => {
+    b.k = Math.floor(rand() * B.mm.length);
+    b.y = y; b.x = (rand() - 0.5) * 0.08 * stone.pxPerUnit;
+    b.ph = rand() * 6.283; b.f = 4 + 4 * rand();
+    return b;
+  };
+  if (bubbles) {
+    for (let i = 0; i < 90; i++) bubbles.list.push(spawnBubble({}, stone.pos[1] + rand() * (stone.top - stone.pos[1])));
+  }
+  function stepBubbles(dt) {
+    bubbles.t += dt;
+    for (const b of bubbles.list) {
+      b.y -= riseU(B.mm[b.k]) * stone.pxPerUnit * dt;
+      if (b.y < Math.max(stone.top, -B.cell)) spawnBubble(b, stone.pos[1]);
+    }
+  }
+  function drawBubbles() {
+    const img = tex.get(B.sheet), s = stone.pxPerUnit / B.pxPerUnit;
+    if (!img) return;
+    for (const b of bubbles.list) {
+      const mm = B.mm[b.k], zz = mm > 2 ? ((mm - 2) * 0.004 / 0.125) * stone.pxPerUnit : 0;
+      const x = stone.pos[0] + b.x + Math.sin(bubbles.t * b.f * 6.283 + b.ph) * zz, c = B.cell * s;
+      g.drawImage(img, b.k * B.cell, 0, B.cell, B.cell, x - c / 2, b.y - c / 2, c, c);
+    }
+  }
+
   const species = Object.entries(manifest.species).map(([id, sp]) => {
     if (!sp.angles) throw new Error(`${id}: sprite sheet has no per-angle pages; re-bake`);
     const yaws = sp.angles.map((a) => a.yaw);
@@ -150,7 +188,7 @@ async function main() {
   const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
   const floorAt = (x) => {
-    const f = scene.floor, t = Math.min(Math.max(x / manifest.screen.w, 0), 1) * (f.length - 1);
+    const f = scene.floor, t = Math.min(Math.max(x / STRIP_W, 0), 1) * (f.length - 1);
     const i = Math.min(Math.floor(t), f.length - 2);
     return f[i] + (f[i + 1] - f[i]) * (t - i);
   };
@@ -265,12 +303,23 @@ async function main() {
   }
 
   // Ask for the pages each fish shows now, the ones its turn reaches next, and their neighbours.
+  // Is strip span [x0, x1] within `margin` px of the screen window?
+  const inView = (x0, x1, margin = 0) => x1 > panX - margin && x0 < panX + SW + margin;
+
   function plan(dt) {
-    tex.want(scene.backdrop, backBytes, 0);
-    tex.want(scene.foreground, frontBytes, 0);
+    // Backdrop and foreground columns: those on screen, and those the pan reaches next.
+    const dir = Math.sign(panAt(panT + 0.5) - panX);
+    for (const t of [...scene.backdrop, ...scene.foreground]) {
+      const x0 = t.rect[0], x1 = x0 + t.rect[2];
+      if (inView(x0, x1)) tex.want(t.file, tileBytes(t), 1);
+      else if (inView(x0 - dir * 300, x1 - dir * 300)) tex.want(t.file, tileBytes(t), 2);
+    }
     for (const sp of species) tex.want(sp.angles[sp.home].sheet, sp.angles[sp.home].mb * 1e6, 0);
+    if (bubbles && inView(stone.pos[0] - 50, stone.pos[0] + 50, 300)) tex.want(B.sheet, bubbles.bytes, 1);
     for (const f of fish) {
-      const { sp } = f, A = sp.angles.length, { u } = view(f);
+      const { sp } = f, A = sp.angles.length, { u } = view(f), half = (sp.fw * f.scale) / 2;
+      f.onScreen = inView(f.x - half, f.x + half, 150);   // just outside counts, so pages are ready
+      if (!f.onScreen) continue;                         // off screen: its posters' uris are cleared
       f.du = dt > 0 ? (u - f.u) / dt : 0;
       f.u = u;
       const page = (r, prio) => { if (r >= 0 && r < A) tex.want(sp.angles[r].sheet, sp.angles[r].mb * 1e6, prio); };
@@ -333,7 +382,7 @@ async function main() {
   }
 
   let paused = false, showHud = true, showWater = true, last = performance.now(), acc = 0, frames = 0, fpsShown = 0, fpsT = 0;
-  let waterT = 0, loadsShown = 0, loads0 = 0, missesShown = 0, misses0 = 0;
+  let waterT = 0, panT = 0, panX = panAt(0), loadsShown = 0, loads0 = 0, missesShown = 0, misses0 = 0;
   addEventListener('keydown', (e) => {
     if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
     if (e.code === 'KeyH') showHud = !showHud;
@@ -357,15 +406,29 @@ async function main() {
     }
   }
 
+  // Tiles (backdrop or foreground columns) on screen; a backdrop column not loaded yet is water blue.
+  function drawTiles(tiles, fill) {
+    for (const t of tiles) {
+      const [x, y, w, h] = t.rect;
+      if (!inView(x, x + w)) continue;
+      const img = tex.get(t.file);
+      if (img) g.drawImage(img, x, y);
+      else if (fill) { g.fillStyle = '#0b3a55'; g.fillRect(x, y, w, h); tex.misses++; }
+    }
+  }
+
   function render() {
     fish.sort((a, b) => a.depth - b.depth);   // depth changes as fish swim nearer or further
-    const back = tex.get(scene.backdrop), front = tex.get(scene.foreground);
-    if (back) g.drawImage(back, 0, 0); else { g.fillStyle = '#0b3a55'; g.fillRect(0, 0, SW, SH); }
+    g.save();
+    g.translate(-Math.round(panX), 0);
+    drawTiles(scene.backdrop, true);
     drawWater(waterLayers[0]);
-    for (const f of fish) if (f.depth <= NEAR) draw(f);
-    if (front) g.drawImage(front, fgRect[0], fgRect[1]);
+    if (bubbles && inView(stone.pos[0] - 50, stone.pos[0] + 50)) drawBubbles();   // the airstone is at the back
+    for (const f of fish) if (f.onScreen && f.depth <= NEAR) draw(f);
+    drawTiles(scene.foreground, false);
     drawWater(waterLayers[1]);
-    for (const f of fish) if (f.depth > NEAR) draw(f);
+    for (const f of fish) if (f.onScreen && f.depth > NEAR) draw(f);
+    g.restore();
   }
 
   function loop(now) {
@@ -379,7 +442,10 @@ async function main() {
     if (!paused) {
       for (const f of fish) step(f, dt);
       waterT += dt;
+      panT += dt;
+      if (bubbles) stepBubbles(dt);
     }
+    panX = panAt(panT);
     plan(paused ? 0 : dt);
     render();
     frames++;

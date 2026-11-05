@@ -89,6 +89,16 @@ class SpineChain {
         if (P[i].y < floor && floor < P[0].y + 0.15 * L) P[i].y = floor;
       }
     }
+    // Cave roofs (not in the height field): the body stays under one the head is below, or over one it
+    // swims across. The shader's head lift (uLift, liftY) raises the front further, so allow for it.
+    const lift = fish.model.userData.uniforms.uLift.value, r = 0.05 * L;
+    for (let i = 0; i < SPINE_N; i++) {
+      const roof = world.roofAt(P[i].x, P[i].z);
+      if (!roof) continue;
+      const x = 0.5 - i / (SPINE_N - 1), up = lift * Math.max(0, x - 0.1) ** 2 * 2.5 * L;
+      if (P[0].y < roof.y) P[i].y = Math.min(P[i].y, roof.y - r - up);
+      else P[i].y = Math.max(P[i].y, roof.top + r - up);
+    }
   }
   // Offsets from the straight body axis in the fish's own frame, in body lengths.
   write(arr, fish, up, side) {
@@ -216,11 +226,22 @@ export class Fish {
       this.vel.multiplyScalar(Math.exp(-3 * dt));
     }
 
-    // Hard limits: glass and rock are rigid.
+    // Hard limits: glass and rock are rigid. Rock pushes a fish out at a limited rate, not in one step:
+    // the height field is a conservative 0.2-unit grid, and a snap to it reads as a jump.
     const B = world.bounds;
     this.pos.x = clamp(this.pos.x, B.x0, B.x1);
     this.pos.z = clamp(this.pos.z, B.z0, B.z1);
-    this.pos.y = clamp(this.pos.y, Math.max(B.y0, world.reefHeight(this.pos.x, this.pos.z) - 0.1), B.y1);
+    const rock = world.reefHeight(this.pos.x, this.pos.z) - 0.1;
+    if (this.pos.y < rock) {
+      this.pos.y = Math.min(rock, this.pos.y + Math.max(0.5 * L, 2 * U) * dt);
+      if (this.vel.y < 0) this.vel.y = 0;
+    }
+    this.pos.y = clamp(this.pos.y, B.y0, B.y1);
+    // A cave roof is a slab the height field doesn't hold: keep to the side of it the fish is on.
+    const roof = world.roofAt(this.pos.x, this.pos.z), rr = 0.05 * L;
+    if (roof && this.pos.y > roof.y - rr && this.pos.y < roof.top + rr) {
+      this.pos.y = this.pos.y < (roof.y + roof.top) / 2 ? roof.y - rr : roof.top + rr;
+    }
 
     // ---- orientation: heading + bank into turns ----
     _up.set(0, 1, 0).addScaledVector(this.dir, -this.dir.y).normalize();

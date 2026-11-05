@@ -14,6 +14,7 @@ import { UI } from './ui.js';
 import { loadTank } from './tank.js';
 import { PhotoCamera } from './photo.js';
 import { LightRig } from './rig.js';
+import { viewOptions, panAt, setView, windowTopY } from './view.js';
 import { bakeReefLight, reefLightUniforms, ScreenAO } from './reefLight.js';
 import { JELLY_SPECIES, Jelly, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES, Cuttlefish, Octopus, Turtle } from './critters.js';
@@ -52,6 +53,10 @@ const CAM_BASE = new THREE.Vector3(0, 4.6, 15);
 const LOOK = new THREE.Vector3(0, 3.9, 0);
 camera.position.copy(CAM_BASE);
 camera.lookAt(LOOK);
+// Zoomed in towards the glass, panning slowly across the tank (view.js).
+const view = viewOptions(params);
+const frameView = (t) => setView(camera, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight, view, panAt(t, view));
+frameView(0);
 
 // Lighting: sun through the surface + sky/sand bounce.
 const sun = new THREE.DirectionalLight(0xfff2dc, 2.6);
@@ -112,7 +117,8 @@ const bubbles = reef.bubbler ? new Bubbles(scene, reef.bubbler, rng) : null;
 const surface = makeSurface(TANK_W);
 if (!JELLY_TANK) scene.add(surface);
 
-const bounds = { x0: -TANK_W / 2 + 0.9, x1: TANK_W / 2 - 0.9, y0: 0.25, y1: 9.2, z0: -3.0, z1: 2.7 };
+// Fish stay below the top of the zoomed window, so they swim in frame rather than above it.
+const bounds = { x0: -TANK_W / 2 + 0.9, x1: TANK_W / 2 - 0.9, y0: 0.25, y1: Math.min(9.2, windowTopY(camera) - 0.5), z0: -3.0, z1: 2.7 };
 const world = new World(scene, reef, bounds, rng);
 
 // Populate the tank. Names the owner chose come first; the rest are drawn from the pool.
@@ -259,11 +265,13 @@ function frame() {
     camera.position.set(CAM_BASE.x + Math.sin(t * 0.05) * 0.6, CAM_BASE.y + Math.sin(t * 0.037) * 0.15, CAM_BASE.z);
     camera.lookAt(LOOK);
   }
+  frameView(t);
   ui.update(dt);
   if (photo) autofocus(dt);
   present();
 }
-frame();
+// The motion check steps the tank itself and draws nothing.
+if (params.get('check') !== 'motion') frame();
 
 function present() {
   if (!photo) water.render(scene, camera, sun);
@@ -295,6 +303,7 @@ function fitCanvas() {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    frameView(t);
   }
 }
 
@@ -303,3 +312,5 @@ window.aquarium = { THREE, scene, camera, renderer, world, reef, jellies, SPECIE
 
 // ?check=critters: the critters' shape checks (critterCheck.js).
 if (params.get('check') === 'critters') import('./critterCheck.js').then((m) => m.main(window.aquarium));
+// ?check=motion: fish climb, bobbing and eel-in-roof checks (motionCheck.js).
+if (params.get('check') === 'motion') import('./motionCheck.js').then((m) => m.main(window.aquarium));

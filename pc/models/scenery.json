@@ -48,5 +48,23 @@
     "file": "scenery/coral_fan.glb",
     "kind": "coral",
     "task": "42ed92a1-a7f6-4fef-917b-6ed5d6b25da3"
+  },
+  "starfish": {
+    "file": "scenery/starfish.glb",
+    "kind": "prop",
+    "rotate": [
+      -90,
+      0,
+      0
+    ]
+  },
+  "conch": {
+    "file": "scenery/conch.glb",
+    "kind": "prop",
+    "rotate": [
+      36,
+      24.4,
+      0
+    ]
   }
 }
