@@ -22,3 +22,4 @@ if not exist node_modules (
 echo Serving http://localhost:%PORT%/pc/  ^(Ctrl+C to stop, F11 in the browser for full screen^)
 start "" "http://localhost:%PORT%/pc/"
 node tools\serve.mjs %PORT%
+pause

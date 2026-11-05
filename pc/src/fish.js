@@ -247,11 +247,19 @@ export class Fish {
     // Hovering fish hold the body still (the pectorals do the work); a slight wave only once moving.
     const idle = 0.06 * smoothstep(0.05, 0.3, U / L) + 0.05 * Math.abs(this.turnRate);
     const back = brain.backing ? brain.backing / L : 0;   // reverse swimming, body lengths per second
-    this.phase += back ? -dt * Math.PI * 2 * (0.8 + back * 4) : dt * Math.PI * 2 * Math.max(fTail * tailShare, 1.2);
+    let fBeat = Math.max(fTail * tailShare, 1.2), ampT = Math.max(tailAmp, idle);
+    if (sw.mode === 'anguilliform') {
+      // Eels keep a near-constant amplitude (tail ~0.08-0.1 L) and swim faster by beating faster: the
+      // wave (0.6 L long) runs back at about U / 0.7 (slip ratio ~0.7), so it never slides along a still
+      // body. Resting, the body sways slowly.
+      fBeat = Math.max(blEq / (0.7 * 0.6), 0.35);
+      ampT = lerp(0.3, 0.9, smoothstep(0.03, 0.25, blEq)) + 0.1 * clamp(blEq / sw.maxBL, 0, 1);
+    }
+    this.phase += back ? -dt * Math.PI * 2 * (0.8 + back * 4) : dt * Math.PI * 2 * fBeat;
     const u = this.model.userData.uniforms;
     u.uPhase.value = this.phase;
     // Amplitude eases in and out of a burst (a kick builds over a beat) rather than jumping.
-    u.uAmp.value = Math.max(0, spring(this.sAmp, Math.max(tailAmp, idle, back ? 0.5 : 0) + this.gulp, 2.5, 0.9, dt));
+    u.uAmp.value = Math.max(0, spring(this.sAmp, Math.max(ampT, back ? 0.5 : 0) + this.gulp, 2.5, 0.9, dt));
 
     // Body bends with path curvature (kappa = omega / U), stronger in sharp, slow turns. The bend is a
     // stiff damped spring (a little overshoot as the turn ends), and the rear half follows it on a
