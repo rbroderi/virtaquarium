@@ -25,11 +25,14 @@ import { causticUniforms } from './water.js';
 
 const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
 white.needsUpdate = true;
+const whiteArray = (n) => { const t = new THREE.DataArrayTexture(new Uint8Array(4 * n).fill(255), 1, 1, n); t.needsUpdate = true; return t; };
 
+// The baked maps are texture arrays (one unit each in every lit material, instead of one per map: the
+// fish shaders are at the GPU's 16 units with the caustics and their own maps).
 export const reefLightUniforms = {
-  uRLA: { value: white },   // grid: sky visibility SH (open fraction, mean open direction)
-  uRLB: { value: white },   // grid: bounce luminance SH
-  uRLC: { value: white },   // grid: bounce colour (rgb), sun visibility (a)
+  // grid, by layer: 0 sky visibility SH (open fraction, mean open direction), 1 bounce luminance SH,
+  // 2 bounce colour (rgb) and sun visibility (a)
+  uRLGrid: { value: whiteArray(3) },
   uRLMin: { value: new THREE.Vector3() },
   uRLSize: { value: new THREE.Vector3(1, 1, 1) },
   uRLRes: { value: new THREE.Vector3(1, 1, 1) },
@@ -38,8 +41,8 @@ export const reefLightUniforms = {
   uRLOn: { value: 0 },
   uRLLight: { value: 1 },   // light level (bounce was baked at full daylight)
   uRLSunDir: { value: new THREE.Vector3(0, 1, 0) },
-  uRLScrA: { value: white },   // screen: bounce (rgb), sky visibility (a)
-  uRLScrB: { value: white },   // screen: sun visibility (r), distance from the bake eye (g)
+  // screen, by layer: 0 bounce (rgb) and sky visibility (a), 1 sun visibility (r) and distance from the bake eye (g)
+  uRLScr: { value: whiteArray(2) },
   uRLScrVP: { value: new THREE.Matrix4() },
   uRLScrEye: { value: new THREE.Vector3() },
   uRLScrOn: { value: 0 },
@@ -51,19 +54,32 @@ export const reefLightUniforms = {
 
 // Trilinear lookup in a grid stored as a 2D atlas of z slices (tiles slices per row).
 const RL_ATLAS = /* glsl */`
-vec4 rlAtlas(sampler2D t, vec3 p01, vec3 res, float tiles) {
+// rlAtlasUv: the two slices' atlas coordinates and the blend between them. Two lookups: one in a plain
+// 2D atlas (the bake's passes read their previous pass so), one in a layer of a texture array (the
+// finished maps).
+vec3 rlAtlasUv(vec3 p01, vec3 res, float tiles, out vec2 uv1) {
   vec3 c = p01 * res - 0.5;
   float z0 = clamp(floor(c.z), 0.0, res.z - 1.0), z1 = min(z0 + 1.0, res.z - 1.0);
   vec2 atlas = res.xy * vec2(tiles, ceil(res.z / tiles));
   vec2 cxy = clamp(c.xy, vec2(0.0), res.xy - 1.0) + 0.5;
   vec2 t0 = vec2(mod(z0, tiles), floor(z0 / tiles)), t1 = vec2(mod(z1, tiles), floor(z1 / tiles));
-  return mix(texture2D(t, (t0 * res.xy + cxy) / atlas), texture2D(t, (t1 * res.xy + cxy) / atlas), clamp(c.z - z0, 0.0, 1.0));
+  uv1 = (t1 * res.xy + cxy) / atlas;
+  return vec3((t0 * res.xy + cxy) / atlas, clamp(c.z - z0, 0.0, 1.0));
+}
+vec4 rlAtlas(sampler2D t, vec3 p01, vec3 res, float tiles) {
+  vec2 uv1; vec3 a = rlAtlasUv(p01, res, tiles, uv1);
+  return mix(texture(t, a.xy), texture(t, uv1), a.z);
+}
+vec4 rlAtlas(highp sampler2DArray t, float layer, vec3 p01, vec3 res, float tiles) {
+  vec2 uv1; vec3 a = rlAtlasUv(p01, res, tiles, uv1);
+  return mix(texture(t, vec3(a.xy, layer)), texture(t, vec3(uv1, layer)), a.z);
 }
 const vec3 RL_Y = vec3(0.2126, 0.7152, 0.0722);
 `;
 
 export const REEF_LIGHT_GLSL = /* glsl */`
-uniform sampler2D uRLA, uRLB, uRLC, uRLScrA, uRLScrB, uRLAO;
+uniform highp sampler2DArray uRLGrid, uRLScr;
+uniform sampler2D uRLAO;
 uniform vec3 uRLMin, uRLSize, uRLRes, uRLSunDir, uRLScrEye;
 uniform float uRLTiles, uRLCell, uRLOn, uRLLight, uRLScrOn, uRLAOOn, uRLDebug;
 uniform mat4 uRLScrVP;
@@ -78,10 +94,10 @@ void rlEval(vec3 pw, vec3 nw) {
     vec4 c = uRLScrVP * vec4(pw, 1.0);
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
     if (c.w > 0.0 && all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0)))) {
-      vec4 b = texture2D(uRLScrB, uv);
+      vec4 b = texture(uRLScr, vec3(uv, 1.0));
       float dist = length(pw - uRLScrEye);
       if (abs(b.g - dist) < 0.03 + 0.004 * dist) {
-        vec4 a = texture2D(uRLScrA, uv);
+        vec4 a = texture(uRLScr, vec3(uv, 0.0));
         rlSky = a.a; rlBounce = a.rgb; rlSun = b.r; screen = true;
       }
     }
@@ -91,7 +107,7 @@ void rlEval(vec3 pw, vec3 nw) {
     // rather than blending with grid points inside the rock.
     vec3 p = (pw + nw * uRLCell * 1.5 - uRLMin) / uRLSize;
     if (all(greaterThanEqual(p, vec3(0.0))) && all(lessThanEqual(p, vec3(1.0)))) {
-      vec4 A = rlAtlas(uRLA, p, uRLRes, uRLTiles), B = rlAtlas(uRLB, p, uRLRes, uRLTiles), C = rlAtlas(uRLC, p, uRLRes, uRLTiles);
+      vec4 A = rlAtlas(uRLGrid, 0.0, p, uRLRes, uRLTiles), B = rlAtlas(uRLGrid, 1.0, p, uRLRes, uRLTiles), C = rlAtlas(uRLGrid, 2.0, p, uRLRes, uRLTiles);
       // L1 projection of max(0, n.d) over the sphere: 1/4 + n.d/2, normalised so open water gives 1.
       rlSky = clamp(A.x + 2.0 * dot(A.yzw, nw), 0.0, 1.0);
       float cl = dot(C.rgb, RL_Y);
@@ -260,6 +276,27 @@ function cone(axis, a, n) {
     const r = Math.tan(a) * Math.sqrt((i + 0.5) / n), t = golden * i;
     return z.clone().addScaledVector(x, r * Math.cos(t)).addScaledVector(y, r * Math.sin(t)).normalize();
   });
+}
+
+// Copy same-sized 2D textures, texel for texel, into the layers of one texture array (half float,
+// linear filtering, as the bake targets were). Returns the array texture.
+function packLayers(renderer, textures, w, h) {
+  const out = new THREE.WebGLArrayRenderTarget(w, h, textures.length, {
+    type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+  });
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { src: { value: null } },
+    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: 'uniform sampler2D src;\nvoid main() { gl_FragColor = texelFetch(src, ivec2(gl_FragCoord.xy), 0); }',
+    depthTest: false, depthWrite: false, blending: THREE.NoBlending,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat), scene = new THREE.Scene().add(quad), cam = new THREE.Camera();
+  quad.frustumCulled = false;
+  const prev = renderer.getRenderTarget();
+  textures.forEach((t, i) => { mat.uniforms.src.value = t; renderer.setRenderTarget(out, i); renderer.render(scene, cam); });
+  renderer.setRenderTarget(prev);
+  mat.dispose(); quad.geometry.dispose();
+  return out.texture;
 }
 
 // Bake the reef light. Call once after buildReef (static geometry only: fish excluded).
@@ -452,12 +489,17 @@ export function bakeReefLight(renderer, reef, {
   visMat.dispose(); backMat.dispose(); gMat.dispose(); quad.geometry.dispose();
 
   const L = reefLightUniforms;
-  L.uRLA.value = skyRT.texture; L.uRLB.value = fin.textures[0]; L.uRLC.value = fin.textures[1];
+  const prevGrid = L.uRLGrid.value, prevScr = L.uRLScr.value;
+  L.uRLGrid.value = packLayers(renderer, [skyRT.texture, fin.textures[0], fin.textures[1]], aw, ah);
+  skyRT.dispose(); fin.dispose();
+  if (prevGrid.isRenderTargetTexture) prevGrid.dispose();   // a re-bake replaces the last one
   L.uRLMin.value.copy(box.min); L.uRLSize.value.copy(size); L.uRLRes.value.copy(n);
   L.uRLTiles.value = tiles; L.uRLCell.value = cell; L.uRLOn.value = 1;
   L.uRLSunDir.value.copy(sun.dir).normalize();
   if (scrRT) {
-    L.uRLScrA.value = scrRT.textures[0]; L.uRLScrB.value = scrRT.textures[1];
+    L.uRLScr.value = packLayers(renderer, scrRT.textures, sw, shh);
+    scrRT.dispose();
+    if (prevScr.isRenderTargetTexture) prevScr.dispose();
     L.uRLScrVP.value.multiplyMatrices(eye.projectionMatrix, eye.matrixWorldInverse);
     L.uRLScrEye.value.copy(eye.position); L.uRLScrOn.value = 1;
   }

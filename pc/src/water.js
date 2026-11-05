@@ -182,11 +182,13 @@ vec2 waveGrad(vec2 p) {
 // source's angular size blurs it in proportion to depth (a soft sun / LED fixture).
 const CAU_RES = 512;
 const SEAWATER_IOR = [1.3370, 1.3405, 1.3445];   // ~650, 550, 450 nm
-const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+// The three depth layers live in one texture array (layer = depth), so every lit material spends one
+// texture unit on them, not three (fish shaders are at the GPU's 16 with the reef light and their maps).
+const white = new THREE.DataArrayTexture(new Uint8Array(12).fill(255), 1, 1, 3);
 white.needsUpdate = true;
 
 export const causticUniforms = {
-  uCau0: { value: white }, uCau1: { value: white }, uCau2: { value: white },
+  uCau: { value: white },
   uCauDepth: { value: new THREE.Vector3(2.8, 6.0, 9.2) },   // simulated depths below the surface (units)
   uCauR0: { value: new THREE.Vector3(0, -1, 0) },          // flat-water refracted light direction
   uCauTile: { value: WAVE_TILE },
@@ -196,9 +198,7 @@ export const causticUniforms = {
 
 // Irradiance multiplier for the direct light at world point p (mean 1 over the tile).
 const CAUSTIC_LOOKUP_GLSL = /* glsl */`
-uniform sampler2D uCau0;
-uniform sampler2D uCau1;
-uniform sampler2D uCau2;
+uniform highp sampler2DArray uCau;
 uniform vec3 uCauDepth;
 uniform vec3 uCauR0;
 uniform float uCauTile;
@@ -210,7 +210,7 @@ vec3 causticAt(vec3 p, float lodBias) {
   float D = max(${SURFACE_Y.toFixed(2)} - p.y, 0.0);
   vec2 uv = (p.xz - uCauR0.xz * (D / -uCauR0.y)) / uCauTile;
   float lod = log2(max(1.0, D * uCauBlur / uCauTile * ${CAU_RES.toFixed(1)})) + lodBias;
-  vec3 a = textureLod(uCau0, uv, lod).rgb, b = textureLod(uCau1, uv, lod).rgb, c = textureLod(uCau2, uv, lod).rgb;
+  vec3 a = textureLod(uCau, vec3(uv, 0.0), lod).rgb, b = textureLod(uCau, vec3(uv, 1.0), lod).rgb, c = textureLod(uCau, vec3(uv, 2.0), lod).rgb;
   vec3 k = D < uCauDepth.y ? mix(a, b, clamp((D - uCauDepth.x) / (uCauDepth.y - uCauDepth.x), 0.0, 1.0))
                            : mix(b, c, clamp((D - uCauDepth.y) / (uCauDepth.z - uCauDepth.y), 0.0, 1.0));
   return mix(vec3(1.0), k, clamp(D / uCauDepth.x, 0.0, 1.0));   // focusing needs some depth
@@ -258,13 +258,11 @@ void main() {
 export class Caustics {
   constructor(renderer, { grid = 288 } = {}) {
     this.renderer = renderer;
-    this.targets = [0, 1, 2].map(() => {
-      const t = new THREE.WebGLRenderTarget(CAU_RES, CAU_RES, {
-        type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true,
-        wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
-        minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
-      });
-      return t;
+    // One layer per simulated depth (see causticUniforms).
+    this.target = new THREE.WebGLArrayRenderTarget(CAU_RES, CAU_RES, 3, {
+      type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true,
+      wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
     });
     // The grid covers the tile plus a margin: light refracted in from the neighbouring (periodic)
     // tiles lands inside, and what leaves is counted by its periodic copy entering on the far side.
@@ -287,9 +285,7 @@ export class Caustics {
       this.scene.add(m);
     });
     this.camera = new THREE.Camera();
-    causticUniforms.uCau0.value = this.targets[0].texture;
-    causticUniforms.uCau1.value = this.targets[1].texture;
-    causticUniforms.uCau2.value = this.targets[2].texture;
+    causticUniforms.uCau.value = this.target.texture;
     causticUniforms.uCauOn.value = 1;
   }
 
@@ -300,7 +296,7 @@ export class Caustics {
     const D = causticUniforms.uCauDepth.value;
     [D.x, D.y, D.z].forEach((d, i) => {
       this.depth.value = d;
-      r.setRenderTarget(this.targets[i]);
+      r.setRenderTarget(this.target, i);   // layer i (three re-derives the mipmaps after each render)
       r.clear(true, false, false);
       r.render(this.scene, this.camera);
     });

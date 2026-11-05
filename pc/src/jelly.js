@@ -38,10 +38,27 @@ vec2 bellShape(float r, float y, float s) {
   float c = uPulse * s * s;
   return vec2(r * (1.0 - 0.22 * c), y + uR * (0.1 * c - 0.03 * uPulse));
 }
+// The margin (a = 0..1 round the bell): 8 notches, where the rhopalia (the balance and light organs)
+// sit, and two scalloped lappets between each pair. Returns the radius factor; the notches also lift
+// the rim a little (it tucks in there).
+float marginCut(float a, float s) {
+  float m = smoothstep(0.82, 1.0, s), q = fract(a * 8.0);
+  float notch = exp(-pow((min(q, 1.0 - q)) / 0.035, 2.0));
+  float lappet = abs(sin(q * 6.2831853));          // two lobes per eighth
+  return 1.0 - m * (0.07 * notch - 0.018 * lappet + 0.012);
+}
+// Light through the jelly: the light panel is behind and above the tank, so a bell seen against it
+// glows, the thick lens most (it scatters more on the way through).
+const vec3 PANEL_DIR = vec3(0.0, 0.32, -0.95);
+float throughLight(vec3 V) { return pow(clamp(dot(-V, normalize(PANEL_DIR)), 0.0, 1.0), 4.0); }
 vec3 waterFade(vec3 col) { return col * exp(-${WATER_C} * vDist); }
 `;
 
+// The bell is drawn twice from one lathe: the outer (exumbrella) surface, and the inner
+// (subumbrella) one offset inwards by the mesoglea's thickness, thick at the apex and thin at the
+// margin, a lens; seen through, the two outlines double the rim the way a real bell's do.
 const BELL_VERT = COMMON + /* glsl */`
+uniform float uInner;
 varying vec2 vUv;
 varying vec3 vN;
 void main() {
@@ -50,9 +67,14 @@ void main() {
   float r = length(position.xz);
   vec2 rs = bellShape(r, position.y, s);
   vec2 dxz = r > 1e-5 ? position.xz / r : vec2(0.0);
-  vec3 p = vec3(dxz.x * rs.x, rs.y, dxz.y * rs.x);
-  // A little irregularity so the bells aren't perfect domes.
   float a = uv.x * 6.2831853;
+  rs.x *= marginCut(uv.x, s);
+  rs.y += uR * 0.035 * smoothstep(0.85, 1.0, s) * (1.0 - marginCut(uv.x, s)) * 10.0;
+  vec3 p = vec3(dxz.x * rs.x, rs.y, dxz.y * rs.x);
+  // The lens: up to 0.2 bell radii thick at the apex, thinning to the margin (thinner as it contracts).
+  float th = uR * 0.2 * pow(1.0 - s, 1.6) * (1.0 - 0.25 * uPulse);
+  p -= normal * th * uInner;
+  // A little irregularity so the bells aren't perfect domes.
   p.xz *= 1.0 + 0.025 * sin(a * 3.0 + uSeed) * s;
   vec4 w = modelMatrix * vec4(p, 1.0);
   vN = normalize(mat3(modelMatrix) * normal);
@@ -62,6 +84,7 @@ void main() {
 }`;
 
 const BELL_FRAG = COMMON + /* glsl */`
+uniform float uInner;
 varying vec2 vUv;
 varying vec3 vN;
 uniform vec3 uTint, uGonad;
@@ -70,6 +93,14 @@ void main() {
   vec3 V = normalize(vView), N = normalize(vN);
   float f = pow(1.0 - abs(dot(N, V)), 2.2);   // folds seen edge-on catch the most light
   float s = vUv.y, a = vUv.x;
+  if (uInner > 0.5) {
+    // The subumbrella: only its outline and the light through the lens (the canals and gonads are
+    // drawn once, on the outer surface).
+    gl_FragColor = vec4(waterFade(uTint * (0.35 * f + 0.12 * throughLight(V) * (1.0 - s))) * uLight, 1.0);
+    return;
+  }
+  // Rhopalia: a bright point in each notch, just inside the margin.
+  float qn = fract(a * 8.0), rho = exp(-pow(min(qn, 1.0 - qn) / 0.012, 2.0)) * exp(-pow((s - 0.965) / 0.012, 2.0));
   // Radial canals: 16 from the centre, branching towards the margin; the ring canal at the margin.
   float canal = line(a * 16.0, 0.06) * smoothstep(0.15, 0.3, s) + line(a * 32.0 + 0.5, 0.05) * smoothstep(0.55, 0.8, s) * 0.8;
   float ring = smoothstep(0.93, 0.985, s) * (1.0 - smoothstep(0.985, 1.0, s));
@@ -85,7 +116,8 @@ void main() {
   }
   // Light from above and behind: the top of the bell is a little brighter.
   float top = 0.75 + 0.25 * N.y;
-  vec3 col = uTint * (0.1 + 0.8 * f + 0.14 * canal + 0.6 * ring) * top + uGonad * g * (0.45 + 0.4 * f);
+  vec3 col = uTint * (0.1 + 0.8 * f + 0.14 * canal + 0.6 * ring + 0.9 * rho) * top + uGonad * g * (0.45 + 0.4 * f)
+           + (uTint * 0.5 + uGonad * g * 0.6) * throughLight(V) * (0.15 + 0.35 * (1.0 - s));
   gl_FragColor = vec4(waterFade(col) * uLight, 1.0);
 }`;
 
@@ -128,8 +160,13 @@ void main() {
   // edges gently waved rather than zig-zagged.
   float L = uR * 1.3, w = uR * 0.24 * (1.0 - 0.55 * s) * (0.75 + 0.25 * smoothstep(0.0, 0.15, s));
   float ruffle = sin(s * 11.0 + x * 1.5 + aArm * 1.7) * vEdge * vEdge;
-  vec3 p = vec3(0.0, -uR * 0.02, 0.0) + out_ * (uR * 0.06 + s * L * 0.15) + side * x * w
-         + vec3(0.0, -s * L, 0.0) + out_ * (ruffle * 0.45 + vEdge * 0.6) * w
+  // The outer third of each side is rolled into a tube about the arm's length (an arc of the same
+  // width, so it curls rather than stretches), and that rolled lip is frilled finely along it.
+  float e = clamp((vEdge - 0.65) / 0.35, 0.0, 1.0), phi = e * 3.4, Rr = 0.35 * w / 3.4;
+  float lat = min(vEdge, 0.65) * w + Rr * sin(phi), lift = Rr * (1.0 - cos(phi));
+  float frill = sin(s * 58.0 + aArm * 3.1 + sign(x) * 1.3) * e * e * 0.16 * w;
+  vec3 p = vec3(0.0, -uR * 0.02, 0.0) + out_ * (uR * 0.06 + s * L * 0.15) + side * sign(x) * (lat + frill * 0.4)
+         + vec3(0.0, -s * L, 0.0) + out_ * (ruffle * 0.45 * w + min(vEdge, 0.65) * 0.6 * w + lift + frill)
          + vec3(sin(uTime * 0.5 + aArm * 2.1 + uSeed), 0.0, cos(uTime * 0.43 + aArm)) * 0.12 * L * s * s;
   p.y += uPulse * 0.06 * uR * (1.0 - s);
   p += uTrail * L * s * s;
@@ -144,7 +181,7 @@ varying float vEdge, vS;
 void main() {
   // The crinkled edge catches the light; a fine flicker along it reads as the frill.
   float frill = smoothstep(0.7, 1.0, vEdge) * (0.7 + 0.3 * sin(vS * 140.0));
-  gl_FragColor = vec4(waterFade(uTint * (0.05 + 0.26 * frill) * (1.0 - 0.6 * vS)) * uLight, 1.0);
+  gl_FragColor = vec4(waterFade(uTint * (0.05 + 0.26 * frill + 0.08 * throughLight(normalize(vView))) * (1.0 - 0.6 * vS)) * uLight, 1.0);
 }`;
 
 const additive = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false };
@@ -159,7 +196,7 @@ function sharedGeometry() {
     const t = i / 24, r = Math.sin(t * Math.PI / 2) * 1.0;
     prof.push(new THREE.Vector2(Math.max(1e-4, r + (t > 0.9 ? (t - 0.9) * 0.15 : 0)), 0.5 * Math.cos(t * Math.PI / 2) ** 0.9 - (t > 0.9 ? (t - 0.9) * 0.5 : 0)));
   }
-  const bell = new THREE.LatheGeometry(prof, 64);
+  const bell = new THREE.LatheGeometry(prof, 128);   // (128 round: 4 per lappet, for the scalloped margin)
   // Tentacles: line segments, a few points each.
   const N = 160, K = 5, pos = [], ang = [], ss = [], len = [], rng = mulberry32(5);
   for (let i = 0; i < N; i++) {
@@ -172,7 +209,7 @@ function sharedGeometry() {
   tent.setAttribute('aS', new THREE.Float32BufferAttribute(ss, 1));
   tent.setAttribute('aLen', new THREE.Float32BufferAttribute(len, 1));
   // Arms: four ribbons, one geometry with an arm index per vertex.
-  const ribbon = new THREE.PlaneGeometry(1, 1, 6, 40), arms = [];
+  const ribbon = new THREE.PlaneGeometry(1, 1, 14, 90), arms = [];   // fine enough across for the rolled lip, along for its frill
   for (let k = 0; k < 4; k++) {
     const g = ribbon.clone();
     g.setAttribute('aArm', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(k), 1));
@@ -194,18 +231,19 @@ export class Jelly {
       uPulse: { value: 0 }, uTrail: { value: new THREE.Vector3() }, uR: { value: this.R }, uTime: { value: 0 }, uSeed: { value: rng() * 10 }, uLight: { value: 1 },
       uTint: { value: new THREE.Color(0.55, 0.75, 1.0) }, uGonad: { value: new THREE.Color(0.95, 0.8, 1.0) },
     };
-    const mat = (v, f) => new THREE.ShaderMaterial({ uniforms: this.u, vertexShader: v, fragmentShader: f, ...additive });
+    const mat = (v, f, u = this.u) => new THREE.ShaderMaterial({ uniforms: u, vertexShader: v, fragmentShader: f, ...additive });
     this.model = new THREE.Group();
     // The shapes are built for a unit bell (uR = 1) and scaled with the group.
     this.u.uR.value = 1;
-    const bell = new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG));
+    const bell = new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG, { ...this.u, uInner: { value: 0 } }));
+    const sub = new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG, { ...this.u, uInner: { value: 1 } }));   // the subumbrella
     const tent = new THREE.LineSegments(g.tent, mat(TENT_VERT, TENT_FRAG));
     const arms = g.arms.map((a) => new THREE.Mesh(a, mat(ARM_VERT, ARM_FRAG)));
     this.inner = new THREE.Group();
     this.inner.scale.setScalar(this.R);
-    this.inner.add(bell, tent, ...arms);
+    this.inner.add(bell, sub, tent, ...arms);
     this.model.add(this.inner);
-    for (const m of [bell, tent, ...arms]) m.frustumCulled = false;
+    for (const m of [bell, sub, tent, ...arms]) m.frustumCulled = false;
 
     const B = bounds;
     this.pos = new THREE.Vector3(range(rng, B.x0 + 1, B.x1 - 1), range(rng, 1.5, B.y1 - 1), range(rng, B.z0 + 0.8, B.z1 - 0.8));

@@ -30,7 +30,7 @@ const ST = 0.3;          // Strouhal number
 const TAIL_AMP = 0.2;    // tail-tip amplitude / L
 
 const _d = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vector3();
-const _lat = new THREE.Vector3(), _flow = new THREE.Vector3(), _gaze = new THREE.Vector3();
+const _lat = new THREE.Vector3(), _flow = new THREE.Vector3(), _gaze = new THREE.Vector3(), _n = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
@@ -258,15 +258,32 @@ export class Fish {
     // A fish in its shelter is under the rock's top (the height field holds only the top): keep it
     // between the gap's floor and roof instead.
     const sh = brain.sheltered;
-    const rock = sh ? sh.floor : world.reefHeight(this.pos.x, this.pos.z) - 0.1;
     if (sh && this.pos.y > sh.top - 0.1 * L) this.pos.y = sh.top - 0.1 * L;
-    if (this.pos.y < rock) {
-      this.pos.y = Math.min(rock, this.pos.y + Math.max(0.5 * L, 2 * U) * dt);
-      if (this.vel.y < 0) this.vel.y = 0;
+    if (sh && this.pos.y < sh.floor) this.pos.y = Math.min(sh.floor, this.pos.y + 0.5 * L * dt);
+    if (!this.spine) {
+      // Against the real rock surface (rockField.js): out along its normal, so a fish that touches the
+      // side of a rock slides along it instead of being lifted to the top of the height field's column.
+      // At most as fast as it can have gone in, plus a little: no jumps.
+      const r = Math.max(0.03, 0.35 * (sp.body?.depth ?? 0.45) * L);
+      const d = world.rockDist(this.pos);
+      if (d < r) {
+        world.rockNormal(this.pos, _n);
+        this.pos.addScaledVector(_n, Math.min(r - d, (0.5 * L + 1.2 * U) * dt));
+        const vn = this.vel.dot(_n);
+        if (vn < 0) this.vel.addScaledVector(_n, -vn);
+      }
+    } else if (!sh) {
+      // The eel threads its caves with its own rules (spine, roof): the height field, as before.
+      const rock = world.reefHeight(this.pos.x, this.pos.z) - 0.1;
+      if (this.pos.y < rock) {
+        this.pos.y = Math.min(rock, this.pos.y + Math.max(0.5 * L, 2 * U) * dt);
+        if (this.vel.y < 0) this.vel.y = 0;
+      }
     }
     this.pos.y = clamp(this.pos.y, B.y0, B.y1);
-    // A cave roof is a slab the height field doesn't hold: keep to the side of it the fish is on.
-    const roof = world.roofAt(this.pos.x, this.pos.z), rr = 0.05 * L;
+    // A cave roof is a slab the height field doesn't hold: keep to the side of it the fish is on. (The
+    // rock field holds the roof for the others.)
+    const roof = this.spine && world.roofAt(this.pos.x, this.pos.z), rr = 0.05 * L;
     if (roof && this.pos.y > roof.y - rr && this.pos.y < roof.top + rr) {
       this.pos.y = this.pos.y < (roof.y + roof.top) / 2 ? roof.y - rr : roof.top + rr;
     }

@@ -524,6 +524,10 @@ for (const sp of SPECIES) {
 
 // Skin anatomy. scales: approximate lateral-line scale count (sets scale size; tangs and the idol have
 // minute scales, grammas and chromis large ones). hump: how far the back arches above the midline.
+// scaleType: 'ctenoid' (default: a comb of spinules on the free margin, most reef perciforms) or
+// 'cycloid' (smooth-edged: wrasses). headScales: size of the cheek scales relative to the body's
+// (default 0.55). Elsewhere on a species: speckle (chromatophore density, default 1), irid
+// ({ range: [nm, nm], strength } for the guanine film; see fishModel.js).
 export const SKIN = {
   clownfish: { scales: 50, hump: 0.08 },
   bluetang: { scales: 150, hump: 0.06 },
@@ -538,6 +542,6 @@ export const SKIN = {
   chromis: { scales: 28, hump: 0.07 },
   coralbeauty: { scales: 45, hump: 0.06 },
   moray: { scales: 0, hump: 0.02 },   // scaleless
-  cleanerwrasse: { scales: 52, hump: 0.03 },
+  cleanerwrasse: { scales: 52, hump: 0.03, scaleType: 'cycloid' },
 };
 for (const sp of SPECIES) Object.assign(sp.body, SKIN[sp.id]);

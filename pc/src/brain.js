@@ -24,6 +24,7 @@ export const MODES = {
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const _a = new THREE.Vector3();
+const _n = new THREE.Vector3();
 
 export class Brain {
   constructor(fish, rng) {
@@ -672,6 +673,16 @@ export class Brain {
     const below = world.reefHeight(pos.x, pos.z) + clearance;
     if (pos.y < below) dir.y += (below - pos.y) * 4 + 0.5;
     else if (pos.y < ahead && !anchored) dir.y += (ahead - pos.y) * 1.5;
+    // And in 3D (rockField.js): rock on the path a moment ahead turns the fish off it along the surface
+    // normal there, so it goes round a boulder's flank as readily as over it.
+    if (!anchored && !me.spine) {
+      const want = me.size * 0.6 + clearance;
+      for (const k of [0.5, 1]) {
+        _v.copy(pos).addScaledVector(me.dir, reach * k);
+        const d = world.rockDist(_v);
+        if (d < want) dir.addScaledVector(world.rockNormal(_v, _n), ((want - d) / want) * 2 / k);
+      }
+    }
 
     return speed;
   }

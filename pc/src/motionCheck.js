@@ -65,6 +65,8 @@ export async function main(aq) {
         s.ext = { y: f.pos.y, n };
       }
       s.y = f.pos.y; s.vy = vy;
+      // Inside rock: the fish's centre deeper than a tenth of a body length under the real surface.
+      if (!f.spine && world.rockDist(f.pos) < -0.1 * L) s.inRock = (s.inRock || 0) + 1;
       if (f.spine) {
         const lift = f.model.userData.uniforms.uLift.value, N = f.spine.p.length;
         s.roof += f.spine.p.some((p, i) => {
@@ -75,11 +77,12 @@ export async function main(aq) {
       }
     }
   }
-  const rows = stats.map((s) => ({ fish: s.f.name || s.f.sp.id, species: s.f.sp.id, riseBLs: +s.rise.toFixed(2), jitterPerMin: +(s.jitter / (FRAMES * DT / 60)).toFixed(1), ...(s.f.spine ? { roofFrames: s.roof } : {}) }));
+  const rows = stats.map((s) => ({ fish: s.f.name || s.f.sp.id, species: s.f.sp.id, riseBLs: +s.rise.toFixed(2), jitterPerMin: +(s.jitter / (FRAMES * DT / 60)).toFixed(1), inRockFrames: s.inRock || 0, ...(s.f.spine ? { roofFrames: s.roof } : {}) }));
   const sum = {
     fish: rows.length,
     maxRiseBLs: Math.max(...rows.map((r) => r.riseBLs)),
     meanJitterPerMin: +(rows.reduce((a, r) => a + r.jitterPerMin, 0) / rows.length).toFixed(2),
+    inRockFrames: rows.reduce((a, r) => a + r.inRockFrames, 0),
     eelRoofFrames: rows.filter((r) => 'roofFrames' in r).map((r) => r.roofFrames),
     // Fear passed on by a neighbour's flight (brain.js _perceive), per simulated minute.
     contagionPerMin: +(world.fish.reduce((a, f) => a + (f.brain.contagions || 0), 0) / (FRAMES * DT / 60)).toFixed(1),

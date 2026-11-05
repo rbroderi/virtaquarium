@@ -4,7 +4,7 @@ import { SPECIES, FISH_NAMES } from './species.js';
 import { buildReef, loadScenery } from './reef.js';
 import { World } from './world.js';
 import { Fish } from './fish.js';
-import { loadCustomModels, fishRender } from './fishModel.js';
+import { loadCustomModels, loadSkinCache, fishRender } from './fishModel.js';
 import { mulberry32, range, clamp, lerp } from './util.js';
 import {
   waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, MarineSnow, Bubbles, makeSurface,
@@ -88,7 +88,7 @@ const _ndc = new THREE.Vector3();   // autofocus scratch
 const photo = PHOTO ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 5.6, iso: 0.6 }) : null;
 
 // Optional Tripo3D / GLB models replace procedural fish species by species.
-const customModels = await loadCustomModels(SPECIES);
+const [customModels] = await Promise.all([loadCustomModels(SPECIES), loadSkinCache(SPECIES)]);
 if (customModels.length) console.info('Using GLB models for:', customModels.join(', '));
 
 // The jelly tank (jelly.js) is a backlit blue void with only jellies in it: no reef, sand or surface.

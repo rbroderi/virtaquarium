@@ -6,7 +6,7 @@
 // Open /pc/bake.html (optionally ?species=a,b&seeds=7,42&frames=8&yaws=9), or run `node tools/bake.mjs`.
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
-import { buildFishModel, loadCustomModels, posePectoral } from './fishModel.js';
+import { buildFishModel, loadCustomModels, loadSkinCache, posePectoral } from './fishModel.js';
 import { buildReef, loadScenery } from './reef.js';
 import {
   waterUniforms, installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, makeSurface,
@@ -542,7 +542,7 @@ async function bakeBubbles(scene) {
 async function run() {
   const t0 = performance.now();
   const manifest = { version: 1, generated: new Date().toISOString(), screen: SCREEN, view: { zoom: VIEW.zoom, pan: VIEW.pan, period: PAN_PERIOD, strip: STRIP }, pxPerUnit: PX_PER_UNIT, species: {}, scenery: {} };
-  const custom = await loadCustomModels(species);
+  const [custom] = await Promise.all([loadCustomModels(species), loadSkinCache(species)]);
   if (custom.length) log(`custom models: ${custom.join(', ')}`);
 
   const fs = fishScene();

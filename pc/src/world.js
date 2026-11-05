@@ -34,6 +34,10 @@ export class World {
   }
 
   reefHeight(x, z) { return this.reef.heightAt(x, z); }
+  // Signed distance (units) from p to the solid scenery, negative inside it, and the outward normal
+  // there (rockField.js). Without a field (e.g. the jelly test reef), open water.
+  rockDist(p) { return this.reef.rockField ? this.reef.rockField.dist(p.x, p.y, p.z) : 10; }
+  rockNormal(p, out) { return this.reef.rockField ? this.reef.rockField.normal(p.x, p.y, p.z, out) : out.set(0, 1, 0); }
   // The cave roof over (x, z) as { y: underside, top }, or null in the open. Roofs overhang, so the
   // height field doesn't hold them (reef.js caves[].roof).
   roofAt(x, z) {

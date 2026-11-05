@@ -2,7 +2,7 @@
 // URL: lab.html?sp=clownfish&yaw=30&swim=0   or   lab.html?sp=all   or   lab.html?sp=clownfish&compare=1
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
-import { buildFishModel, loadCustomModels, loadFishModel, posePectoral, fishRender } from './fishModel.js';
+import { buildFishModel, loadCustomModels, loadSkinCache, loadFishModel, posePectoral, fishRender } from './fishModel.js';
 import { installReference } from './labRef.js';
 import { PhotoCamera } from './photo.js';
 import { LightRig } from './rig.js';
@@ -39,7 +39,7 @@ const hemi = new THREE.HemisphereLight(0xdcecff, 0x8a7458, 1.0);
 scene.add(hemi);
 
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 120);
-await loadCustomModels(SPECIES);
+await Promise.all([loadCustomModels(SPECIES), loadSkinCache(SPECIES)]);
 
 // compare=1: procedural fish (left) next to its generated model in pc/models/fish/<id>.glb (right).
 const generated = new Map();

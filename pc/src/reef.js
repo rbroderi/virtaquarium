@@ -6,6 +6,8 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Noise, mulberry32, range, clamp, makeCanvas, lerp } from './util.js';
 import { addCaustics, waterUniforms } from './water.js';
+import { RockField } from './rockField.js';
+import { addTranslucency } from './softSkin.js';
 
 const C = (hex) => new THREE.Color(hex);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -318,33 +320,64 @@ function seaFanTexture(rng) {
   return t;
 }
 
-// Bubble-tip anemone: a column plus swaying instanced tentacles.
+// Bubble-tip anemone (Entacmaea quadricolor): a column that flares into the oral disc, gripping the
+// rock with a pedal lip, and swaying instanced tentacles. Each tentacle is a lathe of the real one's
+// profile: a slender stem, a pale constriction ring, the swollen bulb, and a darker pointed tip. A
+// lathe puts its rings where the profile curves, so it is fewer triangles than the old capsules (176
+// a tentacle against 272).
+function lathe(prof, seg, colorAt) {
+  const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), seg);
+  g.deleteAttribute('uv');
+  const n = g.attributes.position.count, col = new Float32Array(n * 3), c = new THREE.Color();
+  for (let i = 0; i < n; i++) { colorAt(g.attributes.position.getY(i), c, i); col.set([c.r, c.g, c.b], i * 3); }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
 function anemone(rng) {
   const group = new THREE.Group();
-  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.35, 24), stdMat({ color: 0x9a7050, roughness: 0.8 }));
-  column.position.y = 0.15;
-  group.add(column);
-  const tg = new THREE.CapsuleGeometry(0.026, 0.36, 4, 8);
-  tg.translate(0, 0.21, 0);
-  const n = tg.attributes.position.count, col = new Float32Array(n * 3);
-  const stem = C('#7f8a4a'), tip = C('#e07aa2'), c = new THREE.Color();
-  for (let i = 0; i < n; i++) {
-    const h = tg.attributes.position.getY(i) / 0.42;
-    c.copy(stem).lerp(tip, clamp((h - 0.8) * 5, 0, 1));
-    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+  // Column: pedal lip on the rock (y 0), the column, and the disc flaring out over it, dished to the
+  // mouth; wrinkled once with noise (its own seeded noise: the reef's rng draws stay as they were).
+  const noise = new Noise(mulberry32(911)), colBrown = C('#8a6446'), discCol = C('#6f7a44'), mouth = C('#c77d8e');
+  const cp = [[0.0, -0.02], [0.53, -0.02], [0.55, 0.02], [0.47, 0.06], [0.42, 0.16], [0.43, 0.25], [0.5, 0.31], [0.55, 0.335], [0.5, 0.35], [0.3, 0.335], [0.1, 0.31], [0.04, 0.29], [0.0, 0.285]];
+  const cg = lathe(cp, 32, (y, c) => c.copy(y < 0.32 ? colBrown : discCol));
+  {
+    const p = cg.attributes.position, cl = cg.attributes.color, v = new THREE.Vector3(), c = new THREE.Color();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      const r = Math.hypot(v.x, v.z), k = 1 + (noise.noise3(v.x * 7, v.y * 7, v.z * 7) - 0.5) * 0.12 * clamp(r / 0.3, 0, 1);
+      p.setXYZ(i, v.x * k, v.y + (r < 0.45 && v.y > 0.25 ? (noise.noise3(v.x * 5 + 9, 0, v.z * 5) - 0.5) * 0.03 : 0), v.z * k);
+      if (v.y > 0.28 && r < 0.12) { c.fromBufferAttribute(cl, i).lerp(mouth, clamp((0.12 - r) / 0.08, 0, 1)); cl.setXYZ(i, c.r, c.g, c.b); }
+    }
+    cg.computeVertexNormals();
   }
-  tg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const column = new THREE.Mesh(cg, addTranslucency(stdMat({ vertexColors: true, roughness: 0.75 }), { wrap: 0.35, back: 0.3, thin: 0.1 }));
+  group.add(column);
+  // The disc's top at radius r (its profile from the rim in to the mouth), for seating the tentacles.
+  const top = cp.slice(8);
+  const discY = (r) => { for (let k = 0; k < top.length - 1; k++) { const [r0, y0] = top[k], [r1, y1] = top[k + 1]; if (r <= r0 && r >= r1) return y0 + (y1 - y0) * (r - r0) / (r1 - r0); } return top[0][1]; };
+  const stem = C('#7f8a4a'), ring = C('#e8e2c8'), bulb = C('#e07aa2'), tip = C('#8e2f58'), c = new THREE.Color();
+  // (r, y): the base buried in the disc, stem, the constriction band at 0.62 of the height, bulb,
+  // pointed tip at 0.42 (the old capsule's height, which the sway's hTop goes by).
+  const tp = [[0.02, -0.01], [0.019, 0.08], [0.018, 0.19], [0.0155, 0.235], [0.018, 0.252], [0.023, 0.275], [0.0265, 0.3], [0.026, 0.325], [0.021, 0.35], [0.013, 0.378], [0.005, 0.405], [0.0, 0.42]];
+  const tg = lathe(tp, 8, (y, c) => {
+    if (y < 0.225) c.copy(stem);
+    else if (y < 0.26) c.copy(stem).lerp(ring, clamp(1 - Math.abs(y - 0.243) / 0.014, 0, 1));
+    else if (y < 0.35) c.copy(bulb).lerp(ring, clamp((0.285 - y) / 0.03, 0, 0.5));
+    else c.copy(bulb).lerp(tip, clamp((y - 0.35) / 0.04, 0, 1));
+  });
   // (Before addSway existed this read an unbound uTime, so the tentacles never moved.)
-  const mat = addSway(stdMat({ vertexColors: true, roughness: 0.55 }, 0.5), 'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: 0.42 });
+  const mat = addSway(addTranslucency(stdMat({ vertexColors: true, roughness: 0.5 }, 0.5), { wrap: 0.5, back: 0.9, tint: [1.0, 0.55, 0.6], thin: 0.7 }), 'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: 0.42 });
   const count = 320;
   const tent = new THREE.InstancedMesh(tg, mat, count);
   const golden = Math.PI * (3 - Math.sqrt(5));
+  const fat = mulberry32(912);   // per-tentacle girth (bulb size), off the reef's rng
   for (let i = 0; i < count; i++) {
-    const r = Math.sqrt(i / count) * 0.62, th = i * golden;
-    const out = new THREE.Vector3(Math.cos(th) * r * 1.4, 1, Math.sin(th) * r * 1.4).normalize();
+    // (out to the disc's 0.55 rim: the old column ended at 0.42 and the outer tentacles stood on air)
+    const r = Math.sqrt(i / count) * 0.58, th = i * golden;
+    const out = new THREE.Vector3(Math.cos(th) * r * 1.6, 1, Math.sin(th) * r * 1.6).normalize();
     _q.setFromUnitVectors(UP, out);
-    const s = range(rng, 0.8, 1.2);
-    _m.compose(_p.set(Math.cos(th) * r, 0.32, Math.sin(th) * r), _q, _s.set(s, s * range(rng, 0.85, 1.15), s));
+    const s = range(rng, 0.8, 1.2), g = 0.85 + 0.3 * fat();
+    _m.compose(_p.set(Math.cos(th) * r, discY(r) - 0.008, Math.sin(th) * r), _q, _s.set(s * g, s * range(rng, 0.85, 1.15), s * g));
     tent.setMatrixAt(i, _m);
   }
   tent.castShadow = true;
@@ -1015,6 +1048,18 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       }
     }
   }
+  // The solid scenery in 3D, for collision (rockField.js): every rock including the cave roofs, and the
+  // corals that are in the height field (not grass, algae, rubble or the anemone, which fish brush through).
+  const field = (() => {
+    const t0 = performance.now(), top = new THREE.Box3().setFromObject(rocks).union(new THREE.Box3().setFromObject(corals)).max.y;
+    const f = new RockField({ x0: -width / 2, x1: width / 2, y0: -0.3, y1: Math.min(top, 7) + 0.4, z0: -3.8, z1: 3.2 }, 0.08);
+    f.add(rocks);
+    f.add(corals, (o) => o.userData.noHeight || (() => { for (let p = o; p; p = p.parent) if (p.userData.noHeight) return true; return false; })());
+    const info = f.finish();
+    console.log('Rock field', JSON.stringify({ ...info, ms: Math.round(performance.now() - t0) }));
+    return f;
+  })();
+
   let shoalCoral = null;
   if (stagMain) {
     const b = new THREE.Box3().setFromObject(stagMain), c = b.getCenter(new THREE.Vector3());
@@ -1027,6 +1072,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     group: reef,
     heightAt: (x, z) => hf.sample(x, z),
     heightField: hf,
+    rockField: field,
     anemones: [{ pos: new THREE.Vector3(anemoneSpot.x, anemoneSpot.y + 0.35, anemoneSpot.z), radius: 0.75 }],
     bubbler: new THREE.Vector3(6.3 * sx, 0.6, -3.4),
     homes,

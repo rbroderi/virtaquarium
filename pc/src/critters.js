@@ -8,7 +8,49 @@
 // Frame: like the fish, +x is forward, +y up; yaw turns about y (heading (cos yaw, 0, sin yaw)).
 import * as THREE from 'three';
 import { addCaustics } from './water.js';
+import { addTranslucency } from './softSkin.js';
 import { range, clamp, lerp, wrapAngle, makeCanvas, mulberry32, Noise } from './util.js';
+
+// The blended (distance-field) bodies, meshed offline by tools/softbodies.mjs into
+// pc/models/critters/*.glb (shapes: softBodies.js), loaded once here before any critter is made
+// (a top-level await: main.js waits for it). A missing file is meshed in the page instead (slow, a
+// second or so each), with a warning.
+function readGLB(buf) {   // one indexed mesh of float attributes, as sdfMesh.js writeGLB writes it
+  const dv = new DataView(buf), jl = dv.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), bin = 20 + jl + 8;
+  const get = (a) => {
+    const acc = json.accessors[a], view = json.bufferViews[acc.bufferView], size = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[acc.type];
+    const T = acc.componentType === 5126 ? Float32Array : acc.componentType === 5123 ? Uint16Array : Uint32Array;
+    return { array: new T(buf.slice(bin + view.byteOffset, bin + view.byteOffset + view.byteLength)), size };
+  };
+  const prim = json.meshes[0].primitives[0], attributes = {};
+  for (const [name, a] of Object.entries(prim.attributes)) attributes[name] = get(a);
+  return { attributes, index: get(prim.indices).array };
+}
+const SOFT = {};
+{
+  const t0 = performance.now();
+  await Promise.all(['octopus-body', 'cuttlefish-body'].map(async (name) => {
+    let m;
+    try {
+      const r = await fetch(new URL(`../models/critters/${name}.glb`, import.meta.url));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      m = readGLB(await r.arrayBuffer());
+    } catch (e) {
+      console.warn(`critters: pc/models/critters/${name}.glb not loaded (${e.message}); meshing it here instead (node tools/softbodies.mjs writes it)`);
+      m = (await import('./softBodies.js')).SOFT_BODIES[name]();
+    }
+    const g = new THREE.BufferGeometry(), A = m.attributes;
+    g.setAttribute('position', new THREE.BufferAttribute(A.POSITION.array, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(A.NORMAL.array, 3));
+    if (A.TEXCOORD_0) g.setAttribute('uv', new THREE.BufferAttribute(A.TEXCOORD_0.array, 2));
+    g.setAttribute('aWeight', new THREE.BufferAttribute(A._WEIGHT.array, 1));
+    g.setIndex(new THREE.BufferAttribute(m.index, 1));
+    g.computeBoundingSphere();
+    SOFT[name] = g;
+  }));
+  console.info(`Soft bodies: ${Object.entries(SOFT).map(([k, g]) => `${k} ${g.index.count / 3} tris`).join(', ')}, ${(performance.now() - t0).toFixed(0)} ms`);
+}
 
 export const CRITTER_SPECIES = [
   {
@@ -47,13 +89,16 @@ function canvasTexture(c, srgb = true) {
 }
 
 // A reef-lit material with an optional shader hook; key keeps three.js from sharing the program with
-// a plain material of the same parameters.
-function skin(opts, key, hook = null) {
+// a plain material of the same parameters. sss: light through the skin for the soft bodies
+// (softSkin.js options: wrap, back, tint, thin), null for the turtle's horn and scales.
+function skin(opts, key, hook = null, sss = null) {
   const m = new THREE.MeshStandardMaterial(opts);
   if (hook) m.onBeforeCompile = hook;
   m.customProgramCacheKey = () => key;
-  return addCaustics(m);
+  addCaustics(m);
+  return sss ? addTranslucency(m, sss) : m;
 }
+const CEPH_SSS = { wrap: 0.45, back: 0.7, tint: [1.0, 0.45, 0.35], thin: 0.15 };   // red-brown cephalopod tissue
 
 // Shared steering for animals that swim freely: turn-rate-limited yaw and pitch towards a target,
 // climbing over reef that lies ahead, kept inside the tank.
@@ -197,53 +242,138 @@ function wPupilEye(rng) {
   return canvasTexture(c);
 }
 
+// The arms: tubes along a centre line in the crown's frame that bends down towards the tip (curl),
+// each arm keeping its place (angle a) in a ring about the bundle's line, the ring narrowing with
+// the taper. Built once in the rest pose; the vertex shader recomputes the line from uExt (a
+// tentacle's stretch: it straightens as it shoots out), so per vertex the geometry holds only where
+// it sits on the section: aSec (fraction along, offsets along the tangent, the line's normal and z),
+// aArm (a, L, tentacle) and aNrm (the normal in that frame). ML = 1 units (the mesh is scaled).
+const ARM_R0 = 0.022, ARM_R1 = 0.008, ARM_STEPS = 10;
+const CUTTLE_ARM_GLSL = /* glsl */`
+attribute vec4 aSec;
+attribute vec3 aArm, aNrm;
+uniform float uExt;
+void cuttleArm(out vec3 P, out vec3 Nrm) {
+  float tent = aArm.z, L = aArm.y, ext = 1.0 + tent * (uExt - 1.0), s = aSec.x * L * ext;
+  float curl = 0.7 * (1.0 - tent * clamp((ext - 1.0) / 0.4, 0.0, 1.0));
+  vec2 c = vec2(0.0);
+  float du = s / ${ARM_STEPS}.0;
+  for (int i = 0; i < ${ARM_STEPS}; i++) { float q = min((float(i) + 0.5) * du, L) / L, th = curl * q * q; c += vec2(cos(th), -sin(th)) * du; }
+  float q = min(s, L) / L, th = curl * q * q;
+  vec3 T = vec3(cos(th), -sin(th), 0.0), N = vec3(sin(th), cos(th), 0.0), Z = vec3(0.0, 0.0, 1.0);
+  float rho = 3.4 * mix(${ARM_R0}, ${ARM_R1}, q);
+  P = vec3(c, 0.0) + N * (rho * sin(aArm.x) + aSec.z) + Z * (rho * cos(aArm.x) + aSec.w) + T * aSec.y;
+  Nrm = T * aNrm.x + N * aNrm.y + Z * aNrm.z;
+}
+`;
+// The same line on the CPU (ext 1), for the rest pose the geometry is built in.
+function cuttleArmFrame(f, L, a) {
+  const s = f * L, curl = 0.7, du = s / ARM_STEPS;
+  let cx = 0, cy = 0;
+  for (let i = 0; i < ARM_STEPS; i++) { const q = Math.min((i + 0.5) * du, L) / L, th = curl * q * q; cx += Math.cos(th) * du; cy -= Math.sin(th) * du; }
+  const q = Math.min(s, L) / L, th = curl * q * q, rho = 3.4 * lerp(ARM_R0, ARM_R1, q);
+  const T = [Math.cos(th), -Math.sin(th), 0], N = [Math.sin(th), Math.cos(th), 0];
+  return { P: [cx + N[0] * rho * Math.sin(a), cy + N[1] * rho * Math.sin(a), rho * Math.cos(a)], T, N };
+}
+function cuttleArmGeometry(a, L, tentacle) {
+  // Rings along a curved taper (quick thinning near the root, long and slender after), a closed base
+  // (inside the head) and a rounded tip cap.
+  const NS = 20, RAD = 12, rings = [[0, -0.6 * ARM_R0, 0]];   // [fraction, tangent offset, radius]
+  for (let k = 0; k <= NS; k++) { const f = k / NS; rings.push([f, 0, ARM_R1 + (ARM_R0 - ARM_R1) * (1 - f) ** 1.4]); }
+  for (const ph of [0.6, 1.1, 1.45]) rings.push([1, ARM_R1 * Math.sin(ph), ARM_R1 * Math.cos(ph)]);
+  rings.push([1, ARM_R1, 0]);
+  const pos = [], sec = [], arm = [], thin = [], idx = [];
+  for (const [f, tOff, r] of rings) {
+    const { P, T, N } = cuttleArmFrame(f, L, a), n = r > 0 ? RAD : 1;
+    for (let j = 0; j < n; j++) {
+      const b = (j / RAD) * Math.PI * 2, nO = r * Math.cos(b), zO = r * Math.sin(b);
+      pos.push(P[0] + T[0] * tOff + N[0] * nO, P[1] + T[1] * tOff + N[1] * nO, P[2] + zO);
+      sec.push(f, tOff, nO, zO); arm.push(a, L, tentacle ? 1 : 0); thin.push(0.2 + 0.8 * f);
+    }
+  }
+  // indices: the base point, NS + 4 rings of RAD, the tip point
+  const ring0 = 1, nr = rings.length - 2, tip = ring0 + nr * RAD;
+  for (let j = 0; j < RAD; j++) {
+    const j1 = (j + 1) % RAD;
+    idx.push(0, ring0 + j1, ring0 + j);
+    for (let k = 0; k < nr - 1; k++) { const p0 = ring0 + k * RAD + j, p1 = ring0 + k * RAD + j1; idx.push(p0, p1, p0 + RAD, p1, p1 + RAD, p0 + RAD); }
+    idx.push(tip, ring0 + (nr - 1) * RAD + j, ring0 + (nr - 1) * RAD + j1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const nrm = g.attributes.normal, an = new Float32Array(nrm.count * 3);
+  let v = 0;
+  for (const [f, , r] of rings) {
+    const { T, N } = cuttleArmFrame(f, L, a);
+    for (let j = 0; j < (r > 0 ? RAD : 1); j++, v++) {
+      const x = nrm.getX(v), y = nrm.getY(v), z = nrm.getZ(v);
+      an[3 * v] = x * T[0] + y * T[1]; an[3 * v + 1] = x * N[0] + y * N[1]; an[3 * v + 2] = z;
+    }
+  }
+  g.setAttribute('aNrm', new THREE.BufferAttribute(an, 3));
+  g.setAttribute('aSec', new THREE.Float32BufferAttribute(sec, 4));
+  g.setAttribute('aArm', new THREE.Float32BufferAttribute(arm, 3));
+  g.setAttribute('aThin', new THREE.Float32BufferAttribute(thin, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+
+// The fin skirt's rows across (k: 0 at the mantle's surface, 1 at the edge; the first lies inside the
+// mantle), each on the top surface and again on the bottom, a closed lens-shaped loop.
+const FIN_K = [-0.25, 0, 0.18, 0.38, 0.58, 0.76, 0.9, 1.0];
+function finGeometry(finN) {
+  const R = FIN_K.length, per = 2 * R, n = (finN + 1) * per, uv = new Float32Array(n * 2), thin = new Float32Array(n), idx = [];
+  for (let i = 0; i <= finN; i++) for (let j = 0; j < per; j++) {
+    const k = FIN_K[j < R ? j : per - 1 - j], o = i * per + j;
+    uv[2 * o] = i / finN; uv[2 * o + 1] = clamp(k, 0, 1); thin[o] = 0.3 + 0.7 * clamp(k, 0, 1);
+    if (i < finN) { const a = o, b = i * per + (j + 1) % per; idx.push(a, b, a + per, b, b + per, a + per); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('aThin', new THREE.BufferAttribute(thin, 1));
+  g.setIndex(idx);
+  return g;
+}
+
 export class Cuttlefish {
   constructor(sp, rng, world) {
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
     const ML = this.ML = range(rng, 1.0, 1.3);
     this.model = new THREE.Group();
-    this.u = { uTime: { value: 0 }, uCloud: { value: 0 }, uMottle: { value: 0 }, uPale: { value: 0 } };
+    this.u = { uTime: { value: 0 }, uCloud: { value: 0 }, uMottle: { value: 0 }, uPale: { value: 0 }, uSqueeze: { value: new THREE.Vector3(1, 1, 1) }, uExt: { value: 1 } };
     const hook = (shader) => {
       Object.assign(shader.uniforms, this.u);
-      shader.fragmentShader = 'uniform float uTime, uCloud, uMottle, uPale;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      // The mantle and head are one mesh (softBodies.js): the mantle's share (aWeight) squeezes in a
+      // jet, about the head end, and the head takes its own colour.
+      shader.vertexShader = 'uniform vec3 uSqueeze;\nattribute float aWeight;\nvarying float vMantle;\n' + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        transformed *= mix(vec3(1.0), uSqueeze, aWeight);
+        vMantle = aWeight;`);
+      shader.fragmentShader = 'uniform float uTime, uCloud, uMottle, uPale;\nvarying float vMantle;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
         {
           float dors = smoothstep(0.35, 0.0, min(abs(vMapUv.x - 0.75), 1.0 - abs(vMapUv.x - 0.75)));
+          diffuseColor.rgb = mix(vec3(0.3, 0.16, 0.11) * (1.1 - 0.35 * dors), diffuseColor.rgb, smoothstep(0.15, 0.7, vMantle));   // the head
           float cloud = smoothstep(0.55, 0.95, sin(vMapUv.y * 18.0 - uTime * 3.0 + sin(vMapUv.x * 30.0) * 0.6));
-          float mott = smoothstep(0.4, 0.7, fract(sin(dot(floor(vMapUv * vec2(60.0, 40.0)), vec2(12.9898, 78.233))) * 43758.5453));
+          float mott = smoothstep(0.4, 0.7, fract(sin(dot(floor(vec2(fract(vMapUv.x), vMapUv.y) * vec2(60.0, 40.0)), vec2(12.9898, 78.233))) * 43758.5453));
           diffuseColor.rgb *= 1.0 - dors * (uCloud * 0.55 * cloud + uMottle * 0.35 * mott);
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.82, 0.78, 0.74), uPale * 0.6);
         }`);
     };
-    const mantleMat = skin({ map: cuttleSkin(rng), roughness: 0.45, metalness: 0 }, 'cuttle-mantle', hook);
+    const skinTex = cuttleSkin(rng);
+    skinTex.wrapS = THREE.RepeatWrapping;   // the seam's own vertices run on past u = 1
+    const mantleMat = skin({ map: skinTex, roughness: 0.45, metalness: 0 }, 'cuttle-mantle', hook, CEPH_SSS);
 
-    // Mantle: a lathe round the x axis, flattened (tail at -ML .. head at 0).
-    const prof = [];
-    for (let i = 0; i <= 32; i++) {
-      const t = i / 32;
-      prof.push(new THREE.Vector2(Math.max(0.002, mantleR(t) * ML), -ML + t * ML));
-    }
-    // The opening's rim turns in round the head (whose section there is narrower than the rim), so
-    // the mantle closes on it rather than leaving a ring of gap.
-    prof.push(new THREE.Vector2(0.195 * ML, 0.006 * ML), new THREE.Vector2(0.165 * ML, 0.016 * ML));
-    const mantle = new THREE.LatheGeometry(prof, 48);
-    const muv = mantle.attributes.uv;   // keep the texture's tail-to-head v on the mantle proper
-    for (let k = 0; k < muv.count; k++) muv.setY(k, Math.min(1, (muv.getY(k) * (prof.length - 1)) / 32));
-    mantle.rotateZ(-Math.PI / 2);   // lathe axis (y) -> x: the tail at -ML, the head end at 0
-    mantle.scale(1, 0.62, 1);       // flattened top to bottom
-    mantle.computeVertexNormals();
-    const body = new THREE.Mesh(mantle, mantleMat);
+    // Mantle, head, eye bulges and the arm crown: one blended mesh (built for ML = 1).
+    const body = new THREE.Mesh(SOFT['cuttlefish-body'], mantleMat);
+    body.scale.setScalar(ML);
     body.castShadow = true;
     body.name = 'mantle';
     this.model.add(body);
     this.mantle = body;
     this.sArmY = { x: 0, v: 0 }; this.sArmZ = { x: 0, v: 0 }; this.sSqueeze = { x: 0, v: 0 };
-    // Head and eyes.
-    const headMat = skin({ color: 0x96705c, roughness: 0.45 }, 'cuttle-head');
-    const head = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), headMat);
-    head.scale.set(0.19 * ML, 0.135 * ML, 0.19 * ML);   // nearly fills the mantle opening; ~0.3 ML to the arm tips
-    head.position.set(0.06 * ML, 0.005 * ML, 0);
-    head.name = 'head';
-    this.model.add(head);
+    // Eyes (in their bulges on the head).
     const eyeMat = skin({ map: wPupilEye(rng), roughness: 0.15 }, 'cuttle-eye');
     for (const s of [1, -1]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06 * ML, 20, 14), eyeMat);
@@ -254,7 +384,15 @@ export class Cuttlefish {
     }
     // Arms: eight thick, tapering arms held together in a bundle, angled forward and down with the
     // tips curling under; pale below (the photos).
-    const armMat = skin({ color: 0xd2bcae, roughness: 0.5 }, 'cuttle-arm');
+    // Built once, in the rest pose, and bent in the vertex shader (cuttleArm): a tentacle's strike is
+    // the uExt uniform, so nothing is rebuilt per frame.
+    const armMat = skin({ color: 0xd2bcae, roughness: 0.5 }, 'cuttle-arm', (shader) => {
+      shader.uniforms.uExt = this.u.uExt;
+      shader.vertexShader = CUTTLE_ARM_GLSL + shader.vertexShader
+        .replace('#include <beginnormal_vertex>', `vec3 armP, objectNormal;
+          cuttleArm(armP, objectNormal);`)
+        .replace('#include <begin_vertex>', 'vec3 transformed = armP;');
+    }, { ...CEPH_SSS, thin: 'attr' });
     // A crown on the front of the head carries them. The bundle bends as one (rigid in section, so
     // the arms never cross): each arm keeps its place in a ring about the bundle's centre line, the
     // ring narrowing with the arms' taper so neighbours stay just apart to the tips. Two of the upper
@@ -264,27 +402,31 @@ export class Cuttlefish {
     this.crown.position.set(0.19 * ML, -0.03 * ML, 0);
     this.model.add(this.crown);
     this.arms = [];
+    const t0 = performance.now();
     for (let i = 0; i < 8; i++) {
-      const arm = new THREE.Mesh(new THREE.BufferGeometry(), armMat);
-      arm.userData = { a: (i / 8) * Math.PI * 2, L: 0.27 * ML * (i === 1 || i === 3 ? 0.85 : 1), tentacle: i === 1 || i === 3, ext: -1 };
+      const tentacle = i === 1 || i === 3;
+      const arm = new THREE.Mesh(cuttleArmGeometry((i / 8) * Math.PI * 2, 0.27 * (tentacle ? 0.85 : 1), tentacle), armMat);
+      arm.scale.setScalar(ML);   // (built for ML = 1)
+      arm.frustumCulled = false;   // a strike reaches well past the rest pose's bounds
       arm.name = `arm${i}`;
-      this._arm(arm, 1);
       this.crown.add(arm);
       this.arms.push(arm);
     }
-    // Fin skirt: two ribbons along the mantle edge, waved on the CPU each frame.
+    // Fin skirt: along each side of the mantle, a thick strip with a lens-shaped section that thins to
+    // a translucent edge; its root row lies inside the mantle, so it grows out of it. Waved on the CPU
+    // each frame (_fins).
     this.finN = 48;
     const finTex = cuttleFinTex(rng);
     this.fins = [1, -1].map((side) => {
-      const g = new THREE.PlaneGeometry(1, 1, this.finN, 2);
-      const mesh = new THREE.Mesh(g, skin({ map: finTex, roughness: 0.5, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false }, 'cuttle-fin'));
+      const mesh = new THREE.Mesh(finGeometry(this.finN), skin({ map: finTex, roughness: 0.5, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }, 'cuttle-fin', null, { ...CEPH_SSS, back: 1.0, thin: 'attr' }));
       mesh.userData.side = side; mesh.name = `fin${side > 0 ? 0 : 1}`;
       this.model.add(mesh);
       return mesh;
     });
     this.finPhase = 0;
+    this.buildMs = performance.now() - t0;
     // Where parts are attached (and may run into each other): critterCheck.js.
-    this.joins = [['mantle', 'head'], ['eye*', 'head'], ['arm*', 'head'], ['fin*', 'mantle']];
+    this.joins = [['eye*', 'mantle'], ['arm*', 'mantle'], ['fin*', 'mantle']];
 
     const B = world.bounds;
     this.body = new Swimmer(new THREE.Vector3(range(rng, B.x0 + 2, B.x1 - 2), range(rng, 1.8, 4.5), range(rng, -1, 1.5)), range(rng, -3, 3));
@@ -293,61 +435,30 @@ export class Cuttlefish {
     this.jet = 0;
   }
 
-  // (Re)build one arm as a closed tube in the crown's frame, ext times its length (a strike, for a
-  // tentacle: it straightens as it stretches).
-  _arm(arm, ext) {
-    const { a, L, tentacle } = arm.userData;
-    if (Math.abs(ext - arm.userData.ext) < 1e-3) return;
-    arm.userData.ext = ext;
-    const ML = this.ML, r0 = 0.022 * ML, r1 = 0.008 * ML, NS = 18, RAD = 10, len = L * ext;
-    const curl = 0.7 * (tentacle ? 1 - clamp((ext - 1) / 0.4, 0, 1) : 1);
-    const pos = [], idx = [], c = new THREE.Vector3(), T = new THREE.Vector3(), Nn = new THREE.Vector3(), P = new THREE.Vector3();
-    const base = new THREE.Vector3(), tip = new THREE.Vector3();   // the caps' centres
-    const rAt = (s) => lerp(r0, r1, s / len), rho = (s) => 3.4 * lerp(r0, r1, Math.min(1, s / L));
-    let th = 0;
-    for (let k = 0; k <= NS; k++) {
-      const s = (k / NS) * len;
-      if (k > 0) { const ds = len / NS; c.x += Math.cos(th) * ds; c.y -= Math.sin(th) * ds; }
-      th = curl * (Math.min(s, L) / L) ** 2;   // bends down towards the tip
-      T.set(Math.cos(th), -Math.sin(th), 0); Nn.set(Math.sin(th), Math.cos(th), 0);
-      P.copy(c).addScaledVector(Nn, rho(s) * Math.sin(a)).z += rho(s) * Math.cos(a);
-      for (let j = 0; j < RAD; j++) {
-        const b = (j / RAD) * Math.PI * 2, r = rAt(s);
-        pos.push(P.x + Nn.x * r * Math.cos(b), P.y + Nn.y * r * Math.cos(b), P.z + r * Math.sin(b));
-        if (k < NS) { const p0 = k * RAD + j, p1 = k * RAD + (j + 1) % RAD; idx.push(p0, p1, p0 + RAD, p1, p1 + RAD, p0 + RAD); }
-      }
-      if (k === 0) base.copy(P).addScaledVector(T, -0.6 * r0);
-      if (k === NS) tip.copy(P).addScaledVector(T, 0.8 * r1);
-    }
-    // Caps: a blunt tip, and a closed base (inside the head).
-    const nb = pos.length / 3; pos.push(base.x, base.y, base.z, tip.x, tip.y, tip.z);
-    for (let j = 0; j < RAD; j++) {
-      const j1 = (j + 1) % RAD;
-      idx.push(nb, j1, j, nb + 1, NS * RAD + j, NS * RAD + j1);
-    }
-    const g = arm.geometry;
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-    g.computeBoundingSphere();
-  }
-
   _fins(dt, speed) {
     // Waves run tail-wards to go forward, head-wards to back up; amplitude and rate grow with speed.
     const ML = this.ML, dirn = speed >= 0 ? 1 : -1, a = 0.035 * ML + Math.abs(speed) * 0.03 * ML;
-    const ms = this.mantle.scale;   // the skirt's root follows the mantle as it squeezes
+    const ms = this.u.uSqueeze.value;   // the skirt's root follows the mantle as it squeezes
     this.finPhase += dt * (3 + Math.abs(speed) * 6) * dirn;
+    const R = FIN_K.length;
     for (const f of this.fins) {
       const p = f.geometry.attributes.position, side = f.userData.side;
+      // the section's normal (across the skirt x along it), for the lens thickness
+      const ny = 1 / Math.hypot(1, 0.4), nz = 0.4 * side * ny;
       for (let i = 0; i <= this.finN; i++) {
         const t = i / this.finN, x = -ML * (0.04 + 0.94 * t);                   // head -> tail
         const half = mantleR(0.96 - 0.94 * t) * ML;
         const w = 0.085 * ML * Math.sin(Math.PI * Math.min(1, t * 1.02 + 0.02)) ** 0.2;   // even width, full length
-        for (let j = 0; j <= 2; j++) {
+        for (let j = 0; j < R; j++) {
           // The base runs along the lower flank (a third of the way down, where the mantle is ~0.84
           // of its width) and the skirt droops, so from the side it shows as a band below the bars.
-          const k = j / 2, y = Math.sin(this.finPhase + t * 9) * a * k * k;
-          p.setXYZ(j * (this.finN + 1) + i, x * ms.x, y - 0.62 * 0.55 * half * ms.y - 0.4 * w * k, side * (half * 0.82 * ms.z + w * k));
+          // Rows from the root (k < 0: inside the mantle) out to the edge (k 1), on the top surface
+          // then back along the bottom one.
+          const k = FIN_K[j], kk = Math.max(0, k), y = Math.sin(this.finPhase + t * 9) * a * kk * kk;
+          const th = 0.5 * 0.022 * ML * (1 - kk) ** 0.6 * (0.4 + 0.6 * Math.sin(Math.PI * Math.min(1, t * 1.05 + 0.03)) ** 0.5);
+          const X = x * ms.x, Y = y - 0.62 * 0.55 * half * ms.y - 0.4 * w * k, Z = side * (half * 0.82 * ms.z + w * k);
+          p.setXYZ(i * 2 * R + j, X, Y + ny * th, Z + nz * th);
+          p.setXYZ(i * 2 * R + 2 * R - 1 - j, X, Y - ny * th, Z - nz * th);
         }
       }
       p.needsUpdate = true;
@@ -405,7 +516,7 @@ export class Cuttlefish {
     const armY = spring(this.sArmY, clamp(yawRate * 0.5, -0.35, 0.35), 1.2, 0.35, dt);
     const armZ = spring(this.sArmZ, clamp(-pitchRate * 0.4, -0.3, 0.3), 1.2, 0.35, dt);
     const squeeze = spring(this.sSqueeze, this.mode === 'jet' ? this.jet : 0, 3, 0.4, dt);
-    this.mantle.scale.set(1 + 0.04 * squeeze, 1 - 0.14 * squeeze, 1 - 0.05 * squeeze);   // fins sit on the edge: keep the width
+    this.u.uSqueeze.value.set(1 + 0.04 * squeeze, 1 - 0.14 * squeeze, 1 - 0.05 * squeeze);   // fins sit on the edge: keep the width
 
     // Skin: passing clouds while hunting, mottled at rest, pale in a jet.
     const U = this.u;
@@ -416,7 +527,7 @@ export class Cuttlefish {
     this.strike = Math.max(0, (this.strike || 0) - dt);
     const t = U.uTime.value;
     this.crown.rotation.set(0, Math.sin(t * 0.9) * 0.06 + armY, -0.3 + Math.sin(t * 1.3) * 0.05 + (this.mode === 'jet' ? 0.2 : 0) + armZ);
-    for (const a of this.arms) if (a.userData.tentacle) this._arm(a, this.strike > 0 ? 1 + 2.5 * Math.sin((this.strike / 0.4) * Math.PI) : 1);
+    U.uExt.value = this.strike > 0 ? 1 + 2.5 * Math.sin((this.strike / 0.4) * Math.PI) : 1;   // the tentacles' stretch (cuttleArm)
     this._fins(dt, b.speed);
     b.place(this.model);
   }
@@ -487,21 +598,64 @@ function octoBump(rng) {
   return t;
 }
 
-// A tube along a chain of points, rebuilt in place each frame. Vertex colours paint the suckers on
-// the side facing the ground (the arm's underside).
+// A sucker: a shallow cupped lathe (rim and dimple) standing on the arm's oral face, its base sunk
+// into the arm. 0.03 across at the root (M = 1); the instance matrices scale and place it.
+const SUCKER_R = 0.03, SUCKERS_PER_ARM = 36;
+function suckerGeometry() {
+  const prof = [[1.0, -0.5], [1.0, 0.2], [0.86, 0.52], [0.6, 0.5], [0.38, 0.28], [0.0, 0.2]];
+  const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r * SUCKER_R, y * SUCKER_R)), 8);
+  g.deleteAttribute('uv');
+  return g;
+}
+
+// A tube along a chain of points, rebuilt in place each frame. The section isn't round: the oral
+// (sucker) side, facing the ground, is broad and flat (a superellipse), the aboral side domed. The
+// taper is a curve (quick thinning near the root, long and slender after) closed by a rounded tip,
+// and the normals follow the section and the taper. Two rings per chain segment (Catmull-Rom between
+// the points), so the coils read smooth; the chain itself (towing, _untangle, the web) is as it was.
+// Two staggered rows of suckers (one InstancedMesh for all the arms) follow its frames.
+const ARM_RING = 16, ARM_SUB = 2, ARM_CAP = [0.55, 1.0, 1.35];   // cap rings' angles over the tip
+const ORAL_N = 3.5, ORAL_H = 0.6, ABORAL_H = 0.95, ARM_W = 1.05;      // section: half-depths and half-width per radius
+// The section per unit radius, once: x across (along Bn), y towards the ground (Nn), and its normal.
+// The oral side is a superellipse, flat and broad; the aboral side an ellipse.
+const ARM_SEC = (() => {
+  const S = new Float32Array(ARM_RING * 4), e = 2 / ORAL_N;
+  for (let j = 0; j < ARM_RING; j++) {
+    const b = (j / ARM_RING) * Math.PI * 2, cs = Math.cos(b), sn = Math.sin(b);
+    let x, y, gx, gy;
+    if (cs > 0) {
+      x = ARM_W * Math.sign(sn) * Math.abs(sn) ** e; y = ORAL_H * cs ** e;
+      gx = Math.sign(x) * Math.abs(x / ARM_W) ** (ORAL_N - 1) / ARM_W; gy = (y / ORAL_H) ** (ORAL_N - 1) / ORAL_H;
+    } else { x = ARM_W * sn; y = ABORAL_H * cs; gx = x / (ARM_W * ARM_W); gy = y / (ABORAL_H * ABORAL_H); }
+    const gl = Math.hypot(gx, gy) || 1;
+    S.set([x, y, gx / gl, gy / gl], 4 * j);
+  }
+  return S;
+})();
 class ArmTube {
-  constructor(n, ring, r0, r1, mat) {
-    this.n = n; this.ring = ring; this.r0 = r0; this.r1 = r1;
-    const count = n * ring, g = new THREE.BufferGeometry();
+  constructor(n, r0, r1, mat, suckers, first) {
+    this.n = n; this.r0 = r0; this.r1 = r1;
+    this.suckers = suckers; this.first = first;   // its instances: first .. first + SUCKERS_PER_ARM
+    const ring = ARM_RING, nr = (n - 1) * ARM_SUB + 1, rings = nr + ARM_CAP.length, count = rings * ring + 1, g = new THREE.BufferGeometry();
+    this.nr = nr; this.rings = rings;
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-    const uv = new Float32Array(count * 2), idx = [];
-    for (let i = 0; i < n; i++) for (let j = 0; j < ring; j++) {
-      uv[(i * ring + j) * 2] = j / ring * 0.25; uv[(i * ring + j) * 2 + 1] = i / n * 2;
-      if (i < n - 1) { const a = i * ring + j, b = i * ring + (j + 1) % ring, c2 = a + ring, d2 = b + ring; idx.push(a, c2, b, b, c2, d2); }
+    const col = new Float32Array(count * 3), uv = new Float32Array(count * 2), thin = new Float32Array(count), idx = [];
+    for (let i = 0; i < rings; i++) for (let j = 0; j < ring; j++) {
+      const f = Math.min(1, i / (nr - 1)), k = i * ring + j, cs = Math.cos((j / ring) * Math.PI * 2);
+      uv[2 * k] = j / ring * 0.25; uv[2 * k + 1] = f * 2;
+      thin[k] = 0.1 + 0.9 * f ** 1.5;   // thin and translucent towards the tip
+      // the oral face paler (no painted stripes: the suckers are real now)
+      const pale = 0.45 * clamp(cs, 0, 1) ** 2;
+      col[3 * k] = lerp(1, 2.0, pale); col[3 * k + 1] = lerp(1, 2.7, pale); col[3 * k + 2] = lerp(1, 3.0, pale);
+      // (wound to face out: the old tube faced in, and showed its far wall's inside)
+      if (i < rings - 1) { const a = k, b = i * ring + (j + 1) % ring; idx.push(a, b, a + ring, b, b + ring, a + ring); }
+      else idx.push(k, i * ring + (j + 1) % ring, count - 1);   // the tip's last fan
     }
+    col.fill(1, (count - 1) * 3); thin[count - 1] = 1;
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setAttribute('aThin', new THREE.BufferAttribute(thin, 1));
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e3);
     this.mesh = new THREE.Mesh(g, mat);
@@ -509,35 +663,80 @@ class ArmTube {
     this.mesh.castShadow = true;
     this.pts = Array.from({ length: n }, () => new THREE.Vector3());
     this.prevW = [];   // last frame's world positions (Octopus.update tows them)
+    this._c = new Float32Array(nr * 3); this._f = new Float32Array(nr * 9);   // ring centres and frames (T, Nn, Bn), for the suckers
   }
+  // Radius at f (0 root .. 1 tip), and the section's half-depth on the oral side (for the floor).
+  rAt(f) { return this.r1 + (this.r0 - this.r1) * (1 - f) ** 1.6; }
   // pts in the octopus's local frame; 'down' is the local direction of the ground.
   build(down) {
-    const g = this.mesh.geometry, P = g.attributes.position.array, N = g.attributes.normal.array, C = g.attributes.color.array;
-    const T = new THREE.Vector3(), Nn = new THREE.Vector3(), Bn = new THREE.Vector3(), o = new THREE.Vector3();
-    for (let i = 0; i < this.n; i++) {
-      const a = this.pts[Math.max(0, i - 1)], b = this.pts[Math.min(this.n - 1, i + 1)];
-      T.subVectors(b, a).normalize();
-      // Towards the ground, across the arm; where the arm hangs nearly straight down that is ill
-      // defined, so the last ring's carries on (else the ring flips over and the tube folds shut).
-      _w.copy(down).addScaledVector(T, -down.dot(T));
-      if (i > 0 && _w.lengthSq() < 0.09) _w.copy(Nn).addScaledVector(T, -Nn.dot(T));
-      Nn.copy(_w).normalize();
-      if (Nn.lengthSq() < 1e-6) Nn.set(1, 0, 0);
-      Bn.crossVectors(T, Nn);
-      const s = i / (this.n - 1), r = lerp(this.r0, this.r1, s) * (i === this.n - 1 ? 0.3 : 1);
-      for (let j = 0; j < this.ring; j++) {
-        const a2 = (j / this.ring) * Math.PI * 2, cs = Math.cos(a2), sn = Math.sin(a2);
-        o.copy(Nn).multiplyScalar(cs).addScaledVector(Bn, sn);
-        const k = (i * this.ring + j) * 3;
-        P[k] = this.pts[i].x + o.x * r; P[k + 1] = this.pts[i].y + o.y * r; P[k + 2] = this.pts[i].z + o.z * r;
-        N[k] = o.x; N[k + 1] = o.y; N[k + 2] = o.z;
-        // Suckers: two rows of pale discs along the underside.
-        const under = cs > 0.55, row = Math.sin(i * 2.6 + (sn > 0 ? 1.4 : 0)) > 0.1;
-        const pale = under ? (row ? 1 : 0.55) : 0;
-        C[k] = lerp(1, 2.4, pale); C[k + 1] = lerp(1, 3.6, pale); C[k + 2] = lerp(1, 4.0, pale);
+    const g = this.mesh.geometry, P = g.attributes.position.array, N = g.attributes.normal.array, n = this.n, nr = this.nr, ring = ARM_RING;
+    const T = new THREE.Vector3(), Nn = new THREE.Vector3(), Bn = new THREE.Vector3(), c = new THREE.Vector3(), o = new THREE.Vector3(), q = new THREE.Vector3();
+    const C = this._c, F = this._f, pts = this.pts, S = ARM_SEC;
+    // centres: through the chain's points, Catmull-Rom between
+    for (let i = 0; i < nr; i++) {
+      const s = Math.floor(i / ARM_SUB), t = (i % ARM_SUB) / ARM_SUB;
+      const p0 = pts[Math.max(0, s - 1)], p1 = pts[s], p2 = pts[Math.min(n - 1, s + 1)], p3 = pts[Math.min(n - 1, s + 2)];
+      const t2 = t * t, t3 = t2 * t;
+      const w0 = 0.5 * (-t + 2 * t2 - t3), w1 = 0.5 * (2 - 5 * t2 + 3 * t3), w2 = 0.5 * (t + 4 * t2 - 3 * t3), w3 = 0.5 * (t3 - t2);   // Catmull-Rom weights
+      C[3 * i] = w0 * p0.x + w1 * p1.x + w2 * p2.x + w3 * p3.x;
+      C[3 * i + 1] = w0 * p0.y + w1 * p1.y + w2 * p2.y + w3 * p3.y;
+      C[3 * i + 2] = w0 * p0.z + w1 * p1.z + w2 * p2.z + w3 * p3.z;
+    }
+    const L = this.seg / ARM_SUB || 1e-3;   // a ring's spacing, for the taper's slope
+    for (let i = 0; i < this.rings; i++) {
+      const ic = Math.min(i, nr - 1), cap = i - ic;   // cap: 1.. on the rings over the tip
+      if (!cap) {
+        const a = Math.max(0, ic - 1), b = Math.min(nr - 1, ic + 1);
+        T.set(C[3 * b] - C[3 * a], C[3 * b + 1] - C[3 * a + 1], C[3 * b + 2] - C[3 * a + 2]).normalize();
+        // Towards the ground, across the arm; where the arm hangs nearly straight down that is ill
+        // defined, so the last ring's carries on (else the ring flips over and the tube folds shut).
+        _w.copy(down).addScaledVector(T, -down.dot(T));
+        if (i > 0 && _w.lengthSq() < 0.09) _w.copy(Nn).addScaledVector(T, -Nn.dot(T));
+        Nn.copy(_w).normalize();
+        if (Nn.lengthSq() < 1e-6) Nn.set(1, 0, 0);
+        Bn.crossVectors(T, Nn);
+        const o9 = 9 * ic;
+        F[o9] = T.x; F[o9 + 1] = T.y; F[o9 + 2] = T.z; F[o9 + 3] = Nn.x; F[o9 + 4] = Nn.y; F[o9 + 5] = Nn.z; F[o9 + 6] = Bn.x; F[o9 + 7] = Bn.y; F[o9 + 8] = Bn.z;
+      }
+      const f = ic / (nr - 1), r = this.rAt(f), slope = (this.rAt(Math.min(1, f + 0.02)) - this.rAt(Math.max(0, f - 0.02))) / (0.04 * (nr - 1) * L);
+      // over the tip: a rounded cap, the section shrinking on a quarter circle
+      const ang = cap ? ARM_CAP[cap - 1] : 0, sc = Math.cos(ang), ahead = r * Math.sin(ang);
+      c.set(C[3 * ic], C[3 * ic + 1], C[3 * ic + 2]).addScaledVector(T, ahead);
+      for (let j = 0; j < ring; j++) {
+        const x = S[4 * j], y = S[4 * j + 1];
+        o.copy(Nn).multiplyScalar(y).addScaledVector(Bn, x);
+        q.copy(Nn).multiplyScalar(S[4 * j + 3]).addScaledVector(Bn, S[4 * j + 2]);
+        if (cap) q.multiplyScalar(sc).addScaledVector(T, Math.sin(ang));
+        else q.addScaledVector(T, -slope).normalize();   // the taper tilts the skin forward
+        const k = (i * ring + j) * 3;
+        P[k] = c.x + o.x * r * sc; P[k + 1] = c.y + o.y * r * sc; P[k + 2] = c.z + o.z * r * sc;
+        N[k] = q.x; N[k + 1] = q.y; N[k + 2] = q.z;
       }
     }
-    g.attributes.position.needsUpdate = g.attributes.normal.needsUpdate = g.attributes.color.needsUpdate = true;
+    const k = (this.rings * ring) * 3, r1 = this.rAt(1);   // the tip's point
+    P[k] = C[3 * (nr - 1)] + T.x * r1; P[k + 1] = C[3 * (nr - 1) + 1] + T.y * r1; P[k + 2] = C[3 * (nr - 1) + 2] + T.z * r1;
+    N[k] = T.x; N[k + 1] = T.y; N[k + 2] = T.z;
+    g.attributes.position.needsUpdate = g.attributes.normal.needsUpdate = true;
+    this._suckers();
+  }
+  // Two staggered rows on the oral face, shrinking to the tip, each cup standing on the face (its
+  // axis along Nn, out of the sucker side), placed from the ring frames just built.
+  _suckers() {
+    const S = this.suckers, m = S.instanceMatrix.array, C = this._c, F = this._f, nr = this.nr;
+    for (let k = 0; k < SUCKERS_PER_ARM; k++) {
+      const f = 0.05 + 0.88 * (k / (SUCKERS_PER_ARM - 1)) ** 1.15, side = k % 2 ? 1 : -1;
+      const x = f * (nr - 1), i0 = Math.min(nr - 2, Math.floor(x)), t = x - i0, r = this.rAt(f);
+      const at = (o) => F[9 * i0 + o] + (F[9 * (i0 + 1) + o] - F[9 * i0 + o]) * t, ct = (d) => C[3 * i0 + d] + (C[3 * (i0 + 1) + d] - C[3 * i0 + d]) * t;
+      _v.set(at(3), at(4), at(5)).normalize(); _w.set(at(6), at(7), at(8)).normalize();   // Nn, Bn
+      const s = (0.34 * r) / SUCKER_R, lat = 0.42 * ARM_W * r, up = 0.58 * r;   // on the flat face, ~0.4 of the way out
+      const o = 16 * (this.first + k);
+      // columns: Bn, Nn (the cup's axis), Bn x Nn (= -T: a right-handed frame, so the cup isn't mirrored)
+      const tx = _w.y * _v.z - _w.z * _v.y, ty = _w.z * _v.x - _w.x * _v.z, tz = _w.x * _v.y - _w.y * _v.x;
+      m.set([_w.x * s, _w.y * s, _w.z * s, 0, _v.x * s, _v.y * s, _v.z * s, 0, tx * s, ty * s, tz * s, 0,
+        ct(0) + _w.x * lat * side + _v.x * up, ct(1) + _w.y * lat * side + _v.y * up, ct(2) + _w.z * lat * side + _v.z * up, 1], o);
+    }
+    S.instanceMatrix.needsUpdate = true;
+    S.boundingBox = null;   // (recomputed only if asked: the shape check)
   }
 }
 
@@ -546,36 +745,48 @@ export class Octopus {
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
     const M = this.M = range(rng, 0.85, 1.05);
     this.model = new THREE.Group();
-    this.u = { uShade: { value: 0 } };
+    this.u = { uShade: { value: 0 }, uBreath: { value: 0 } };
     const hook = (shader) => {
       Object.assign(shader.uniforms, this.u);
       shader.fragmentShader = 'uniform float uShade;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
         diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`);
     };
+    // The body is one blended mesh without UVs: its skin is mapped triplanar (three taps, blended by
+    // the normal, so the wrinkles run on across the joins), and it breathes in the vertex shader: the
+    // sac's share of each vertex (aWeight) swells about the sac's centre.
+    const bodyHook = (shader) => {
+      Object.assign(shader.uniforms, this.u);
+      shader.vertexShader = 'uniform float uBreath;\nattribute float aWeight;\nvarying vec3 vTriP, vTriN;\n' + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        transformed = vec3(-0.48, 0.3, 0.0) + (transformed - vec3(-0.48, 0.3, 0.0)) * (1.0 + uBreath * aWeight);
+        vTriP = position; vTriN = normal;`);
+      shader.fragmentShader = 'uniform float uShade;\nvarying vec3 vTriP, vTriN;\n' + shader.fragmentShader.replace('#include <map_fragment>', `{
+          vec3 bw = pow(abs(normalize(vTriN)), vec3(4.0)); bw /= bw.x + bw.y + bw.z;
+          vec3 tp = vTriP * 0.45;
+          diffuseColor *= texture2D(map, tp.zy) * bw.x + texture2D(map, tp.xz + 0.37) * bw.y + texture2D(map, tp.xy + 0.71) * bw.z;
+        }
+        diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`);
+    };
     const tex = octoSkin(mulberry32(17)), armTex = octoSkin(mulberry32(17), 180), bump = octoBump(rng);   // the same skin; the arms add bold white spots
-    const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook);
-    const sacMat = skin({ map: tex, bumpMap: bump, bumpScale: 3, roughness: 0.55 }, 'octo-sac', hook);
-    // Mantle sac (behind and above the head) and head with eye turrets.
-    const sacG = new THREE.SphereGeometry(1, 36, 24), n = new Noise(mulberry32(31));
-    const p = sacG.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      _v.fromBufferAttribute(p, i);
-      const k = 1 + (n.noise3(_v.x * 2.5, _v.y * 2.5, _v.z * 2.5) - 0.5) * 0.18;
-      p.setXYZ(i, _v.x * k, _v.y * k, _v.z * k);
-    }
-    sacG.computeVertexNormals();
-    this.sac = new THREE.Mesh(sacG, sacMat);
+    const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook, { ...CEPH_SSS, thin: 'attr' });
+    const bodyMat = skin({ map: tex, roughness: 0.55 }, 'octo-body', bodyHook, CEPH_SSS);
+    // Mantle sac, head, eye turrets, oral disc with the arm roots, and siphon: one mesh (built for
+    // M = 1, softBodies.js), so the arms grow out of the body rather than meeting it at seams.
+    const body = new THREE.Mesh(SOFT['octopus-body'], bodyMat);
+    body.scale.setScalar(M);
+    body.castShadow = true;
+    body.name = 'body';
+    this.model.add(body);
+    // Invisible stand-ins for the parts the arms keep clear of (_untangle, _buildWeb), with the old
+    // parts' places, scales and radii.
+    this.sac = new THREE.Object3D();
     this.sac.scale.set(0.58 * M, 0.34 * M, 0.36 * M);   // a long sac held low behind the head
     this.sac.position.set(-0.48 * M, 0.3 * M, 0); this.sac.rotation.z = 0.3;
-    this.sac.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), sacMat);
-    head.scale.set(0.3 * M, 0.26 * M, 0.32 * M);
-    head.position.set(0.05 * M, 0.18 * M, 0);
-    this.sac.name = 'sac'; head.name = 'head';
-    this.model.add(this.sac, head);
+    this.sac.name = 'sac';
+    this.model.add(this.sac);
     const eyeMat = skin({ map: octoEyeTex(), roughness: 0.25 }, 'octo-eye');
     for (const s of [1, -1]) {
-      const turret = new THREE.Mesh(new THREE.SphereGeometry(0.1 * M, 16, 12), sacMat);
+      const turret = new THREE.Object3D();
+      turret.userData.radius = 0.1 * M;
       turret.position.set(0.13 * M, 0.36 * M, s * 0.2 * M);
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.07 * M, 20, 14), eyeMat);
       eye.position.set(0.15 * M, 0.4 * M, s * 0.24 * M);
@@ -583,23 +794,25 @@ export class Octopus {
       turret.name = `turret${s > 0 ? 0 : 1}`; eye.name = `eye${s > 0 ? 0 : 1}`;
       this.model.add(turret, eye);
     }
-    // The siphon (funnel): a muscular tube opening low on one side of the head, behind the eye.
-    const siph = new THREE.Mesh(new THREE.CylinderGeometry(0.055 * M, 0.075 * M, 0.2 * M, 16, 1, true),
-      skin({ map: tex, bumpMap: bump, bumpScale: 2, roughness: 0.5, side: THREE.DoubleSide }, 'octo-siphon', hook));
-    siph.position.set(-0.08 * M, 0.12 * M, 0.27 * M);
-    siph.rotation.set(-1.1, 0, -0.9);   // pointing out, forward and a little up
-    siph.name = 'siphon';
-    // Two balls along the tube, for keeping the arms off it (_untangle).
-    const sax = new THREE.Vector3(0, 1, 0).applyEuler(siph.rotation);
-    this.siphonBalls = [-1, 1].map((s) => { const o = new THREE.Object3D(); o.position.copy(siph.position).addScaledVector(sax, s * 0.055 * M); this.model.add(o); return o; });
-    this.model.add(siph);
+    // The siphon (funnel, in the body mesh): a muscular tube opening low on one side of the head,
+    // behind the eye, pointing out, forward and a little up. Two balls along the tube, for keeping
+    // the arms off it (_untangle).
+    const siphPos = new THREE.Vector3(-0.08 * M, 0.12 * M, 0.27 * M), sax = new THREE.Vector3(0, 1, 0).applyEuler(new THREE.Euler(-1.1, 0, -0.9));
+    this.siphonBalls = [-1, 1].map((s) => { const o = new THREE.Object3D(); o.position.copy(siphPos).addScaledVector(sax, s * 0.055 * M); this.model.add(o); return o; });
     // Arms. Proportions from octopod morphometrics: the arm width index (base width of the stoutest arm
     // over mantle length) runs ~13-23%, so with the mantle ~1.1 M long the arms are ~0.19 M across at
     // the base, tapering to fine tips; they run ~3x the mantle here (O. cyanea's reach 4-5x, but
     // longer chains read as spider legs at this scale).
+    const t0 = performance.now();
+    this.suckers = new THREE.InstancedMesh(suckerGeometry(), skin({ color: 0xf0d6c8, roughness: 0.4 }, 'octo-sucker', hook, { ...CEPH_SSS, thin: 0.6 }), 8 * SUCKERS_PER_ARM);
+    this.suckers.name = 'suckers';
+    this.suckers.frustumCulled = false;
+    // (critterCheck.js sees only the base cup, at the model's origin inside the body: a sheet, joined)
+    this.suckers.userData.sheet = true;
+    this.model.add(this.suckers);
     this.arms = [];
     for (let i = 0; i < 8; i++) {
-      const tube = new ArmTube(22, 10, 0.095 * M, 0.01 * M, mat);
+      const tube = new ArmTube(22, 0.095 * M, 0.01 * M, mat, this.suckers, i * SUCKERS_PER_ARM);
       tube.angle = ((i + 0.5) / 8) * Math.PI * 2;
       tube.len = 3.0 * M * range(rng, 0.85, 1.05);
       tube.curl = range(rng, 0.5, 1.5); tube.ph = rng() * 6;
@@ -607,9 +820,10 @@ export class Octopus {
       this.model.add(tube.mesh);
       this.arms.push(tube);
     }
-    // The oral disc under the head, which the arms' roots merge into (eight thick roots crowd
-    // together there, so without it they would show running into one another).
-    const disc = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12), sacMat);
+    this.buildMs = performance.now() - t0;
+    // The oral disc under the head (in the body mesh), which the arms' roots merge into: a stand-in
+    // with its ellipsoid's place and radii, for _untangle.
+    const disc = new THREE.Object3D();
     disc.scale.set(0.36 * M, 0.11 * M, 0.36 * M);
     disc.position.set(0, 0.02 * M, 0);
     disc.name = 'disc';
@@ -629,7 +843,7 @@ export class Octopus {
       g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
       g.setIndex(idx);
       g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e3);
-      this.web = new THREE.Mesh(g, skin({ map: tex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, side: THREE.DoubleSide }, 'octo-web', hook));
+      this.web = new THREE.Mesh(g, skin({ map: tex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, side: THREE.DoubleSide }, 'octo-web', hook, { ...CEPH_SSS, thin: 0.8 }));
       this.web.frustumCulled = false;
       this.web.castShadow = true;
       this.web.name = 'web';
@@ -637,8 +851,7 @@ export class Octopus {
     }
 
     // Where parts are attached (and may run into each other): critterCheck.js.
-    this.joins = [['sac', 'head'], ['turret*', 'head'], ['eye*', 'turret*'], ['eye*', 'head'], ['siphon', 'head'], ['siphon', 'sac'], ['arm*', 'head'], ['web', 'arm*'], ['web', 'head'], ['web', 'sac'],
-      ['disc', 'head'], ['disc', 'arm*'], ['disc', 'web'], ['disc', 'sac'], ['disc', 'siphon']];
+    this.joins = [['eye*', 'body'], ['arm*', 'body'], ['web', 'arm*'], ['web', 'body'], ['suckers', '*']];
     this.den = den.clone();
     this.pos = this.den.clone();
     this.yaw = range(rng, -Math.PI, Math.PI);
@@ -703,7 +916,8 @@ export class Octopus {
     this.u.uShade.value = lerp(this.u.uShade.value, this.mode === 'den' ? 0.6 : this.mode === 'jet' ? -0.3 : 0.1, Math.min(1, dt));
     // Breathing: the mantle swells and relaxes.
     const br = 1 + 0.04 * Math.sin(this.t * 2.2);
-    this.sac.scale.set(0.58 * M * br, 0.34 * M * br, 0.36 * M * br);
+    this.sac.scale.set(0.58 * M * br, 0.34 * M * br, 0.36 * M * br);   // (the stand-in, for the arms)
+    this.u.uBreath.value = br - 1;
     this.model.scale.set(1, this.squash, 1);
 
     this.model.position.copy(this.pos);
@@ -773,7 +987,7 @@ export class Octopus {
         p.copy(world_).applyMatrix4(this._m);
         // Rock and sand below, and a cave roof above (the model is squashed under a roof: undo that
         // for the world-space limits).
-        const r = lerp(arm.r0, arm.r1, s);
+        const r = arm.rAt(s) * ARM_W;   // (the section's half-width: its half-depth is less on either side)
         // Under a roof the height field is the roof's own top (it's splatted for the fishes' sake), so
         // the underside caps the floor.
         // Nor can an arm climb more than a step per segment, or above the roof over the body: past a
@@ -820,13 +1034,13 @@ export class Octopus {
       for (let i = 0; i < n; i++) {
         const k = A * n + i, q = a.pts[i];
         X[3 * k] = q.x; X[3 * k + 1] = q.y; X[3 * k + 2] = q.z;
-        R[k] = lerp(a.r0, a.r1, i / (n - 1)) * (i === n - 1 ? 0.3 : 1);
+        R[k] = a.rAt(i / (n - 1)) * ARM_W;   // the section's half-width (its widest)
         L[k] = a.seg;   // segment i-1..i, at its rest length (towed, it can bunch up)
       }
     }
     // The obstacles are spheres in their own frames (the sac's stretched, its bumpy skin up to 9%
     // proud): their matrices to and from the model's frame.
-    const obst = this.obstacles ??= [[this.sac, 1.1], ...this.model.children.filter((o) => /^(turret|eye)/.test(o.name)).map((o) => [o, o.geometry.parameters.radius]),
+    const obst = this.obstacles ??= [[this.sac, 1.1], ...this.model.children.filter((o) => /^(turret|eye)/.test(o.name)).map((o) => [o, o.userData.radius ?? o.geometry.parameters.radius]),   // (turrets: stand-ins)
       ...this.siphonBalls.map((o) => [o, 0.08 * this.M])];   // the siphon's tube, in two balls along it
     const OB = obst.map(([o, r]) => ({ to: _mInv.copy(o.matrix).invert().elements.slice(), from: o.matrix.elements, r, sc: Math.min(o.scale.x, o.scale.y, o.scale.z) }));
     const reach = arms[0].r0 * 2 + gap, tol = gap;

@@ -47,6 +47,13 @@ export function makeProfile(body) {
 }
 
 const smooth01 = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+// Integer hash of a scale's lattice cell (a, b) and a channel k, to [0, 1): per-scale variation that is
+// the same every load (the Roku bake must reproduce).
+const cellHash = (a, b, k) => {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul((b | 0) + 0x9e37, 0x165667b1) ^ Math.imul((k | 0) + 1, 0x85ebca6b);
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12; h = Math.imul(h, 0x297a2d39); h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+};
 
 // Rear edge of the gill cover (operculum), in body u.
 export const gillU = (sp) => sp.eye.u + (0.09 / sp.body.len) + sp.eye.r * 0.6;
@@ -108,7 +115,8 @@ function applyShade(g, sg) {
 }
 
 function paintSkin(sp, prof) {
-  const c = makeCanvas(TW, TH), g = c.getContext('2d');
+  // willReadFrequently: these canvases are read back (scale pigment, melanin), so they stay on the CPU.
+  const c = makeCanvas(TW, TH), g = c.getContext('2d', { willReadFrequently: true });
   const U = (u) => u * TW, V = (v) => ((v + 1) / 2) * TH;
   const len = sp.body.len;
   const rng = mulberry32(sp.id.length * 7919 + 13);
@@ -228,10 +236,192 @@ function paintSkin(sp, prof) {
   const K = TW / 512;   // stroke widths below were tuned at 512 px
   const e = sp.eye, g0 = gillU(sp);
 
+  // ---- Imbricated scales ----
+  // Each scale is a disc on a staggered lattice; the more anterior scale lies on top, so the visible part
+  // of every scale is its rear (free) field, which rises towards the margin and then drops onto the scale
+  // behind. Evaluated at half the albedo's resolution, in physical body space:
+  //  - across the body, by arc length from the lateral midline (texture v is -cos(theta), which crowds
+  //    the back and belly), so scales don't stretch over the dorsal and ventral curves;
+  //  - scale size follows body depth (power 0.6), so rows run on along the body and scales shrink to the
+  //    peduncle and nape, as on the real fish; small scales on the cheek (sp.body.headScales, size factor);
+  //  - each scale is a little out of place and size, and tilted on its own (+-6 degrees): its reflector
+  //    platelets then flash scale by scale as the fish turns, instead of one sheet of sheen;
+  //  - the guanine film's strength and thickness vary per scale (iridescence map R and G): neighbouring
+  //    scales differ in hue and the average is near neutral, or for structural colour (sp.iridescent)
+  //    stay in a narrow band.
+  const SW = TW / 2, SH = TH / 2, N = SW * SH;
+  const s0 = (len * (1 - g0)) / (sp.body.scales || 50);
+  const Yarc = new Float32Array(N), halfArc = new Float32Array(SW), halfCol = new Float32Array(SW);
+  for (let i = 0; i < SW; i++) {
+    const u = (i + 0.5) / SW, h = prof.half(u), w = prof.width(u);
+    halfCol[i] = h * 1.15;
+    // Section: y = v h, z = w sqrt(1 - v^2); |d(y, z)/dv| integrated from v = 0 outwards (midpoint rule).
+    const f = (v) => Math.sqrt(h * h + (w * w * v * v) / Math.max(1e-4, 1 - v * v));
+    for (const dir of [1, -1]) {
+      let acc = 0, vp = 0;
+      for (let jj = 0; jj < SH / 2; jj++) {
+        const j = dir > 0 ? SH / 2 + jj : SH / 2 - 1 - jj, v = ((j + 0.5) / SH) * 2 - 1;
+        for (let q = 0; q < 3; q++) acc += f(vp + ((v - vp) * (q + 0.5)) / 3) * Math.abs(v - vp) / 3;
+        vp = v;
+        Yarc[j * SW + i] = dir * acc;
+      }
+      if (dir > 0) halfArc[i] = acc;
+    }
+  }
+  let ref = 0, nref = 0;
+  for (let i = 0; i < SW; i++) { const u = (i + 0.5) / SW; if (u > g0 && u < 0.85) { ref += halfArc[i]; nref++; } }
+  ref = ref / Math.max(1, nref) || 1;
+  const sCol = new Float32Array(SW), A = new Float32Array(SW), texCol = new Float32Array(SW);
+  for (let i = 0, acc = 0; i < SW; i++) {
+    sCol[i] = s0 * clamp((halfArc[i] / ref) ** 0.6, 0.5, 1.3);
+    A[i] = acc + (0.5 * len) / SW / sCol[i];   // lattice coordinate along the body, in scales
+    acc += len / SW / sCol[i];
+    texCol[i] = Math.min(sCol[i] / (len / SW), (sCol[i] * 0.5) / ((2 * halfArc[i]) / SH));   // texels per scale row
+  }
+  // Scales smaller than a few texels would alias into moire: they fade out (tangs' minute scales).
+  const fadeAt = (i, k) => smooth01((texCol[i] * k - 1.5) / 3);
+  const headK = sp.body.headScales ?? 0.55, scaled = sp.body.scales !== 0;
+  const cheekU0 = e.u + (e.r / len) * 1.4;
+  const cheekV = Float32Array.from({ length: SW }, (_, i) => e.v + (1.3 * e.r) / prof.half((i + 0.5) / SW));   // below the eye
+  const cheek = (i, u, v) => smooth01((u - cheekU0) / 0.02) * smooth01((v - cheekV[i]) / 0.08) * smooth01((0.75 - v) / 0.1);
+  const height = new Float32Array(N), cellOf = new Int32Array(N).fill(-1), maskOf = new Float32Array(N);
+  const shadeImg = new ImageData(SW, SH), iridImg = new ImageData(SW, SH);
+  // Cavity and roughness (one map: aoMap reads R, roughnessMap reads G). Cavity: the groove each free
+  // margin overhangs, where the scale behind starts, is occluded (no ambient or environment light).
+  // Roughness: the exposed field is smooth; the margin rougher, more so with a comb of spinules
+  // (ctenoid: most reef perciforms) than the smooth edge of a wrasse's (cycloid) scale; scaleless skin
+  // and the head are a smooth mucus film; minute scales too small to resolve (tangs: velvet) rough.
+  const crImg = new ImageData(SW, SH);
+  const ctenoid = (sp.body.scaleType ?? 'ctenoid') === 'ctenoid', rMargin = ctenoid ? 0.55 : 0.42;
+  const rBare = !scaled ? 0.3 : 0.28, rMinute = 0.5;
+  // Lateral line: the row of pored scales arching along the upper flank (each has a pore over the canal,
+  // which runs under the scale as a slightly paler tube). Only fish with a gill cover have it laid out.
+  const hasLL = !!gillOf(sp), llJ = new Int32Array(SW).fill(-1);
+  for (let i = 0; hasLL && i < SW; i++) {
+    const u = (i + 0.5) / SW;
+    if (u < g0 + 0.01 || u > 0.95) continue;
+    const t = (u - g0) / (0.95 - g0), vll = -0.5 + 0.38 * t * t;
+    llJ[i] = clamp(Math.round(((vll + 1) / 2) * SH - 0.5), 0, SH - 1);
+  }
+  const img = g.getImageData(0, 0, TW, TH), d = img.data;
+  // Each lattice (the body's, and the cheek's at headK) keeps its cells' jitter in a grid filled on first
+  // use: the search below tests 15 cells per texel, and hashing each every time was most of the cost.
+  const lattice = (k) => {
+    let bMax = 0;
+    for (let i = 0; i < SW; i++) bMax = Math.max(bMax, halfArc[i] / (sCol[i] * 0.5 * k));
+    const r0 = -3, b0 = -Math.ceil(bMax) - 4, nr = Math.ceil(A[SW - 1] / k) + 7, nb = 2 * (Math.ceil(bMax) + 4) + 1;
+    return { r0, b0, nb, ca: new Float32Array(nr * nb).fill(NaN), cb: new Float32Array(nr * nb), rr: new Float32Array(nr * nb), id: new Int32Array(nr * nb).fill(-1) };
+  };
+  const L = [lattice(1), lattice(headK)];
+  // Per scale (compact id): tilt, reflector strength and film thickness, brightness and tint, and the
+  // sum of the pattern's colour over it (sampled at the lattice's resolution).
+  const C = { tx: [], ty: [], irS: [], irT: [], val: [], t0: [], t1: [], t2: [], sum: [] };
+  for (let j = 0; j < SH; j++) {
+    const v = ((j + 0.5) / SH) * 2 - 1;
+    for (let i = 0; i < SW; i++) {
+      const u = (i + 0.5) / SW, p = j * SW + i, o = p * 4, head = u < g0 - 0.005, k = head ? headK : 1;
+      const mask = !scaled ? 0 : (head ? cheek(i, u, v) : smooth01((u - g0 + 0.005) / 0.03)) * fadeAt(i, k);
+      shadeImg.data[o + 3] = iridImg.data[o + 3] = crImg.data[o + 3] = 255;
+      // Unscaled skin here: bare (head, moray), or scales too small to resolve (faded out: velvet).
+      const bodyAt = !scaled || head ? 0 : smooth01((u - g0 + 0.005) / 0.03);
+      const rBase = lerp(rBare, rMinute, bodyAt * (1 - fadeAt(i, 1)));
+      crImg.data[o] = 255; crImg.data[o + 1] = rBase * 255;
+      if (mask <= 0.002) {
+        shadeImg.data[o] = shadeImg.data[o + 1] = shadeImg.data[o + 2] = 255;
+        iridImg.data[o] = 0; iridImg.data[o + 1] = 128;
+        continue;
+      }
+      const G = L[head ? 1 : 0], hk = head ? 7 : 0;
+      const a = A[i] / k, b = Yarc[p] / (sCol[i] * 0.5 * k);
+      let best = Infinity, bt = 0, bd = 1, bq = -1, bri = 0, brb = 0, bda = 0, bdb = 0, near = Infinity;
+      const jr = Math.round(b);
+      for (let rb = jr - 2; rb <= jr + 2; rb++) {
+        const off = (rb & 1) * 0.5, ir = Math.round(a - off);
+        for (let ri = ir - 1; ri <= ir + 1; ri++) {
+          const q = (ri - G.r0) * G.nb + (rb - G.b0);
+          if (G.ca[q] !== G.ca[q]) {   // NaN: not filled yet
+            G.ca[q] = ri + off + (cellHash(ri, rb, 1 + hk) - 0.5) * 0.16;
+            G.cb[q] = rb + (cellHash(ri, rb, 2 + hk) - 0.5) * 0.16;
+            G.rr[q] = 0.75 * (1 + (cellHash(ri, rb, 3 + hk) - 0.5) * 0.16);
+          }
+          const ca = G.ca[q], rr = G.rr[q], da = a - ca, db = (b - G.cb[q]) * 0.5, d2 = da * da + db * db;
+          // Covered by this scale and it is the most anterior so far; else remember the nearest centre
+          // (jitter can leave a pinhole that no disc covers).
+          if (d2 < rr * rr ? ca < best : best === Infinity && d2 / (rr * rr) < near) {
+            if (d2 < rr * rr) best = ca; else near = d2 / (rr * rr);
+            bt = da / rr; bd = Math.min(1, Math.sqrt(d2) / rr); bq = q; bri = ri; brb = rb; bda = da; bdb = db;
+          }
+        }
+      }
+      let c = G.id[bq];
+      if (c < 0) {
+        c = G.id[bq] = C.tx.length;
+        const H = (n) => cellHash(bri, brb, n + hk);
+        // (Tilt kept small: with almost no surface reflection under water it shows mostly in the diffuse
+        // shading, and at the +-6 degrees of the platelets the flank read as crumpled stucco.)
+        C.tx.push((H(4) + H(5) + H(6) - 1.5) * 0.07); C.ty.push((H(7) + H(8) + H(9) - 1.5) * 0.07);
+        C.irS.push(0.55 + 0.65 * H(10)); C.irT.push(H(11));
+        C.val.push(H(12) - 0.5); C.t0.push(H(13) - 0.5); C.t1.push(H(14) - 0.5); C.t2.push(H(15) - 0.5);
+        C.sum.push(0, 0, 0, 0);
+      }
+      cellOf[p] = c; maskOf[p] = mask;
+      const pa = ((2 * j) * TW + 2 * i) * 4;
+      C.sum[c * 4] += d[pa]; C.sum[c * 4 + 1] += d[pa + 1]; C.sum[c * 4 + 2] += d[pa + 2]; C.sum[c * 4 + 3]++;
+      const ss = sCol[i] * k, hn = 0.5 + 0.5 * bt + 0.25 * (1 - bd * bd);
+      height[p] = (hn * 0.08 + C.tx[c] * bda + C.ty[c] * bdb) * ss * mask;
+      // Pigment pocket along each scale's free margin; slightly paler centres.
+      const pocket = smooth01((bd - 0.72) / 0.28) * (bt > 0 ? 1 : 0.3);
+      let sh = 1 - mask * (0.2 * pocket - 0.04 * (1 - bd));
+      let ao = 0.6 + 0.4 * smooth01(hn / 0.55);   // low at the front of the exposed field, under the margin ahead
+      if (!head && llJ[i] >= 0 && Math.abs(brb - Yarc[llJ[i] * SW + i] / (sCol[i] * 0.5)) < 0.5) {
+        const pore = Math.exp(-(((bda - 0.35) ** 2 + bdb * bdb) / 0.012));
+        height[p] -= ss * 0.035 * pore * mask;
+        ao *= 1 - 0.35 * pore;
+        if (Math.abs(bdb) < 0.07 && bda > -0.3 && bda < 0.45) sh += (1 - sh) * 0.5;   // the canal, paler
+      }
+      const rough = lerp(0.3, rMargin, smooth01((bd - 0.75) / 0.25) * (bt > 0 ? 1 : 0));
+      crImg.data[o] = lerp(1, ao, mask) * 255;
+      crImg.data[o + 1] = lerp(rBase, rough, mask) * 255;
+      shadeImg.data[o] = shadeImg.data[o + 1] = shadeImg.data[o + 2] = clamp(sh, 0, 1) * 255;
+      // Guanine platelets: reflective exposed fields, strongest on the flanks and belly, each scale its own.
+      const ir = mask * (0.35 + 0.65 * smooth01((v + 0.4) / 1.2)) * (0.6 + 0.4 * (bt * 0.5 + 0.5)) * C.irS[c];
+      iridImg.data[o] = clamp(ir, 0, 1) * 255;
+      iridImg.data[o + 1] = lerp(0.5, clamp(0.12 + 0.72 * C.irT[c] + 0.16 * (bt * 0.5 + 0.5), 0, 1), mask) * 255;
+    }
+  }
+  // Chromatophores: fine dark speckle, 1-2 texels, densest on the back (sp.speckle scales the count);
+  // white (leucophore) skin takes a fifth of it, as with the melanin layer below.
+  const speck = new Uint8Array(TW * TH);
+  for (let n = 0, nn = Math.round(TW * TH * 0.0012 * (sp.speckle ?? 1)); n < nn; n++) {
+    const x = Math.floor(rng() * TW), y = Math.floor(rng() * TH), big = rng() < 0.4;
+    if (rng() > 0.3 + 0.7 * (1 - y / TH)) continue;
+    speck[y * TW + x] = 1;
+    if (big) { if (x + 1 < TW) speck[y * TW + x + 1] = 1; if (y + 1 < TH) speck[(y + 1) * TW + x] = 1; }
+  }
+  // Pigment follows the scales: each scale's colour pulls a quarter of the way to its own mean (half
+  // smeared stripes narrower than a scale, the emperor angel's, into beads), so pattern edges step
+  // along scale outlines (on real fish a band ends at a row of scales, not on a vector curve), and each
+  // scale is a little lighter or darker than its neighbours (more so in dark areas).
+  for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) {
+    const o = (y * TW + x) * 4;
+    if (speck[y * TW + x]) {
+      const white = smooth01((Math.min(d[o], d[o + 1], d[o + 2]) / 255 - 0.62) / 0.25), s = 0.76 + 0.24 * 0.8 * white;
+      d[o] *= s; d[o + 1] *= s; d[o + 2] *= s;
+    }
+    const p = (y >> 1) * SW + (x >> 1), c = cellOf[p];
+    if (c < 0) continue;
+    const m = maskOf[p], n = C.sum[c * 4 + 3], w = 0.25 * m;
+    const lum = (d[o] + d[o + 1] + d[o + 2]) / 765, jit = m * (1 + (1 - lum)), val = 1 + C.val[c] * 0.05 * jit;
+    d[o] = clamp((d[o] + (C.sum[c * 4] / n - d[o]) * w) * val * (1 + C.t0[c] * 0.02 * jit), 0, 255);
+    d[o + 1] = clamp((d[o + 1] + (C.sum[c * 4 + 1] / n - d[o + 1]) * w) * val * (1 + C.t1[c] * 0.02 * jit), 0, 255);
+    d[o + 2] = clamp((d[o + 2] + (C.sum[c * 4 + 2] / n - d[o + 2]) * w) * val * (1 + C.t2[c] * 0.02 * jit), 0, 255);
+  }
+  g.putImageData(img, 0, 0);
+
   // Melanin shading (countershading, mottling, scale-margin pockets below) goes into its own multiply
   // layer, applied after the scales. White pattern areas are leucophores and iridophores that stay bright,
   // so they take only a fifth of it.
-  const shade = makeCanvas(TW, TH), sg = shade.getContext('2d');
+  const shade = makeCanvas(TW, TH), sg = shade.getContext('2d', { willReadFrequently: true });
   sg.fillStyle = '#ffffff'; sg.fillRect(0, 0, TW, TH);
   sg.globalCompositeOperation = 'multiply';
   // Countershading (darker back, paler belly, as on nearly every reef fish) and soft mottling.
@@ -255,7 +445,8 @@ function paintSkin(sp, prof) {
   sg.globalCompositeOperation = 'multiply';
 
   // Gill cover: a soft shadow behind its rear margin (the margin itself is a step in the body mesh,
-  // with the gill opening under it), a lit lip, and the fainter pre-opercle groove ahead of it.
+  // with the gill opening under it), and the fainter pre-opercle groove ahead of it. (No painted lit
+  // lip: a highlight in the colour map stays lit on the shadow side.)
   const G = gillOf(sp);
   const gillPath = (du, shrink) => {   // the margin's curve, shifted du and shortened at both ends
     g.beginPath();
@@ -267,14 +458,8 @@ function paintSkin(sp, prof) {
   g.lineCap = 'round';
   if (G) {
   g.strokeStyle = 'rgba(0,0,0,0.16)'; g.lineWidth = 3.5 * K; gillPath((2 * K) / TW, 1); g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 1.5 * K; gillPath(-(3 * K) / TW, 0.97); g.stroke();
   g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1.5 * K; gillPath(-0.05, 0.75); g.stroke();
-  // Lateral line: a row of pored scales arching along the upper flank.
-  g.fillStyle = 'rgba(0,0,0,0.14)';
-  for (let u = g0 + 0.01; u < 0.95; u += 0.012) {
-    const t = (u - g0) / (0.95 - g0), v = -0.5 + 0.38 * t * t;
-    g.fillRect(U(u), V(v) - 0.6 * K, 2.2 * K, 1.2 * K);
-  }
+  // (The lateral line is a row of pored scales in the scale lattice above, not painted marks.)
   }
   // Mouth: the gape is lined dark (the inside of the mouth); the jaw seam in the body mesh stretches
   // over this lining when the lower jaw drops. The lips (raised in the mesh) are a little darker.
@@ -288,14 +473,13 @@ function paintSkin(sp, prof) {
     g.beginPath(); g.moveTo(U(-0.01), V(M.v0)); g.lineTo(U(M.u), V(M.v)); g.stroke();
   }
   // Nostrils: two small openings each side between the eye and the snout tip, the rear one just
-  // ahead of the eye and a little higher (pits in the normal map below; dark inside, lit lower rim).
+  // ahead of the eye and a little higher (pits with a raised rim in the normal map below, which the
+  // light catches as it really falls; dark inside).
   const nares = sp.nares === false ? [] : naresOf(sp);
   for (const n of nares) {
     const rx = (n.r / len) * TW, ry = (n.r / prof.half(n.u)) * TH / 2;
     g.fillStyle = 'rgba(10,6,6,0.55)';
     g.beginPath(); g.ellipse(U(n.u), V(n.v), rx, ry, 0, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = Math.max(1, rx * 0.35);
-    g.beginPath(); g.ellipse(U(n.u), V(n.v), rx * 1.1, ry * 1.1, 0, 0.2, Math.PI - 0.2); g.stroke();
   }
   // Tangs' caudal spine (sp.scalpel): a blade that lies in a groove on the peduncle, its sheath
   // outlined dark (raised in the mesh by reliefOf).
@@ -323,45 +507,6 @@ function paintSkin(sp, prof) {
     g.restore();
   }
 
-  // Imbricated scales, evaluated analytically in physical body space. Each scale is a disc on a
-  // staggered lattice; the more anterior scale lies on top, so the visible part of every scale is
-  // its rear (free) field, which rises towards the margin and then drops onto the scale behind.
-  const SW = TW / 2, SH = TH / 2;
-  const s = (len * (1 - g0)) / (sp.body.scales || 50), dx = s, dy = s * 0.5, r = s * 0.75;
-  const height = new Float32Array(SW * SH), shadeImg = new ImageData(SW, SH), iridImg = new ImageData(SW, SH);
-  const halfCol = new Float32Array(SW);
-  const fade = new Float32Array(SW);   // scales smaller than a few texels would alias into moire
-  for (let i = 0; i < SW; i++) {
-    halfCol[i] = prof.half((i + 0.5) / SW) * 1.15;   // ~ arc length of the flank
-    const texels = Math.min(s / (len / SW), dy / ((2 * halfCol[i]) / SH));
-    fade[i] = smooth01((texels - 1.5) / 3);
-  }
-  for (let j = 0; j < SH; j++) {
-    const v = ((j + 0.5) / SH) * 2 - 1;
-    for (let i = 0; i < SW; i++) {
-      const u = (i + 0.5) / SW, X = u * len, Y = v * halfCol[i];
-      const mask = sp.body.scales === 0 ? 0 : smooth01((u - g0 + 0.005) / 0.03) * fade[i];
-      let best = Infinity, bt = 0, bd = 1;
-      const jr = Math.round(Y / dy);
-      for (let rj = jr - 2; rj <= jr + 2; rj++) {
-        const off = (rj & 1) * dx * 0.5, cy = rj * dy, ir = Math.round((X - off) / dx);
-        for (let ri = ir - 1; ri <= ir + 1; ri++) {
-          const cx = ri * dx + off, ddx = X - cx, ddy = Y - cy, d2 = ddx * ddx + ddy * ddy;
-          if (d2 < r * r && cx < best) { best = cx; bt = ddx / r; bd = Math.sqrt(d2) / r; }
-        }
-      }
-      const h = (0.5 + 0.5 * bt + 0.25 * (1 - bd * bd)) * mask;
-      height[j * SW + i] = h * s * 0.08;   // scale relief ~8% of scale size
-      // Pigment pocket along each scale's free margin; slightly paler centres.
-      const pocket = smooth01((bd - 0.72) / 0.28) * (bt > 0 ? 1 : 0.3);
-      const sh = 1 - mask * (0.2 * pocket - 0.04 * (1 - bd));
-      const k = (j * SW + i) * 4;
-      shadeImg.data[k] = shadeImg.data[k + 1] = shadeImg.data[k + 2] = clamp(sh, 0, 1) * 255; shadeImg.data[k + 3] = 255;
-      // Guanine platelets: reflective exposed fields, strongest on the flanks and belly.
-      const ir = mask * (0.35 + 0.65 * smooth01((v + 0.4) / 1.2)) * (0.6 + 0.4 * (bt * 0.5 + 0.5));
-      iridImg.data[k] = iridImg.data[k + 1] = iridImg.data[k + 2] = ir * 255; iridImg.data[k + 3] = 255;
-    }
-  }
   // Nostril pits: a hollow with a slightly raised rim, in the same physical units as the scales.
   for (const n of nares) {
     const i0 = Math.floor((n.u - (3 * n.r) / len) * SW), i1 = Math.ceil((n.u + (3 * n.r) / len) * SW);
@@ -370,6 +515,7 @@ function paintSkin(sp, prof) {
       for (let j = Math.max(0, j0); j <= Math.min(SH - 1, j1); j++) {
         const du = (((i + 0.5) / SW) - n.u) * len, dv = ((((j + 0.5) / SH) * 2 - 1) - n.v) * hc, d = Math.hypot(du, dv) / n.r;
         height[j * SW + i] += n.r * (0.25 * Math.exp(-(((d - 1.1) / 0.35) ** 2)) - 0.7 * Math.exp(-d * d * 1.5));
+        crImg.data[(j * SW + i) * 4] *= 1 - 0.5 * Math.exp(-d * d * 1.5);   // the pit is occluded
       }
     }
   }
@@ -379,13 +525,14 @@ function paintSkin(sp, prof) {
   const irid = makeCanvas(SW, SH); irid.getContext('2d').putImageData(iridImg, 0, 0);
 
   // Tangent-space normal map from the height field (OpenGL convention; canvas rows run down = -v).
+  // Across the body the rows' spacing is their arc length (Yarc), as the scales were laid out.
   const normalImg = new ImageData(SW, SH);
   const du = len / SW;
   for (let j = 0; j < SH; j++) {
     for (let i = 0; i < SW; i++) {
-      const dvp = (2 * halfCol[i]) / SH;
+      const j0 = Math.max(0, j - 1) * SW + i, j1 = Math.min(SH - 1, j + 1) * SW + i;
       const hx = (height[j * SW + Math.min(SW - 1, i + 1)] - height[j * SW + Math.max(0, i - 1)]) / (2 * du);
-      const hy = (height[Math.min(SH - 1, j + 1) * SW + i] - height[Math.max(0, j - 1) * SW + i]) / (2 * dvp);
+      const hy = (height[j1] - height[j0]) / Math.max(1e-6, Yarc[j1] - Yarc[j0]);
       const nx = -hx, ny = hy, inv = 1 / Math.sqrt(nx * nx + ny * ny + 1), k = (j * SW + i) * 4;
       normalImg.data[k] = (nx * inv * 0.5 + 0.5) * 255;
       normalImg.data[k + 1] = (ny * inv * 0.5 + 0.5) * 255;
@@ -394,7 +541,8 @@ function paintSkin(sp, prof) {
     }
   }
   const normal = makeCanvas(SW, SH); normal.getContext('2d').putImageData(normalImg, 0, 0);
-  return { map: c, normal, irid };
+  const cr = makeCanvas(SW, SH); cr.getContext('2d').putImageData(crImg, 0, 0);
+  return { map: c, normal, irid, cr };
 }
 
 // ---------- fins ----------
@@ -488,7 +636,8 @@ function finFill(g, fill, x0, x1) {
   return gr;
 }
 
-function paintFins(sp, prof) {
+// cachedMaps: the relief maps come from the skin cache, so only the colour sheet and ray layout are made.
+function paintFins(sp, prof, cachedMaps = false) {
   // Bounds of everything drawn on the sheet.
   let ymax = prof.H * 1.25, xmin = -0.52;
   const fins = sp.fins.map((f) => finOutline(sp, prof, f));
@@ -501,6 +650,13 @@ function paintFins(sp, prof) {
   const k = W / (xmax - xmin);
   g.setTransform(k, 0, 0, -k, -xmin * k, ymax * k);
   g.lineJoin = 'round';
+  // Relief at half resolution, in the same layout: the rays are raised and stiffer than the membrane.
+  // It becomes the fins' normal map, and their thickness (rays block more backlight: dark lines on a
+  // glowing membrane) and roughness (finMaps below).
+  const HW = W / 2, HH = Math.ceil(H / 2), hcv = makeCanvas(HW, HH), hg = hcv.getContext('2d');
+  hg.fillStyle = '#000'; hg.fillRect(0, 0, HW, HH);
+  hg.setTransform(k / 2, 0, 0, -k / 2, (-xmin * k) / 2, (ymax * k) / 2);
+  hg.lineCap = 'round'; hg.strokeStyle = '#fff';
   const rng = mulberry32(sp.id.length * 31 + 5);
 
   const meshes = [];   // { rays, n }: ray field per fin, for the 3D membrane
@@ -565,16 +721,22 @@ function paintFins(sp, prof) {
       g.beginPath(); g.moveTo(...ta); g.lineTo(...out(ta, ba)); g.lineTo(...out(tb, bb)); g.lineTo(...tb); g.lineTo(...deep); g.closePath(); g.fill();
     }
     g.globalCompositeOperation = 'source-over';
-    // Fin rays, more opaque than the membrane, each with a lit edge. Spines are single, stiff and
-    // unjointed; soft rays (lepidotrichia) are jointed and branch towards the margin (the outermost
-    // principal caudal rays stay simple).
+    // Fin rays, more opaque than the membrane, and raised (the relief layer: the light picks out their
+    // edges as it really falls, rather than a painted lit edge that stays lit on the shadow side).
+    // Spines are single, stiff and unjointed; soft rays (lepidotrichia) are jointed and branch towards
+    // the margin (the outermost principal caudal rays stay simple).
     const rayCol = spec.rays || 'rgba(35,20,5,0.13)';
-    const line = (a, b, w, col) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); };
+    const line = (a, b, w, col) => {
+      g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+      if (spec.solid) return;   // a moray's skin-covered fin fold: smooth
+      hg.lineWidth = w * 1.3; hg.globalAlpha = Math.min(1, g.globalAlpha * 1.4); hg.setLineDash(g.getLineDash());
+      hg.beginPath(); hg.moveTo(a[0], a[1]); hg.lineTo(b[0], b[1]); hg.stroke();
+    };
     for (let i = 0; i <= n; i++) {
-      const t = i / n, [a, b] = rays(t), lit = (p) => [p[0] + 0.0015, p[1]];
+      const t = i / n, [a, b] = rays(t);
       if (i < spines) {
         g.setLineDash([]);
-        line(a, b, 0.0045, rayCol); line(lit(a), lit(b), 0.0016, 'rgba(255,255,255,0.18)');
+        line(a, b, 0.0045, rayCol);
         continue;
       }
       g.setLineDash([0.035, 0.0012]);   // soft-ray joints
@@ -583,10 +745,10 @@ function paintFins(sp, prof) {
       g.globalAlpha = 0.35;   // rays crowd together at the base; they read fainter there
       line(a, q, 0.0026, rayCol);
       g.globalAlpha = 1;
-      line(q, m, 0.0026, rayCol); line(lit(q), lit(m), 0.0012, 'rgba(255,255,255,0.14)');
+      line(q, m, 0.0026, rayCol);
       if (!simple) for (const s of [-1, 1]) line(m, rays(clamp(t + (s * 0.22) / n, 0, 1))[1], 0.0018, rayCol);
     }
-    g.setLineDash([]);
+    g.setLineDash([]); hg.setLineDash([]); hg.globalAlpha = 1;
     g.restore();
     meshes.push({ rays, n });
     if (spec.edge) {
@@ -695,7 +857,119 @@ function paintFins(sp, prof) {
     meshes[meshes.length - 1].xforms = pv.xforms;
   }
 
-  return { canvas: c, xmin, xmax, ymax, meshes, tubes };
+  return { canvas: c, xmin, xmax, ymax, meshes, tubes, ...(cachedMaps ? {} : finMaps(hcv)) };
+}
+
+// ---- Skin detail tiles ----
+// The body's own maps hold one texel per ~1-2 mm of a 10 cm fish: enough for its scales, not for what a
+// close look shows on real skin. A tiling normal map adds that, repeated over the body UV at a rate set by
+// the species' scale count (detailFor below) and faded out in the shader once it is finer than the screen
+// can show, so it costs nothing at tank distance (the mipmaps would only average it away). Kinds:
+//  - velvet: minute ctenoid scales (tangs, the Moorish idol: 150 along the lateral line, below the body
+//    map's resolution), a lattice of 8 x 8 scales per tile, each with its comb of spinules;
+//  - ctenoid / cycloid: within one scale, the growth rings (circuli) and, on ctenoid scales, spinules;
+//    the tile spans 2 x 2 scales;
+//  - mucus: a scaleless eel's skin, fine creases and pores.
+const detailTiles = new Map();
+function detailTile(kind) {
+  if (detailTiles.has(kind)) return detailTiles.get(kind);
+  const S = 256, h = new Float32Array(S * S), rng = mulberry32(kind.length * 977 + 3);
+  // Periodic value noise with P cells across the tile (so the tile wraps seamlessly).
+  const noise = (P) => {
+    const gv = Float32Array.from({ length: P * P }, () => rng());
+    return (x, y) => {
+      const fx = x * P, fy = y * P, i = Math.floor(fx), j = Math.floor(fy), tx = smooth01(fx - i), ty = smooth01(fy - j);
+      const at = (a, b) => gv[(((b % P) + P) % P) * P + (((a % P) + P) % P)];
+      return lerp(lerp(at(i, j), at(i + 1, j), tx), lerp(at(i, j + 1), at(i + 1, j + 1), tx), ty);
+    };
+  };
+  // An imbricated lattice of nc columns x 2nc rows (row spacing half a scale) wrapping on the tile, as on
+  // the body: returns { hn (height of the exposed field), bt, bd, da, db } at (x, y).
+  const lattice = (nc) => (x, y) => {
+    const a = x * nc, b = y * nc * 2, jr = Math.round(b);
+    let best = Infinity, out = null;
+    for (let rb = jr - 2; rb <= jr + 2; rb++) {
+      const off = (rb & 1) * 0.5, ir = Math.round(a - off), wr = ((rb % (2 * nc)) + 2 * nc) % (2 * nc);
+      for (let ri = ir - 1; ri <= ir + 1; ri++) {
+        const wi = ((ri % nc) + nc) % nc;
+        const ca = ri + off + (cellHash(wi, wr, 31) - 0.5) * 0.16, cb = rb + (cellHash(wi, wr, 32) - 0.5) * 0.16;
+        const rr = 0.75 * (1 + (cellHash(wi, wr, 33) - 0.5) * 0.16), da = a - ca, db = (b - cb) * 0.5, d2 = da * da + db * db;
+        if (d2 < rr * rr && ca < best) { best = ca; const bd = Math.sqrt(d2) / rr, bt = da / rr; out = { hn: 0.5 + 0.5 * bt + 0.25 * (1 - bd * bd), bt, bd, da, db }; }
+      }
+    }
+    return out || { hn: 0, bt: 0, bd: 1, da: 0, db: 0 };
+  };
+  let amp;   // relief in texels at height 1
+  if (kind === 'velvet') {
+    const L = lattice(8);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const c = L(x / S, y / S), comb = c.bt > 0 ? smooth01((c.bd - 0.7) / 0.3) * (0.5 + 0.5 * Math.sin(Math.atan2(c.db, c.da) * 22)) : 0;
+      h[y * S + x] = c.hn + 0.3 * comb;
+    }
+    amp = 3;
+  } else if (kind === 'mucus') {
+    const n1 = noise(8), n2 = noise(16), n3 = noise(48);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const u = x / S, v = y / S, w = n2(u, v) * 0.15;   // creases wander
+      const crease = (1 - Math.abs(2 * n1(u + w, v - w) - 1)) ** 4;
+      h[y * S + x] = -crease + 0.25 * n3(u, v);
+    }
+    amp = 2;
+  } else {
+    // Circuli: concentric growth rings on each scale (about 14 across its radius), plus on ctenoid scales a
+    // field of fine spinule points over the exposed rear.
+    const L = lattice(2), spin = noise(64);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const c = L(x / S, y / S), r = Math.hypot(c.da, c.db);
+      let v = 0.35 * Math.sin(r * Math.PI * 2 * 14 / 0.75) * (1 - c.bd * 0.5);
+      if (kind === 'ctenoid' && c.bt > 0.1) v += 0.8 * smooth01((c.bt - 0.1) / 0.4) * (spin(x / S, y / S) - 0.5);
+      h[y * S + x] = v;
+    }
+    amp = 1.2;
+  }
+  const img = new ImageData(S, S), H = (x, y) => h[((y + S) % S) * S + ((x + S) % S)];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const nx = -(H(x + 1, y) - H(x - 1, y)) * 0.5 * amp, ny = (H(x, y + 1) - H(x, y - 1)) * 0.5 * amp;
+    const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1), o = (y * S + x) * 4;
+    img.data[o] = (nx * inv * 0.5 + 0.5) * 255; img.data[o + 1] = (ny * inv * 0.5 + 0.5) * 255; img.data[o + 2] = (inv * 0.5 + 0.5) * 255; img.data[o + 3] = 255;
+  }
+  const c = makeCanvas(S, S); c.getContext('2d').putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 16;
+  detailTiles.set(kind, t);
+  return t;
+}
+// Which tile a species gets, how often it repeats over the body UV (u: nose to tail, v: back to belly,
+// kept square in physical size), and how strongly it bends the normal.
+function detailFor(sp, prof) {
+  const sc = sp.body.scales, g0 = gillU(sp), len = sp.body.len;
+  const kind = sc === 0 ? 'mucus' : sc >= 100 ? 'velvet' : (sp.body.scaleType ?? 'ctenoid');
+  let ref = 0, n = 0;
+  for (let u = Math.max(0.05, g0); u < 0.85; u += 0.02) { ref += prof.half(u) * 1.15; n++; }
+  ref /= Math.max(1, n);
+  const repU = kind === 'mucus' ? 24 : kind === 'velvet' ? sc / (8 * (1 - g0)) : sc / (2 * (1 - g0));
+  const str = { velvet: 1.0, mucus: 0.6, ctenoid: 0.22, cycloid: 0.25 }[kind];   // (ctenoid at 0.35 chalked white skin)
+  return { kind, tex: detailTile(kind), rep: new THREE.Vector2(repU, (repU * 2 * ref) / len), str };
+}
+
+// From the fins' relief layer (white = ray): a tangent-space normal map (each ray a rounded ridge), and
+// one data map, R = thickness (rays ~4x the membrane, read by the tissue light term) and G = roughness
+// (rays 0.33, membrane 0.45; roughnessMap reads G).
+function finMaps(src) {
+  const w = src.width, h = src.height, soft = makeCanvas(w, h), sg = soft.getContext('2d', { willReadFrequently: true });
+  sg.filter = 'blur(1px)'; sg.drawImage(src, 0, 0); sg.filter = 'none';
+  const H = sg.getImageData(0, 0, w, h).data, nImg = new ImageData(w, h), dImg = new ImageData(w, h);
+  const at = (x, y) => H[(Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))) * 4] / 255;
+  const S = 0.9;   // slope per texel of full relief (a ray ~3 texels wide: its flanks tilt ~25 degrees)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4, hx = (at(x + 1, y) - at(x - 1, y)) * 0.5 * S, hy = (at(x, y + 1) - at(x, y - 1)) * 0.5 * S;
+    const nx = -hx, ny = hy, inv = 1 / Math.sqrt(nx * nx + ny * ny + 1), r = at(x, y);
+    nImg.data[o] = (nx * inv * 0.5 + 0.5) * 255; nImg.data[o + 1] = (ny * inv * 0.5 + 0.5) * 255; nImg.data[o + 2] = (inv * 0.5 + 0.5) * 255; nImg.data[o + 3] = 255;
+    dImg.data[o] = r * 255; dImg.data[o + 1] = (0.45 - 0.12 * r) * 255; dImg.data[o + 3] = 255;
+  }
+  const normal = makeCanvas(w, h), data = makeCanvas(w, h);
+  normal.getContext('2d').putImageData(nImg, 0, 0); data.getContext('2d').putImageData(dImg, 0, 0);
+  return { normal, data };
 }
 
 // Pelvic fin in side view: inserted on the belly just behind the pectoral base, the spine as its leading
@@ -1009,6 +1283,22 @@ function paintEye(sp) {
   return c;
 }
 
+// Iridescence mask for the eye: the iris' iridophore ring, brightest just outside the pupil and fading
+// out across the iris, with radial streaks (same layout as paintEye's texture).
+function paintEyeRing(sp) {
+  const N = 128, R = N / 2, e = sp.eye, ir = e.irisR ?? 0.98, pr = e.pupil ?? 0.44;
+  const img = new ImageData(N, N), rng = mulberry32(sp.id.length * 17 + 9);
+  const streak = Float32Array.from({ length: 64 }, () => 0.6 + 0.4 * rng());
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = (x + 0.5 - R) / R, dy = (y + 0.5 - R) / R, r = Math.hypot(dx, dy), o = (y * N + x) * 4;
+    const a = ((Math.atan2(dy, dx) / (Math.PI * 2)) + 1) % 1;
+    const ring = r < pr ? 0 : Math.exp(-(((r - pr - 0.04) / 0.05) ** 2)) + 0.35 * smooth01((ir - r) / 0.15) * smooth01((r - pr) / 0.05);
+    img.data[o] = img.data[o + 1] = img.data[o + 2] = clamp(ring * streak[Math.floor(a * 64)], 0, 1) * 255; img.data[o + 3] = 255;
+  }
+  const c = makeCanvas(N, N); c.getContext('2d').putImageData(img, 0, 0);
+  return c;
+}
+
 // Eyeball geometry already placed in fish space (so the swim shader moves it with the head).
 // Gill cover: how far it stands proud of the body (a share of the body's half-width), rising over
 // its rear half to a step at the free margin. cover: whether the point is on the cover (the body mesh
@@ -1178,7 +1468,11 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
       shader.vertexShader = (body ? 'attribute float aThick;\nvarying float vThick;\n' : '') + shader.vertexShader
         .replace('#include <fog_vertex>', '#include <fog_vertex>\n' + (body ? 'vThick = aThick;' : ''));
       shader.fragmentShader = 'uniform vec3 uTissueSigma;\nuniform vec3 uWrap;\nuniform float uSizeMM;\nuniform float uThickMM;\n' +
-        (body ? 'varying float vThick;\n#define tissueThickMM (vThick * uSizeMM)\n' : '#define tissueThickMM uThickMM\n') +
+        (body ? 'varying float vThick;\n#define tissueThickMM (vThick * uSizeMM)\n'
+          // A fin's rays are ~4x the membrane's thickness (thickMap R), so backlit they show dark on a glowing film.
+          // (thickMap is the fin's roughnessMap, whose R holds it: read through that sampler, not a unit of its own.)
+          : tissue.thickMap ? '#define tissueThickMM (uThickMM * mix(1.0, 4.0, texture2D(roughnessMap, vRoughnessMapUv).r))\n'
+          : '#define tissueThickMM uThickMM\n') +
         shader.fragmentShader.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n' + TISSUE_GLSL);
     }
     shader.vertexShader = SWIM_GLSL + shader.vertexShader
@@ -1225,6 +1519,46 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         transformed.y = p0.y + liftY(p0.x);
         transformed.z = swH + swZ * swC;`);
     if (tissue?.kind === 'fin') shader.defines = { ...shader.defines, FISH_FIN: '' };
+    if (tissue?.packed) {
+      // Second channels of the packed body maps (see buildFishModel): film thickness from the iridescence
+      // map's G, and the cavity from the roughness map's R, applied as three's aoMap would (indirect
+      // diffuse, sheen and specular occlusion), without a sampler each.
+      shader.fragmentShader = shader.fragmentShader
+        .replace('material.iridescenceThickness = iridescenceThicknessMaximum;',
+          'material.iridescenceThickness = mix( iridescenceThicknessMinimum, iridescenceThicknessMaximum, texture2D( iridescenceMap, vIridescenceMapUv ).g );')
+        .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        #ifdef USE_ROUGHNESSMAP
+        { float ambientOcclusion = texture2D( roughnessMap, vRoughnessMapUv ).r;
+          reflectedLight.indirectDiffuse *= ambientOcclusion;
+          #if defined( USE_SHEEN )
+            sheenSpecularIndirect *= ambientOcclusion;
+          #endif
+          #if defined( USE_ENVMAP ) && defined( STANDARD )
+            float dotNV = saturate( dot( geometryNormal, geometryViewDir ) );
+            reflectedLight.indirectSpecular *= computeSpecularOcclusion( dotNV, ambientOcclusion, material.roughness );
+          #endif
+        }
+        #endif`);
+    }
+    if (tissue?.detail) {
+      // Skin detail (detailTile): a tiling normal added to the body's own (UDN blend), faded out by the
+      // tile's size on screen: fully there while a tile spans 40+ px, gone below ~12 px.
+      const D = tissue.detail;
+      Object.assign(shader.uniforms, { uDetail: { value: D.tex }, uDetailRep: { value: D.rep }, uDetailStr: { value: D.str } });
+      shader.fragmentShader = 'uniform sampler2D uDetail;\nuniform vec2 uDetailRep;\nuniform float uDetailStr;\n' + shader.fragmentShader
+        .replace('#include <normal_fragment_maps>', `
+        #ifdef USE_NORMALMAP_TANGENTSPACE
+          vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+          mapN.xy *= normalScale;
+          { vec2 dUv = vNormalMapUv * uDetailRep;
+            float fw = max(length(dFdx(dUv)), length(dFdy(dUv)));
+            float k = uDetailStr * (1.0 - smoothstep(1.0 / 40.0, 1.0 / 12.0, fw));
+            if (k > 0.001) { vec3 dN = texture2D(uDetail, dUv).xyz * 2.0 - 1.0; mapN = vec3(mapN.xy + dN.xy * k, mapN.z); } }
+          normal = normalize( tbn * mapN );
+        #else
+          #include <normal_fragment_maps>
+        #endif`);
+    }
     if (tissue?.night) {
       // Night (and stress) colours: chromatophores contract or expand over minutes (Hobson 1972: at dusk
       // many diurnal reef fish pale or blotch, others darken). uNight 0..1, set in fish.js.
@@ -1255,7 +1589,7 @@ export function makeSwimMaterial(base, uniforms, tissue = null) {
         .replace('#include <aomap_fragment>', 'reflectedLight.directSpecular *= 1.0 - vSlit;\n  reflectedLight.indirectSpecular *= 1.0 - vSlit;\n  reflectedLight.directDiffuse *= 1.0 - 0.85 * vSlit;\n  #include <aomap_fragment>');
     }
   };
-  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') + (tissue.night ? '-night-' + tissue.night : '') : 'plain');
+  base.customProgramCacheKey = () => 'swim-' + (tissue ? tissue.kind + (tissue.jaw ? '-jaw' : '') + (tissue.cover ? '-cover' : '') + (tissue.night ? '-night-' + tissue.night : '') + (tissue.thickMap ? '-thick' : '') + (tissue.detail ? '-detail' : '') + (tissue.packed ? '-packed' : '') : 'plain');
   return addCaustics(base);   // fish swim through the same focused light as the reef
 }
 
@@ -1461,17 +1795,76 @@ function bodyGeometry(prof, sp) {
 
 const cache = new Map();
 
+// ---- Skin texture cache (pc/models/skins/, git-ignored) ----
+// Painting a species' skin (the scale lattice, pigment, normal and sheen maps) and its fins' relief
+// maps takes ~1 s. The results are saved as lossless PNGs and reused while nothing that made them has
+// changed: the key hashes the species' look (everything but behaviour) and the source of the painters,
+// so editing either repaints. loadSkinCache() reads the saved maps before fish are built; species
+// painted live are saved back when the page is served locally (tools/serve.mjs accepts the POST).
+const SKIN_CACHE_VERSION = 1;
+const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'];
+const skinCache = new Map();   // id -> { key, img: { name: HTMLImageElement } }
+let skinBase = null;           // where to save live-painted maps, or null (not local)
+function skinKey(sp) {
+  const look = JSON.stringify(sp, (k, v) => (['brain', 'fact', 'name', 'sci', 'swim'].includes(k) ? undefined : v));
+  const src = [paintSkin, paintFins, finMaps, applyShade, makeProfile, gillU, gillOf, naresOf, mouthOf, finOutline, caudalOutline, pelvicOutline, cellHash].map(String).join('');
+  let h = 0x811c9dc5;
+  for (const s of [String(SKIN_CACHE_VERSION), look, src]) for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16);
+}
+export async function loadSkinCache(species, base = './models/skins/') {
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  skinBase = local ? new URL(base, location.href).pathname.replace(/^\//, '') : null;
+  let hits = 0;
+  await Promise.all(species.map(async (sp) => {
+    const key = skinKey(sp);
+    try {
+      const r = await fetch(`${base}${sp.id}.json`, { cache: 'no-cache' });
+      if (!r.ok || (await r.json()).key !== key) return;
+      const img = {};
+      await Promise.all(SKIN_MAPS.map(async (n) => {
+        // onload, not decode(): decode() can wait indefinitely in a background tab.
+        img[n] = await new Promise((ok, fail) => {
+          const im = new Image();
+          im.onload = () => ok(im); im.onerror = fail;
+          setTimeout(() => fail(new Error('timeout')), 20000);
+          im.src = `${base}${sp.id}-${n}.png?${key}`;
+        });
+      }));
+      skinCache.set(sp.id, { key, img }); hits++;
+    } catch { /* not cached (or unreadable): paint it live */ }
+  }));
+  console.log(`Skin cache: ${hits}/${species.length} species`);
+}
+function saveSkin(sp, key, canvases) {
+  if (!skinBase) return;
+  const post = (path, body) => fetch(`/__save?path=${skinBase}${path}`, { method: 'POST', body }).catch(() => {});
+  Promise.all(SKIN_MAPS.map((n) => new Promise((ok) => canvases[n].toBlob(ok, 'image/png')).then((b) => post(`${sp.id}-${n}.png`, b))))
+    .then(() => post(`${sp.id}.json`, JSON.stringify({ key })));   // last, so a half-written set never matches
+}
+
 function speciesAssets(sp) {
   if (cache.has(sp.id)) return cache.get(sp.id);
   const prof = makeProfile(sp.body);
-  const skin = paintSkin(sp, prof);
-  const fins = paintFins(sp, prof);
+  const hit = skinCache.get(sp.id), key = hit ? hit.key : skinKey(sp);
+  const fins = paintFins(sp, prof, !!hit);
+  const skin = hit ? { map: hit.img.skin, normal: hit.img.normal, irid: hit.img.irid, cr: hit.img.cr } : paintSkin(sp, prof);
+  if (hit) { fins.normal = hit.img.finNormal; fins.data = hit.img.finData; }
+  else saveSkin(sp, key, { skin: skin.map, normal: skin.normal, irid: skin.irid, cr: skin.cr, finNormal: fins.normal, finData: fins.data });
+  // The skin's mean colour (for the velvet sheen of minute-scaled species), from an 8 x 4 reduction.
+  const avg = (() => {
+    const t = makeCanvas(8, 4), tg = t.getContext('2d', { willReadFrequently: true });
+    tg.drawImage(skin.map, 0, 0, 8, 4);
+    const px = tg.getImageData(0, 0, 8, 4).data, s = [0, 0, 0];
+    for (let i = 0; i < px.length; i += 4) for (let ch = 0; ch < 3; ch++) s[ch] += px[i + ch] / 255 / 32;
+    return new THREE.Color().setRGB(s[0], s[1], s[2], THREE.SRGBColorSpace);
+  })();
   const pect = sp.pectoral ? paintPectoral(sp) : makeCanvas(4, 4);
   const eye = paintEye(sp);
   const tex = (c, srgb = true) => {
     const t = new THREE.CanvasTexture(c);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 4;
+    t.anisotropy = 16;   // the flank is often seen at grazing angles (three clamps to what the GPU has)
     return t;
   };
   const finGeo = mergeGeometries(fins.meshes.flatMap((m) => {
@@ -1485,7 +1878,8 @@ function speciesAssets(sp) {
     bodyGeo: bodyGeometry(prof, sp),
     finGeo, pectGeo,
     tubeGeo: tubes([...fins.tubes, ...appendageTubes(sp, prof)]), pectTubeGeo: tubes(sp.pectoral ? pectoralTubes(sp) : []),
-    skinTex: tex(skin.map), normalTex: tex(skin.normal, false), iridTex: tex(skin.irid, false), finTex: tex(fins.canvas), pectTex: tex(pect), eyeTex: tex(eye),
+    skinTex: tex(skin.map), normalTex: tex(skin.normal, false), iridTex: tex(skin.irid, false), crTex: tex(skin.cr, false), skinAvg: avg, detail: detailFor(sp, prof),
+    eyeRingTex: tex(paintEyeRing(sp), false), finTex: tex(fins.canvas), finNormalTex: tex(fins.normal, false), finDataTex: tex(fins.data, false), pectTex: tex(pect), eyeTex: tex(eye),
     eyeGeos: [1, -1].map((side) => eyeGeometry(prof, sp, side)),
     canvases: { skin: skin.map, fins: fins.canvas, pect },
   };
@@ -1621,16 +2015,29 @@ export function buildFishModel(sp, opts = {}) {
   const M = mouthOf(sp);   // the lower jaw hinges at the corner of the mouth
   uniforms.uHinge.value.set(a.prof.x(M.u), a.prof.centre(M.u) - M.v * a.prof.half(M.u));
   const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+    // Packed maps, each read through one sampler (the fish shader is at the GPU's 16 texture units with the
+    // caustics and reef light): iridescenceMap R = strength, G = film thickness; roughnessMap G =
+    // roughness (smooth exposed field, rough comb margins, velvet minute scales), R = cavity (the groove
+    // under each free margin, the nostril pits). makeSwimMaterial's `packed` reads the second channels.
     map: a.skinTex, normalMap: a.normalTex, iridescenceMap: a.iridTex,
-    roughness: sp.body.scales === 0 ? 0.3 : 0.36, metalness: 0.0, ior: IN_WATER_IOR,   // scaleless skin: a mucus film
+    roughnessMap: a.crTex, roughness: 1, metalness: 0.0, ior: IN_WATER_IOR,
+    // Minute ctenoid scales (velvet): their spinules retro-reflect a little (a low sheen in the body's
+    // own colour; any stronger and the fish turns milky).
+    ...(a.detail.kind === 'velvet' && { sheen: 0.15, sheenRoughness: 0.6, sheenColor: a.skinAvg.clone().multiplyScalar(0.6) }),
     // Scales overlap in rows along the body, so a light's glint stretches along the flank rather than
     // sitting as a round spot (the body UV's u runs nose to tail, so the tangent is the body axis).
     anisotropy: sp.body.scales === 0 ? 0 : 0.45,
-    iridescence: sp.iridescent ? 1.0 : 0.35, iridescenceIOR: 1.8, iridescenceThicknessRange: [180, 420],   // guanine platelet stacks
-  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: true, cover: !!gillOf(sp), night: sp.night });
+    // Guanine platelet stacks. Silvery and white skin: stack spacing varies widely from scale to scale
+    // (hues average out near neutral). Structural colour (sp.iridescent: the chromis' blue-green):
+    // regular stacks in a narrow band. sp.irid = { range: [nm, nm], strength } overrides.
+    iridescence: sp.irid?.strength ?? (sp.iridescent ? 1.0 : 0.35), iridescenceIOR: 1.8,
+    iridescenceThicknessRange: sp.irid?.range ?? (sp.iridescent ? [310, 370] : [200, 620]),
+  }), uniforms, { kind: 'body', sizeMM: sp.size * 125, jaw: true, cover: !!gillOf(sp), night: sp.night, detail: a.detail, packed: true });
+  // Raised rays (normalMap), rays glossier than the membrane (roughnessMap G x 1) and thicker (thickMap R).
   const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
-    map: a.finTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
-  }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8 });
+    map: a.finTex, normalMap: a.finNormalTex, roughnessMap: a.finDataTex, transparent: true, side: THREE.DoubleSide,
+    depthWrite: fishRender.finDepth, roughness: 1, alphaTest: fishRender.finDepth ? 0.15 : 0.01, ior: IN_WATER_IOR,
+  }), uniforms, { kind: 'fin', thickMM: 0.15 * sp.size * 8, thickMap: a.finDataTex });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport.
   const still = swimUniforms({ uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 } });
@@ -1664,15 +2071,20 @@ export function buildFishModel(sp, opts = {}) {
   }
 
   // Cornea: smooth, but its index (~1.376) nearly matches water, so in the tank it barely reflects.
+  // The spherical lens behind it (n ~1.67 at the core) bulges through the pupil and reflects ~1.2%
+  // against water, 30 times the skin: that is the catchlight in every photo. A thin clearcoat (fixed
+  // F0 0.04 x 0.3) gives it.
   const eyeMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
-    map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR,
+    map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR, clearcoat: 0.3, clearcoatRoughness: 0.04,
+    // The iris' reflective iridophore ring round the pupil (moves with the gaze, as the map does).
+    iridescence: 0.3, iridescenceIOR: 1.8, iridescenceThicknessRange: [260, 420], iridescenceMap: a.eyeRingTex,
   }), uniforms);
   // Eye movement: the eyeball turns under a nearly flush cornea, so the iris and pupil slide across the
   // cap. uGaze = (forward, up) in texture units, set per fish in fish.js (saccades and counter-rolling).
   uniforms.uGaze = { value: new THREE.Vector2() };
   {
     const prev = eyeMat.onBeforeCompile, prevKey = eyeMat.customProgramCacheKey.bind(eyeMat);
-    a.eyeTex.wrapS = a.eyeTex.wrapT = THREE.ClampToEdgeWrapping;
+    a.eyeTex.wrapS = a.eyeTex.wrapT = a.eyeRingTex.wrapS = a.eyeRingTex.wrapT = THREE.ClampToEdgeWrapping;
     eyeMat.onBeforeCompile = (s, r) => {
       prev(s, r);
       s.uniforms.uGaze = uniforms.uGaze;
@@ -1680,7 +2092,7 @@ export function buildFishModel(sp, opts = {}) {
       s.fragmentShader = 'uniform vec2 uGaze;\nvarying float vEyeSide;\n' + s.fragmentShader.replace('#include <map_fragment>', `
         #ifdef USE_MAP
           diffuseColor *= texture2D(map, vMapUv + vec2(uGaze.x * vEyeSide, -uGaze.y));
-        #endif`);
+        #endif`).replace('texture2D( iridescenceMap, vIridescenceMapUv )', 'texture2D( iridescenceMap, vIridescenceMapUv + vec2(uGaze.x * vEyeSide, -uGaze.y) )');
     };
     eyeMat.customProgramCacheKey = () => prevKey() + '-eye';
   }
