@@ -19,6 +19,7 @@ import { EventBus } from './core/eventBus.js';
 import { requireElement } from './core/dom.js';
 import { parseAppOptions, type AppOptions } from './app/options.js';
 import { StartupTimer } from './app/startupTimer.js';
+import { LoadingScreen } from './app/loadingScreen.js';
 import { startProfiler, profileReport, type ProfileReport } from './app/profiler.js';
 import { StageBuilder, useSoftFishShadows, CAMERA_BASE, type Stage } from './app/stage.js';
 import { LightingController, BAKE_SKY } from './app/lighting.js';
@@ -50,6 +51,11 @@ interface DebugHooks {
 }
 const debugHooks: DebugHooks = window as Window & DebugHooks;
 
+/** The progress bar over the tank while it starts (index.html #loading). */
+const loading = LoadingScreen.fromPage();
+/** Let the bar paint before a long synchronous step (the page can't repaint during one). */
+const paintLoading = (): Promise<void> => loading?.paint() ?? Promise.resolve();
+
 async function buildScenery(stage: Stage, tank: Tank, options: AppOptions, timer: StartupTimer): Promise<TankScene> {
   if (tank.scenery === 'jelly') {
     // The jelly tank is a backlit blue void with only jellies in it: no reef, sand or surface.
@@ -61,6 +67,7 @@ async function buildScenery(stage: Stage, tank: Tank, options: AppOptions, timer
   if (scenery.rocks.length || Object.keys(scenery.coral).length) {
     console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
   }
+  await paintLoading();
   const reef = buildReef(stage.scene, stage.tankWidth, tank.seed, scenery, CAMERA_BASE);
   console.info('Planted:', JSON.stringify(reef.planted), 'plants loaded:', Object.keys(scenery.plants).join(', '));
   return reef;
@@ -74,7 +81,12 @@ async function bakeReefLight(stage: Stage, reef: TankScene): Promise<void> {
     sky: BAKE_SKY.clone().multiplyScalar(LIGHTS.ambient),
     ground: stage.hemi.groundColor.clone().multiplyScalar(LIGHTS.ambient),
     camera: stage.camera,
-  }, { sourceFingerprint: await loadReefLightFingerprint() });
+  }, {
+    sourceFingerprint: await loadReefLightFingerprint(),
+    onProgress: (phase, done) => loading?.progress(done, phase === 'cache'
+      ? 'Lighting the reef (from the cache)'
+      : `Lighting the reef ${Math.round(done * 100)}% · first start for this layout`),
+  });
 }
 
 function swimBox(stage: Stage): TankBounds {
@@ -109,12 +121,14 @@ async function main(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const options = parseAppOptions(params);
   const timer = new StartupTimer();
+  loading?.follow(timer);
   debugHooks.startupStages = timer;
   const profiler = options.profile ? startProfiler() : null;
   fishRender.finDepth = options.photo;
 
   const tank = await loadTank(params);
   const rng: Rng = mulberry32(tank.seed * STOCK_SEED.scale + STOCK_SEED.offset);
+  await paintLoading();
   const stage = new StageBuilder(requireElement('tank', HTMLCanvasElement), options).build();
   timer.stage('renderer, environment, caustics');
 
@@ -149,6 +163,7 @@ async function main(): Promise<void> {
   if (!isJellyTank) stage.scene.add(surface);
 
   const bounds = swimBox(stage);
+  await paintLoading();   // stocking paints any fish skins the cache didn't have (about a second each)
   const world = new World(stage.scene, reef, bounds, rng);
   const { critters, jellies } = stockTank({
     scene: stage.scene, world, reef, bounds, rng, tank,
@@ -181,6 +196,7 @@ async function main(): Promise<void> {
   debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging
 
   if (!options.checkDrivesLoop) startAnimation(loop, stage, timer, options, profiler);
+  else loading?.finish();   // a check steps the tank itself and draws no first frame
   await runCheck(options.check, aquarium);
 }
 
@@ -210,6 +226,7 @@ function reportFirstFrame(stage: Stage, timer: StartupTimer, options: AppOptions
   debugHooks.firstFramePrograms = programs.slice(programsBefore).map((p) => p.name);
   stage.renderer.getContext().finish();   // the first draw compiles every shader; count it here
   timer.stage('first frame (shader compile)');
+  loading?.finish();
   const times = timer.times();
   debugHooks.startupTimes = times;
   const total = timer.totalMs();
@@ -224,4 +241,7 @@ function reportFirstFrame(stage: Stage, timer: StartupTimer, options: AppOptions
   });
 }
 
-await main();
+await main().catch((e: unknown) => {
+  loading?.fail(e);
+  throw e;
+});

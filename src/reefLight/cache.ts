@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { isRecord } from '../core/dom.js';
 import { isInstancedMesh, isLine, isMesh, isPoints, materialsOf } from '../water/objectGuards.js';
-import { bakeReefLightPacked, type PackedBake } from './bake.js';
+import { bakeReefLightPackedAsync, type BakeResult, type PackedBake } from './bake.js';
 import { Hasher, TextureHasher } from './hash.js';
 import { markReefLightOwned, reefLightUniforms, replaceMap } from './uniforms.js';
 import type { ReefLightCacheOptions, ReefLightInfo, ReefLightOptions, ReefLightTarget } from './types.js';
@@ -259,7 +259,10 @@ export async function bakeReefLightCached(
   renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, cacheOpts: ReefLightCacheOptions,
 ): Promise<ReefLightInfo> {
   const policy = cachePolicy(cacheOpts);
-  if (policy.alwaysBake) return bakeReefLightPacked(renderer, reef, opts).info;
+  const progress = cacheOpts.onProgress ?? ((): void => undefined);
+  const bake = (): Promise<BakeResult> => bakeReefLightPackedAsync(renderer, reef, opts, (done) => progress('bake', done));
+  if (policy.alwaysBake) return (await bake()).info;
+  progress('cache', 0);
   let key: string | null = null;
   const t0 = performance.now();
   try { key = reefLightKey(renderer, reef, opts, cacheOpts.sourceFingerprint); } catch (e) { console.warn('Reef light cache key:', errorText(e)); }
@@ -273,7 +276,8 @@ export async function bakeReefLightCached(
       }
     } catch (e) { console.warn('Reef light cache:', errorText(e)); }
   }
-  const { info, packed } = bakeReefLightPacked(renderer, reef, opts);
+  progress('bake', 0);
+  const { info, packed } = await bake();
   if (key && policy.save) {
     const path = new URL(`${policy.base}reeflight-${key}.bin`, location.href).pathname.replace(/^\//, '');
     pendingSave.set(saveReefLight(renderer, packed, path, key, info).catch((e: unknown) => { console.warn('Reef light cache save:', errorText(e)); }));

@@ -4,6 +4,11 @@ import { addCaustics } from '../water.js';
 import { addTranslucency } from '../softSkin.js';
 import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
 import type { CritterNeighbour, CritterThreatFish, CritterWorld } from './types.js';
+import { limitStep } from '../world/stepLimit.js';
+
+/** How fast a critter may haul itself up or out (units/s) beyond its swimming speed (world/stepLimit.ts). */
+export const CRITTER_CRAWL = 0.3;
+const _prev = new THREE.Vector3();
 
 export const UP = new THREE.Vector3(0, 1, 0);
 
@@ -106,11 +111,16 @@ export class Swimmer {
     this.speed = lerp(this.speed, speed, Math.min(1, dt * accel));
     const cp = Math.cos(this.pitch);
     this.dir.set(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
+    _prev.copy(this.pos);
     this.pos.addScaledVector(this.dir, this.speed * dt);
     const B = world.bounds;
     this.pos.x = clamp(this.pos.x, B.x0, B.x1);
     this.pos.z = clamp(this.pos.z, B.z0, B.z1);
-    this.pos.y = clamp(this.pos.y, Math.max(B.y0, world.reefHeight(this.pos.x, this.pos.z) + clearance * 0.6), B.y1);
+    // Over a rock edge the floor steps up: climb onto it at swimming pace, not in one jump.
+    const floor = Math.max(B.y0, world.reefHeight(this.pos.x, this.pos.z) + clearance * 0.6);
+    if (this.pos.y < floor) this.pos.y = Math.min(floor, this.pos.y + (Math.abs(this.speed) + CRITTER_CRAWL) * dt);
+    this.pos.y = Math.min(this.pos.y, B.y1);
+    limitStep(_prev, this.pos, this.speed, CRITTER_CRAWL, dt);
     return flat;
   }
 

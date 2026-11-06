@@ -71,7 +71,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const { world } = aq;
   const qs = new URLSearchParams(location.search);
   const frames = STEPS_PER_SECOND * Number(qs.get('seconds') ?? DEFAULT_SECONDS);
-  const stats: FishStats[] = world.fish.map((f) => ({ f, y: f.pos.y, vy: 0, ext: null, rise: 0, jitter: 0, inRock: 0 }));
+  const stats: FishStats[] = world.fish.map((f) => ({ f, y: f.pos.y, vy: 0, ext: null, rise: 0, jitter: 0, inRock: 0, last: f.pos.clone(), maxStep: 0 }));
   const eels = new Map(world.fish.filter((f) => f.spine).map((f) => [f, new EelTally()] as const));
   const cleaning = world.station ? new CleaningTally(world.station) : null;
   const shoals = new ShoalSampler(world.fish);
@@ -88,6 +88,9 @@ export async function main(aq: AquariumHandle): Promise<void> {
     for (const s of stats) {
       trackClimb(s, n);
       const f = s.f;
+      // The largest step, as a speed: a jump shows as a spike well over the species' burst speed.
+      s.maxStep = Math.max(s.maxStep, f.pos.distanceTo(s.last) / DT / f.size);
+      s.last.copy(f.pos);
       if (!f.spine && world.rockDist(f.pos) < -IN_ROCK_DEPTH * f.size) s.inRock++;
       eels.get(f)?.step(f, world);
     }
@@ -98,6 +101,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
     const eel = eels.get(s.f);
     return {
       fish: s.f.name || s.f.sp.id, species: s.f.sp.id, riseBLs: +s.rise.toFixed(2), jitterPerMin: +(s.jitter / minutes).toFixed(1), inRockFrames: s.inRock,
+      maxStepBLs: +s.maxStep.toFixed(2), burstBLs: s.f.sp.swim.burstBL, limitedSteps: s.f.limitedSteps,
       ...(eel ? eel.row() : {}),
     };
   });
@@ -108,6 +112,10 @@ export async function main(aq: AquariumHandle): Promise<void> {
     maxRiseBLs: Math.max(...rows.map((r) => r.riseBLs)),
     meanJitterPerMin: +(rows.reduce((a, r) => a + r.jitterPerMin, 0) / rows.length).toFixed(2),
     inRockFrames: rows.reduce((a, r) => a + r.inRockFrames, 0),
+    // Fastest step relative to the fish's burst speed (over 1 means it moved faster than it can swim),
+    // and the steps the global step limit cut short.
+    maxStepOverBurst: Math.max(...rows.map((r) => r.maxStepBLs / r.burstBLs)),
+    limitedSteps: rows.reduce((a, r) => a + r.limitedSteps, 0),
     eelRoofFrames: eelRows.map((e) => e.roof),
     // Eel body nodes inside the rock field (any node > 0.08 deep), of all frames.
     eelBodyInRock: eelRows.map((e) => e.summary()),

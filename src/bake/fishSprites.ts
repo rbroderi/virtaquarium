@@ -2,7 +2,7 @@
 // viewing angle holding that angle's swim cycle, so the Roku can load and unload angles independently
 // under its texture budget.
 import * as THREE from 'three';
-import { buildFishModel, posePectoral, type FishModel } from '../fishModel.js';
+import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, type FishModel } from '../fishModel.js';
 import { installUnderwaterMedium, INSCATTER_DAY, makeEnvironment } from '../water.js';
 import { windowTopY } from '../view.js';
 import { LIGHTS } from '../rig.js';
@@ -68,8 +68,9 @@ function pose(model: FishModel, i: number, n: number, amp: number): void {
   u.uVent.value = VENT_AMP * (0.5 + 0.5 * Math.sin(a));
   for (const p of model.pects) {
     const s = p.side;
-    if (model.fan) p.rotation.set(s * 0.25, s * (0.75 + 0.1 * Math.sin(a)), 0.35);
+    if (model.fan) posePectoralFan(p, a + (s > 0 ? 0 : 0.3), 0.3);   // one beat per loop, so it closes
     else posePectoral(p, a * 2, 0.35 + 0.25 * Math.sin(a * 2), 0.2 + 0.25 * Math.cos(a * 2));
+    mountPectoral(p, u);
   }
 }
 

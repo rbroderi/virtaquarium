@@ -45,6 +45,32 @@ export function posePectoral(p: PectoralPivot, ph: number, open: number, flap: n
   if (p.uPBend) p.uPBend.value.x = pectTuning.lag * s * Math.cos(ph) * clamp(open * 2, 0.4, 1);
 }
 
+/** Rest pose of a fan pectoral (rad): roll about the body axis, opening about the vertical, stroke-plane roll. */
+export interface FanPose { readonly roll: number; readonly yaw: number; readonly flap: number }
+/** As held in the tank: spread out and slightly down, like wings. */
+export const FAN_POSE: FanPose = { roll: 0.25, yaw: 0.75, flap: 0.35 };
+/** Up-down beat (rad) at rest and the extra when working; the opening's sway (rad). */
+const FAN_BEAT = 0.1, FAN_BEAT_WORK = 0.14, FAN_SWAY = 0.06;
+/** Ripple amplitude (fin lengths) at rest and the extra when working; ripples per beat (whole, so loops close). */
+const FAN_RIPPLE = 0.025, FAN_RIPPLE_WORK = 0.035, FAN_RIPPLES_PER_BEAT = 2;
+/** The tips' lag behind the beat, as a share of the rowed fins' lag. */
+const FAN_LAG_SHARE = 0.5;
+/** Fully folded: the share of the opening lost, and of the beat. */
+const FAN_FOLD_YAW = 0.7, FAN_FOLD_STILL = 0.6;
+
+// Lionfish fan pectorals don't row. Held spread like wings, they beat gently up and down, the tips
+// trailing the beat, while undulations run across the fan from the leading rays to the trailing ones
+// (the membrane between the long free rays ripples). `ph`: beat phase (rad); `beat`: effort, 0 idle .. 1
+// working (hovering against the current, turning, stalking). `fold`: 0 spread .. 1 swept back along the
+// flanks, as the fans are carried at speed (the water presses them back and the beat dies down).
+export function posePectoralFan(p: PectoralPivot, ph: number, beat: number, pose: FanPose = FAN_POSE, fold = 0): void {
+  const s = p.side, b = clamp(beat, 0, 1), f = clamp(fold, 0, 1), still = 1 - FAN_FOLD_STILL * f;
+  const yaw = pose.yaw * (1 - FAN_FOLD_YAW * f), roll = pose.roll * (1 - f);
+  p.rotation.set(s * (roll + (FAN_BEAT + FAN_BEAT_WORK * b) * still * Math.sin(ph)), s * (yaw + FAN_SWAY * Math.cos(ph)), pose.flap * (1 - f));
+  if (p.uPBend) p.uPBend.value.x = FAN_LAG_SHARE * pectTuning.lag * s * Math.cos(ph) * (0.5 + 0.5 * b);
+  if (p.uPWave) p.uPWave.value.set(ph * FAN_RIPPLES_PER_BEAT, s * (FAN_RIPPLE + FAN_RIPPLE_WORK * b));
+}
+
 // finDepth: fins write depth (and cut out below 15% alpha, under the faintest fringe), set before building fish. The photo camera
 // needs it so translucent fins focus with the body; otherwise fins don't write depth, which avoids
 // sorting artefacts between overlapping membranes.
@@ -115,12 +141,15 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   }), uniforms, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, thickMap: a.finDataTex, erect });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport, and each bends along its rays (its own uPBend, so a
-  // material each side; both share one program).
-  const p = sp.pectoral, rowed = !!p && p.kind !== 'fan';
-  const stillFor = (): SwimUniforms => swimUniforms({ uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 }, uPBend: { value: new THREE.Vector3(0, 0, p ? p.len : 1) } });
+  // material each side; both share one program). Fans also ripple (uPWave).
+  const p = sp.pectoral;
+  const stillFor = (): SwimUniforms => swimUniforms({
+    uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 },
+    uPBend: { value: new THREE.Vector3(0, 0, p ? p.len : 1) }, uPWave: { value: new THREE.Vector2() },
+  });
   const pectMatFor = (u: SwimUniforms): THREE.MeshPhysicalMaterial => makeSwimMaterial(new THREE.MeshPhysicalMaterial({
     map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest, ior: IN_WATER_IOR,
-  }), u, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, pect: rowed });
+  }), u, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, pect: true });
 
   const pects: PectoralPivot[] = [];
   const group = new FishModel({ uniforms, pects, fan: p?.kind === 'fan', custom: false });
@@ -141,9 +170,10 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
       const m = new THREE.Mesh(a.pectGeo, pectMatFor(still));
       m.renderOrder = 2;
       m.rotation.y = Math.PI; // point backwards
-      if (a.pectTubeGeo) m.add(new THREE.Mesh(a.pectTubeGeo, tubeMat(still, false, { pect: rowed })));
-      const pivot = new PectoralPivot(side, m, still.uPBend);
+      if (a.pectTubeGeo) m.add(new THREE.Mesh(a.pectTubeGeo, tubeMat(still, false, { pect: true })));
+      const pivot = new PectoralPivot(side, m, still.uPBend, still.uPWave);
       pivot.position.set(px, py, side * pz * 0.9);
+      pivot.rest.copy(pivot.position);
       group.add(pivot);
       pects.push(pivot);
     }

@@ -21,6 +21,7 @@ export { pectoralOutline } from './fishModel/pectoral.js';
 export { makeSwimMaterial, swimUniforms, IN_WATER_IOR, type SwimUniforms, type Tissue } from './fishModel/swimShader.js';
 export { loadSkinCache } from './fishModel/skinCache.js';
 export { loadCustomModels, loadFishModel, parseModelConfig, type ModelConfig, type NormalisedModel } from './fishModel/customModels.js';
-export { buildFishModel, posePectoral, setPectLag, fishRender, speciesCanvases, type BuildFishOptions } from './fishModel/builder.js';
+export { buildFishModel, posePectoral, posePectoralFan, FAN_POSE, setPectLag, fishRender, speciesCanvases, type BuildFishOptions, type FanPose } from './fishModel/builder.js';
+export { mountPectoral, spineH } from './fishModel/swimWave.js';
 export { FishModel, PectoralPivot } from './fishModel/model.js';
 export type { SpeciesCanvases } from './fishModel/assets.js';

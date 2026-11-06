@@ -21,6 +21,8 @@ const LOOK_AHEAD = [0.33, 0.67, 1] as const;
 const ROCK_PROBES = [0.5, 1] as const;
 /** Room the eel wants from rock ahead (it threads gaps the others go round). */
 const EEL_ROCK_ROOM = 0.4;
+/** Rates (1/s) the rock-avoidance turn eases in and out at. */
+const ROCK_STEER_IN = 8, ROCK_STEER_OUT = 3;
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _a = new THREE.Vector3(), _n = new THREE.Vector3();
 
@@ -89,6 +91,7 @@ function keepInShelter(brain: Brain, me: Fish, dir: THREE.Vector3): boolean {
   const mid = clamp(sh.pos.y, sh.floor + me.size * 0.15, sh.top - me.size * 0.25);
   dir.y = dir.y * 0.3 + (mid - pos.y) * 1.5;
   brain.reefSeen = undefined;
+  brain.rockSteer.set(0, 0, 0);
   return true;
 }
 
@@ -113,13 +116,15 @@ function avoidReef(brain: Brain, me: Fish, world: SwimWorld, dt: number, dir: TH
   const below = world.reefHeight(at.x, at.z) + clearance;
   if (at.y < below) dir.y += (below - at.y) * 4 + 0.5;
   else if (pos.y < ahead && !anchored) dir.y += (ahead - pos.y) * 1.5;
-  if (anchored) return;
+  if (anchored) { brain.rockSteer.set(0, 0, 0); return; }
+  // The turn off the rock is gathered here, then smoothed (below) before it steers.
+  const turn = _a.set(0, 0, 0);
   if (!me.spine) {
     const want = me.size * 0.6 + clearance;
     for (const k of ROCK_PROBES) {
       _v.copy(pos).addScaledVector(me.dir, reach * k);
       const d = world.rockDist(_v);
-      if (d < want) dir.addScaledVector(world.rockNormal(_v, _n), ((want - d) / want) * 2 / k);
+      if (d < want) turn.addScaledVector(world.rockNormal(_v, _n), ((want - d) / want) * 2 / k);
     }
   } else {
     // The eel looks ahead from its head (pos is the middle of its body), and wants less room than a body
@@ -128,7 +133,13 @@ function avoidReef(brain: Brain, me: Fish, world: SwimWorld, dt: number, dir: TH
       _v.copy(pos).addScaledVector(me.dir, 0.5 * me.size + reach * k);
       if (me.inBurrow(_v)) continue;
       const d = world.rockDist(_v);
-      if (d < EEL_ROCK_ROOM) dir.addScaledVector(world.rockNormal(_v, _n), ((EEL_ROCK_ROOM - d) / EEL_ROCK_ROOM) * 2 / k);
+      if (d < EEL_ROCK_ROOM) turn.addScaledVector(world.rockNormal(_v, _n), ((EEL_ROCK_ROOM - d) / EEL_ROCK_ROOM) * 2 / k);
     }
   }
+  // Probes near an edge, or between two rocks, can find the surface normal pointing another way from
+  // one frame to the next, and the fish flicked from side to side. Eased in (quickly, so it still turns
+  // off rock in time) and out (slowly, so it doesn't swing straight back at the rock).
+  const rate = turn.lengthSq() > brain.rockSteer.lengthSq() ? ROCK_STEER_IN : ROCK_STEER_OUT;
+  brain.rockSteer.lerp(turn, 1 - Math.exp(-rate * dt));
+  dir.add(brain.rockSteer);
 }

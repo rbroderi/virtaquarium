@@ -94,6 +94,8 @@ export class Brain {
   backing = 0;
   /** Remembered reef top ahead (reflexes). */
   reefSeen: number | undefined = undefined;
+  /** The rock-avoidance turn, smoothed over time (reflexes), so a flipping surface normal can't jerk the fish. */
+  readonly rockSteer = new THREE.Vector3();
   /** Client posing at the cleaning station. */
   posing = false;
   /** Lionfish: seconds left of a lunge, and of the rest after one. */

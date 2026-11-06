@@ -14,6 +14,7 @@ import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, type 
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
 import type { Critter, CritterCave, CritterFood, CritterSpecies, CritterWorld, JoinRule, OctopusDen } from './types.js';
+import { limitStep } from '../world/stepLimit.js';
 
 export type OctopusMode = 'den' | 'forage' | 'pounce' | 'jet';
 
@@ -38,6 +39,8 @@ const FOOD_RANGE = 3;
 const JET_SECONDS = 2.2;
 const CALM_AFTER_JET = 15;
 const JET_SPEED = 2.0;
+/** Crawling and pouncing speeds over the reef (units/s), and how fast it can haul itself up besides. */
+const CRAWL_SPEED = 0.18, POUNCE_SPEED = 0.6, OCTOPUS_HAUL = 0.5;
 const SAC_BREATH_RATE = 2.2;   // rad/s
 const SAC_BREATH = 0.04;
 const OBSTACLE_SAC_RADIUS = 1.1;   // the sac's bumpy skin, up to 9% proud
@@ -84,6 +87,8 @@ export class Octopus implements Critter {
   readonly den: THREE.Vector3;
   readonly cave: CritterCave | null;
   readonly pos: THREE.Vector3;
+  /** Where the body was at the start of the step (for the step limit). */
+  private readonly prevPos = new THREE.Vector3();
   yaw: number;
   mode: OctopusMode = 'den';
   modeT: number;
@@ -261,8 +266,12 @@ export class Octopus implements Critter {
     if (threat) this.startle(world, threat.pos);
     this.lookForFood(world);
     if (this.modeT <= 0) this.chooseMode(world);
+    this.prevPos.copy(this.pos);
+    const reach = this.mode === 'jet' ? JET_SPEED * this.jet : this.mode === 'pounce' ? POUNCE_SPEED : CRAWL_SPEED;
     this.moveBody(dt);
     const ceil = this.settleOnFloor(dt, world);
+    // Up a ledge or out of a jet onto the floor at its own pace (it hauls itself up), never in a jump.
+    limitStep(this.prevPos, this.pos, reach, OCTOPUS_HAUL, dt);
     this.colourAndBreathe(dt);
     this.model.position.copy(this.pos);
     this.model.rotation.set(0, -this.yaw, 0);
@@ -312,7 +321,7 @@ export class Octopus implements Critter {
     }
     _v.subVectors(this.target, this.pos).setY(0);
     const d = _v.length();
-    const speed = this.mode === 'pounce' ? 0.6 : this.mode === 'den' && d < 0.2 ? 0 : 0.18;
+    const speed = this.mode === 'pounce' ? POUNCE_SPEED : this.mode === 'den' && d < 0.2 ? 0 : CRAWL_SPEED;
     if (d > 0.05) {
       const yawT = Math.atan2(_v.z, _v.x);
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 0.8);

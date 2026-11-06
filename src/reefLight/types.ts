@@ -49,4 +49,8 @@ export interface ReefLightCacheOptions {
   readonly alwaysBake?: boolean;
   /** Save a fresh bake for next time (default: on the local dev server). */
   readonly save?: boolean;
+  /** Told what is happening: loading the cached light, or baking it (with the share done, 0..1). */
+  readonly onProgress?: (phase: ReefLightPhase, done: number) => void;
 }
+
+export type ReefLightPhase = 'cache' | 'bake';

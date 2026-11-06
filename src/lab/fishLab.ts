@@ -3,7 +3,7 @@
 // the reference-photo tool (labRef) drives.
 import * as THREE from 'three';
 import { SPECIES, type Species } from '../species.js';
-import { buildFishModel, loadFishModel, posePectoral, type FishModel } from '../fishModel.js';
+import { buildFishModel, loadFishModel, mountPectoral, posePectoral, posePectoralFan, type FanPose, type FishModel } from '../fishModel.js';
 import type { NormalisedModel } from '../fishModel/customModels.js';
 import { PhotoCamera } from '../photo.js';
 import { LightRig } from '../rig.js';
@@ -34,6 +34,9 @@ const BREATH_HZ = 1.2, VENT_AMP = 0.035, GAPE_AMP = 0.07;
 const ERECT_SLOW_HZ = 0.7, ERECT_SWING = 0.6;
 const PECT_RATE = 9;
 const FAN_SPREAD = 0.9;
+/** The lab's fan pose (opened about the vertical only) and the fans' beat rate and effort while swimming. */
+const LAB_FAN_POSE: FanPose = { roll: 0, yaw: FAN_SPREAD, flap: 0 };
+const FAN_RATE_SHARE = 0.25, FAN_LAB_BEAT = 0.4;
 
 export interface LabOptions {
   readonly yaw: number;
@@ -276,11 +279,18 @@ export class FishLab implements LabHost {
     // hold.erect: erectile spines (0 lowered, 1 as drawn, 2 raised); else they rise and fall slowly.
     if (u.uErect) u.uErect.value = hold.erect ?? (swim ? 1 + ERECT_SWING * Math.sin(t * ERECT_SLOW_HZ) : 1);
     for (const p of m.pects) {
-      if (m.fan) p.rotation.set(0, p.side * FAN_SPREAD, 0);
+      // Fans: the lab's own spread (pectoralOutline assumes it), beating and rippling while swimming.
+      if (m.fan && swim) posePectoralFan(p, t * PECT_RATE * FAN_RATE_SHARE, FAN_LAB_BEAT, LAB_FAN_POSE);
+      else if (m.fan) {
+        p.rotation.set(0, p.side * FAN_SPREAD, 0);
+        p.uPBend?.value.setX(0);
+        p.uPWave?.value.set(0, 0);
+      }
       // hold.pect: a fixed stroke phase, to look at the rays' bend
       else if (hold.pect != null) posePectoral(p, hold.pect, 0.5 + 0.3 * Math.sin(hold.pect), 0.2 + 0.25 * Math.cos(hold.pect));
       else if (swim) posePectoral(p, t * PECT_RATE, 0.5 + 0.3 * Math.sin(t * PECT_RATE), 0.2 + 0.25 * Math.cos(t * PECT_RATE));
       else posePectoral(p, -Math.PI / 2, 0.5, 0);   // glide pose: half open, flat
+      if (!m.custom) mountPectoral(p, u);   // ride on the body wave
     }
   }
 

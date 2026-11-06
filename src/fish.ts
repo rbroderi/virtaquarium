@@ -20,7 +20,8 @@
 // The fish also drifts with the water: position += (velocity relative to water + flow) * dt.
 import * as THREE from 'three';
 import { Brain } from './brain.js';
-import { buildFishModel, posePectoral, type FishModel } from './fishModel.js';
+import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, FAN_POSE, type FishModel } from './fishModel.js';
+import { limitStep, STEP_CRAWL_BL } from './world/stepLimit.js';
 import { clamp, lerp, range, wrapAngle, type Rng } from './util.js';
 import type { Species } from './species.js';
 import type { SwimWorld } from './world/ports.js';
@@ -50,7 +51,7 @@ const VENT_AMPLITUDE = 0.035;
 
 const _d = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vector3();
 const _lat = new THREE.Vector3(), _flow = new THREE.Vector3(), _gaze = new THREE.Vector3(), _n = new THREE.Vector3();
-const _c = new THREE.Vector3(), _t = new THREE.Vector3();
+const _c = new THREE.Vector3(), _t = new THREE.Vector3(), _prev = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 
 /** Eye saccade state: the gaze target held between jumps, and the eased current gaze. */
@@ -111,6 +112,12 @@ export class Fish implements SpineBody {
   private readonly sFold = springState();
   private readonly sCup = springState();
   private readonly pectSprings: PectoralSprings[];
+  /** Speed of the water carrying the fish this step (units/s). */
+  private drift = 0;
+  /** Steps the global step limit cut short (world/stepLimit.ts), for the motion check. */
+  limitedSteps = 0;
+  /** Fan pectorals swept back at speed (lionfish), 0..1. */
+  private readonly fanFold = springState();
   private gazeState: GazeState | null = null;
 
   constructor(sp: Species, name: string, rng: Rng) {
@@ -197,10 +204,16 @@ export class Fish implements SpineBody {
     _d.normalize();
 
     const s: StepState = { want, U: Math.max(0, this.speed), burst: want > 1, omegaMax: 0, T: 0, kf: 0, af: 0 };
+    _prev.copy(this.pos);
+    const v0 = this.vel.length();
     this.turnTowards(dt, s);
     this.controlThrust(s);
     this.integrate(dt, world, s);
     this.enforceLimits(dt, world, s.U);
+    // No step longer than the fish can swim (its speed through the water, the drift and any backing):
+    // corrections out of rock or into a shelter finish over the next frames instead of in a jump.
+    const reach = Math.max(v0, this.vel.length()) + this.drift + brain.backing;
+    if (limitStep(_prev, this.pos, reach, STEP_CRAWL_BL * this.size, dt)) this.limitedSteps++;
     this.orient(dt, s.U);
     this.animate(dt, world, s);
   }
@@ -267,6 +280,7 @@ export class Fish implements SpineBody {
     this.vel.copy(this.dir).multiplyScalar(vfNew).add(_lat);
     this.speed = vfNew;
     world.flow(this.pos, _flow);
+    this.drift = _flow.length();
     this.pos.addScaledVector(this.vel, dt).addScaledVector(_flow, dt);
     if (brain.backing) {
       // Swimming backwards into the cave: the body wave runs tail to head (phase below) and pushes it home.
@@ -292,8 +306,10 @@ export class Fish implements SpineBody {
     // A fish in its shelter is under the rock's top (the height field holds only the top): keep it
     // between the gap's floor and roof instead.
     const sh = this.brain.sheltered;
-    if (sh && this.pos.y > sh.top - 0.1 * L) this.pos.y = sh.top - 0.1 * L;
-    if (sh && this.pos.y < sh.floor) this.pos.y = Math.min(sh.floor, this.pos.y + 0.5 * L * dt);
+    // Eased in, not snapped: a fish that takes up its shelter from above settles under the roof.
+    const ease = (0.5 * L + U) * dt;
+    if (sh && this.pos.y > sh.top - 0.1 * L) this.pos.y = Math.max(sh.top - 0.1 * L, this.pos.y - ease);
+    if (sh && this.pos.y < sh.floor) this.pos.y = Math.min(sh.floor, this.pos.y + ease);
     if (!this.spine) this.pushOutOfRock(dt, world, U);
     else this.pushEelHeadOutOfRock(dt, world, U);
     this.pos.y = clamp(this.pos.y, B.y0, B.y1);
@@ -470,11 +486,18 @@ export class Fish implements SpineBody {
     const fPect = 1.0 + 1.2 * blEq * labri + 0.6 * Math.abs(this.turnRate);
     this.pectPhase += dt * Math.PI * 2 * fPect;
     const pectAmp = clamp(0.15 + labri * (0.25 + 0.35 * blEq / Math.max(sw.gait, 1)) + 0.15 * Math.abs(this.turnRate), 0, 0.85);
+    const u = this.model.uniforms;
+    // Lionfish fans stay spread: they beat and ripple at half the rowing rate rather than row, harder
+    // while swimming fast, turning or stalking with the fans flared. At speed the water sweeps them back
+    // along the flanks (on a spring, so they settle as it slows; not while stalking).
+    const stalking = this.brain.mode === 'stalk';
+    const fanBeat = clamp(blEq / Math.max(sw.gait, 1) + 0.6 * Math.abs(this.turnRate) + (stalking ? 0.5 : 0), 0, 1);
+    const fanFold = this.model.fan ? clamp(spring(this.fanFold, stalking ? 0 : smoothstep(0.25, 0.9, U / (sw.maxBL * L)), 4, 0.8, dt), 0, 1) : 0;
     this.model.pects.forEach((p, i) => {
       const side = p.side;
       if (this.model.fan) {
-        // Lionfish fans stay spread; they ripple rather than row.
-        p.rotation.set(side * 0.25, side * (0.75 + 0.1 * Math.sin(this.pectPhase * 0.5)), 0.35);
+        posePectoralFan(p, this.pectPhase * 0.5 + (side > 0 ? 0 : 0.3), fanBeat, FAN_POSE, fanFold);
+        mountPectoral(p, u);
         return;
       }
       const springs = this.pectSprings[i];
@@ -488,6 +511,7 @@ export class Fish implements SpineBody {
       const open = spring(springs.open, (0.2 + pectAmp * turnBias * (0.5 + 0.5 * Math.sin(ph))) * (1 - 0.75 * tuck), 7, 0.5, dt);
       const flap = spring(springs.flap, (0.2 + 0.25 * Math.cos(this.pectPhase)) * (1 - 0.5 * tuck), 7, 0.5, dt);
       posePectoral(p, ph, open, flap);
+      mountPectoral(p, u);
     });
   }
 }

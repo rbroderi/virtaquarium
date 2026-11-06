@@ -32,6 +32,8 @@ export interface SwimUniforms {
   uErect?: Uniform<number>;
   uGaze?: Uniform<THREE.Vector2>;
   uPBend?: Uniform<THREE.Vector3>;
+  /** Pectoral ripple across the rays: x phase (rad), y amplitude (fin lengths, signed per side). */
+  uPWave?: Uniform<THREE.Vector2>;
 }
 
 /** Light transport and shader options for one swim material. */
@@ -134,6 +136,15 @@ float erectAngle() {
 #ifdef FISH_PECT
 uniform vec3 uPBend;
 float pectFlex(float y) { return 1.0 - 0.45 * clamp(y / (0.5 * uPBend.z), -1.0, 1.0); }
+// A ripple running across the rays, from the leading (upper) rays to the trailing ones, growing towards
+// the tips: the lionfish fan's undulating membrane. uPWave.x: phase, y: amplitude (fin lengths; 0 for
+// rowed fins). About one wavelength spans the fan.
+uniform vec2 uPWave;
+const float PECT_WAVE_K = 2.6;
+float pectWave(vec2 q) {
+  float r = length(q) / uPBend.z;
+  return uPWave.y * uPBend.z * r * r * sin(uPWave.x + PECT_WAVE_K * atan(q.y, max(q.x, 1e-4)));
+}
 #endif
 #ifdef FISH_COVER
 attribute float aCover;
@@ -237,6 +248,12 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
             float dzdx = 2.0 * uPBend.x * r * pectFlex(position.y);
             float dzdy = abs(position.y) < 0.5 * uPBend.z ? -0.9 * uPBend.x * r * r : 0.0;
             objectNormal = vec3(objectNormal.x - dzdx * objectNormal.z, objectNormal.y - dzdy * objectNormal.z, objectNormal.z); }
+          if (uPWave.y != 0.0) {
+            const float E = 0.002;
+            float wx = (pectWave(position.xy + vec2(E, 0.0)) - pectWave(position.xy - vec2(E, 0.0))) / (2.0 * E);
+            float wy = (pectWave(position.xy + vec2(0.0, E)) - pectWave(position.xy - vec2(0.0, E))) / (2.0 * E);
+            objectNormal = vec3(objectNormal.x - wx * objectNormal.z, objectNormal.y - wy * objectNormal.z, objectNormal.z);
+          }
         #endif
         objectNormal = vec3(objectNormal.x * swC - objectNormal.z * swS, objectNormal.y, objectNormal.x * swS + objectNormal.z * swC);
         #ifdef USE_TANGENT
@@ -259,7 +276,7 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
             p0.xy = mix(p0.xy, aErect.xy + vec2(c * d.x - s * d.y, s * d.x + c * d.y), erSpine); }
         #endif
         #ifdef FISH_PECT
-          p0.z += uPBend.x * uPBend.z * pow(clamp(p0.x / uPBend.z, 0.0, 1.0), 2.0) * pectFlex(p0.y);
+          p0.z += uPBend.x * uPBend.z * pow(clamp(p0.x / uPBend.z, 0.0, 1.0), 2.0) * pectFlex(p0.y) + pectWave(p0.xy);
         #endif
         #ifdef FISH_FIN
           // Median fins fold: rays above the body lower and sweep back (not the caudal blade).

@@ -168,12 +168,44 @@ export interface PackedBake {
 
 export interface BakeResult { readonly info: ReefLightInfo; readonly packed: PackedBake }
 
-/** Bake the reef light, returning the packed targets too (for the cache). */
+/** Bake the reef light, returning the packed targets too (for the cache). Runs to completion. */
 export function bakeReefLightPacked(renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, pack: PackOptions = defaultPackOptions()): BakeResult {
+  const steps = bakeSteps(renderer, reef, opts, pack);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** How long the async bake works before giving the browser a frame (ms). */
+const BAKE_SLICE_MS = 50;
+
+/**
+ * The same bake, giving the browser a frame every BAKE_SLICE_MS so the page can show progress
+ * (onProgress: 0..1) instead of freezing for the whole bake.
+ */
+export async function bakeReefLightPackedAsync(renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, onProgress: (done: number) => void, pack: PackOptions = defaultPackOptions()): Promise<BakeResult> {
+  const steps = bakeSteps(renderer, reef, opts, pack);
+  let slice = performance.now();
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+    if (performance.now() - slice < BAKE_SLICE_MS) continue;
+    onProgress(r.value);
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    slice = performance.now();
+  }
+}
+
+/** The bake as steps: yields the share done (0..1) after each ray direction, returns the result. */
+function* bakeSteps(renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, pack: PackOptions): Generator<number, BakeResult, void> {
   const { sun, sky, ground, camera = null } = opts;
   const skyDirs = opts.skyDirs ?? DEFAULTS.skyDirs, bounceDirs = opts.bounceDirs ?? DEFAULTS.bounceDirs;
   const sunDirs = opts.sunDirs ?? DEFAULTS.sunDirs, bounces = opts.bounces ?? DEFAULTS.bounces, res = opts.res ?? DEFAULTS.res;
   const t0 = performance.now();
+  // Progress by work: a bounce direction draws three views (depth, back faces, albedo), the others one.
+  const totalWork = sunDirs + skyDirs + bounces * bounceDirs * 3;
+  let work = 0;
   const group = reef.group, sand = group.getObjectByName('sand');
   group.updateMatrixWorld(true);
   const box = reefBounds(group, sand);
@@ -291,18 +323,24 @@ export function bakeReefLightPacked(renderer: THREE.WebGLRenderer, reef: ReefLig
   const sunRT = gridRT();
   clear(sunRT);
   U.uW.value = 1 / sunDirs;
-  cone(sun.dir, sun.cone ?? DEFAULTS.sunCone, sunDirs).forEach((d, i) => {
+  let first = true;
+  for (const d of cone(sun.dir, sun.cone ?? DEFAULTS.sunCone, sunDirs)) {
     shoot(d);
     pass(mats.gridSun, sunRT);
-    if (screen) { U.uFirst.value = i === 0 ? 1 : 0; pass(mats.scrSun, screen.target); }
-  });
+    if (screen) { U.uFirst.value = first ? 1 : 0; pass(mats.scrSun, screen.target); }
+    first = false;
+    yield ++work / totalWork;
+  }
   U.uPS.value = sunRT.texture;
 
   // 2. Sky visibility.
   const skyRT = gridRT();
   clear(skyRT);
   U.uW.value = 1 / skyDirs;
-  for (const d of fibonacci(skyDirs)) { shoot(d); pass(mats.gridSky, skyRT); }
+  for (const d of fibonacci(skyDirs)) {
+    shoot(d); pass(mats.gridSky, skyRT);
+    yield ++work / totalWork;
+  }
   U.uPA.value = skyRT.texture;
 
   // 3. Bounces (ping-pong), the screen bake on the last one.
@@ -319,6 +357,8 @@ export function bakeReefLightPacked(renderer: THREE.WebGLRenderer, reef: ReefLig
       shoot(d, { back: true, albedo: true });
       pass(mats.gridBounce, out);
       if (last && screen) pass(mats.scrBounce, screen.target);
+      work += 3;
+      yield work / totalWork;
     }
     U.uPB.value = attachment(out, 0); U.uPC.value = attachment(out, 1);
   }

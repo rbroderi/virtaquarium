@@ -13,6 +13,9 @@ export interface FishStats {
   rise: number;
   jitter: number;
   inRock: number;
+  /** Position at the previous step, and the largest step taken, as a speed in body lengths per second. */
+  readonly last: THREE.Vector3;
+  maxStep: number;
 }
 
 /**

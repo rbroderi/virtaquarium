@@ -5,17 +5,23 @@ import type { SwimUniforms } from './swimShader.js';
 
 /** One pectoral fin's pivot (rotated by posePectoral); its first child is the fin mesh. */
 export class PectoralPivot extends THREE.Group {
+  /** Where the fin's base sits on the unbent body (mountPectoral moves it with the body wave). */
+  readonly rest = new THREE.Vector3();
+
   constructor(
     /** +1 right, -1 left. */
     readonly side: number,
     readonly fin: THREE.Mesh,
     /** The fin's ray-bending uniform (procedural fins only). */
     readonly uPBend: THREE.IUniform<THREE.Vector3> | undefined,
+    /** The fin's ripple uniform (procedural fins only). */
+    readonly uPWave?: THREE.IUniform<THREE.Vector2>,
   ) {
     super();
     this.add(fin);
     this.userData['side'] = side;
     this.userData['uPBend'] = uPBend;
+    this.userData['uPWave'] = uPWave;
   }
 }
 

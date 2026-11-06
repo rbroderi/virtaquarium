@@ -6,6 +6,10 @@ import { range, clamp, type Rng } from '../util.js';
 import { sharedJellyGeometry } from './geometry.js';
 import { BELL_VERT, BELL_FRAG, TENT_VERT, TENT_FRAG, ARM_VERT, ARM_FRAG } from './shaders.js';
 import type { JellyBounds, JellySpecies, JellyWorld } from './types.js';
+import { limitStep } from '../world/stepLimit.js';
+
+/** How fast a jelly may be eased back inside the tank beyond its own drift (units/s). */
+const JELLY_CRAWL = 0.05;
 
 type Uniform<T> = { value: T };
 interface JellyUniforms {
@@ -55,6 +59,7 @@ export class Jelly {
   private wanderT = 0;
   private readonly _q = new THREE.Quaternion();
   private readonly _f = new THREE.Vector3();
+  private readonly prevPos = new THREE.Vector3();
   private readonly trailV = new THREE.Vector3();   // velocity of the trail spring
   private readonly _t = new THREE.Vector3();
 
@@ -97,8 +102,10 @@ export class Jelly {
   update(dt: number, world: JellyWorld, others: readonly Jelly[] = []): void {
     this.bumpApart(dt, others);
     const c = this.pulse(dt);
-    this.drift(dt, world);
+    this.prevPos.copy(this.pos);
+    const drift = this.drift(dt, world);
     this.right(dt, world.bounds);
+    limitStep(this.prevPos, this.pos, this.vel.length() + drift, JELLY_CRAWL, dt);
     this.model.position.copy(this.pos);
     this.model.quaternion.copy(this._q.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, this.axis));
     this.u.uPulse.value = c;
@@ -133,10 +140,11 @@ export class Jelly {
     return c;
   }
 
-  /** The kreisel current carries it round. */
-  private drift(dt: number, world: JellyWorld): void {
+  /** The kreisel current carries it round. Returns the current's speed here. */
+  private drift(dt: number, world: JellyWorld): number {
     world.flow(this.pos, this._f);
     this.pos.addScaledVector(this.vel, dt).addScaledVector(this._f, dt);
+    return this._f.length();
   }
 
   /**

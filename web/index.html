@@ -33,6 +33,16 @@
   #brain .bar.social i { background: #c49aff; } #brain .bar.boredom i { background: #e8d36a; }
   #brain .bar.trait i { background: #8fb2c4; } #brain .bar.opt i { background: #4a7a90; } #brain .bar.on i { background: #ffd36a; }
   #brain .fact { color: #a9c9d8; font-size: 12px; line-height: 1.5; margin: 12px 0 0; }
+  /* Loading screen: over the tank until the first frame is drawn. */
+  #loading { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 40%, #145a6e 0%, #0b3a4a 55%, #062431 100%); transition: opacity 0.9s ease; }
+  #loading.done { opacity: 0; pointer-events: none; }
+  #loading .box { width: min(420px, 80vw); text-align: center; }
+  #loading .title { font-size: 26px; letter-spacing: 0.04em; margin-bottom: 18px; color: #eaf6ff; }
+  #loading .bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+  #loading .bar i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, #5cc8ff, #9fe8ff); transition: width 0.35s ease; }
+  #loading .label { margin-top: 12px; min-height: 1.4em; font-size: 14px; color: #a9c9d8; }
+  #loading.failed .bar i { background: #ff7a6a; }
+  #loading.failed .label { color: #ffb4a8; }
 </style>
 </head>
 <body>
@@ -40,6 +50,13 @@
 <div id="glass"></div>
 <div id="tags"></div>
 <div id="brain"></div>
+<div id="loading" role="progressbar" aria-label="Loading the aquarium">
+  <div class="box">
+    <div class="title">Virtual Aquarium</div>
+    <div class="bar"><i></i></div>
+    <div class="label">Starting</div>
+  </div>
+</div>
 <div id="hint">Click to feed · click a fish to see its brain · H for help</div>
 <div id="help">
   <div><kbd>click</kbd>drop food (or select a fish)</div>
