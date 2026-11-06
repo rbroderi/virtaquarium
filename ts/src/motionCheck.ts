@@ -1,0 +1,127 @@
+// Motion checks, run on the tank page with ?check=motion (report in the console, in window.motionCheck,
+// and POSTed to /__done for a headless run). The tank is stepped at 30 Hz for two simulated minutes
+// without drawing, and for every fish it measures
+//   - jumps: the fastest climb, in body lengths per second (a snap up a coral head shows as a spike);
+//   - jitter: up-down reversals of over 2% of a body length that come within half a second of each
+//     other (bobbing over branching coral);
+// and for each eel, frames where a node of its body (with the head lift the shader adds) is inside a
+// cave roof, and where a node of the body as drawn is inside the rock field (eelBodyInRock).
+// It also samples shoal structure, shelter use and the cleaning station (checks/motionStats.ts).
+// &probe=10,60: at those seconds, log the eel's chain nodes with the rock distance and the meshes there.
+import * as THREE from 'three';
+import type { AquariumHandle } from './app/handle.js';
+import type { Fish } from './fish.js';
+import type { World } from './world.js';
+import { postDone } from './checks/report.js';
+import { CleaningTally, EelTally, ShoalSampler, spineNodes, type FishStats } from './checks/motionStats.js';
+
+const STEPS_PER_SECOND = 30;
+const DT = 1 / STEPS_PER_SECOND;
+const DEFAULT_SECONDS = 120;
+const SECONDS_PER_MINUTE = 60;
+/** A reversal counts as jitter when the swing is over this share of a body length ... */
+const JITTER_SWING = 0.02;
+/** ... and comes within this many steps of the last one. */
+const JITTER_STEPS = 15;
+const VY_EPSILON = 1e-4;
+/** A fish's centre this deep in rock (body lengths) counts as inside it. */
+const IN_ROCK_DEPTH = 0.1;
+/** Fish that have lost to a rival this often keep a truce. */
+const TRUCE_LOSSES = 2;
+const PROBE_TEXT_LIMIT = 200;
+
+
+/** Logs the eel's chain nodes with the rock distance and the meshes there. */
+function probe(world: World): void {
+  const eel = world.fish.find((f) => f.spine);
+  const nodes = eel ? spineNodes(eel) : null;
+  if (!eel || !nodes) return;
+  console.log('PROBE lift', eel.model.uniforms.uLift.value.toFixed(2), 'pitch', eel.pitch.toFixed(2), 'hf at pos', world.reefHeight(eel.pos.x, eel.pos.z).toFixed(2));
+  console.log('PROBE caves', JSON.stringify(world.reef.caves.map((c) => ({ x: c.x, z: c.z, yaw: c.yaw, ground: c.ground, mouth: c.mouth }))));
+  console.log('PROBE eel', JSON.stringify({ pos: eel.pos, dir: eel.dir, home: eel.brain.home, mode: eel.brain.mode }));
+  nodes.forEach((p, i) => {
+    const hits: string[] = [];
+    world.reef.group.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const b = new THREE.Box3().setFromObject(o);
+      if (!b.containsPoint(p)) return;
+      const path: string[] = [];
+      for (let q: THREE.Object3D | null = o; q && q !== world.reef.group; q = q.parent) path.push(q.name || q.type);
+      hits.push(path.join('<') + (o.userData['noHeight'] ? ' [noH]' : '') + (o.userData['solid'] ? ' [solid]' : ''));
+    });
+    console.log('PROBE node', i, p.x.toFixed(2), p.y.toFixed(2), p.z.toFixed(2), 'd', world.rockDist(p).toFixed(2), 'hf', world.reefHeight(p.x, p.z).toFixed(2),
+      'roof', JSON.stringify(world.roofAt(p.x, p.z)), hits.join(' | ').slice(0, PROBE_TEXT_LIMIT));
+  });
+}
+
+/** Climb and jitter for one fish this step. */
+function trackClimb(s: FishStats, n: number): void {
+  const f = s.f, L = f.size, vy = (f.pos.y - s.y) / DT;
+  s.rise = Math.max(s.rise, vy / L);
+  // A reversal: the climb changes sign. Count it when the swing since the last one is big and quick.
+  if (Math.sign(vy) !== Math.sign(s.vy) && Math.abs(vy) > VY_EPSILON) {
+    if (s.ext && Math.abs(f.pos.y - s.ext.y) > JITTER_SWING * L && n - s.ext.n < JITTER_STEPS) s.jitter++;
+    s.ext = { y: f.pos.y, n };
+  }
+  s.y = f.pos.y;
+  s.vy = vy;
+}
+
+export async function main(aq: AquariumHandle): Promise<void> {
+  const { world } = aq;
+  const qs = new URLSearchParams(location.search);
+  const frames = STEPS_PER_SECOND * Number(qs.get('seconds') ?? DEFAULT_SECONDS);
+  const stats: FishStats[] = world.fish.map((f) => ({ f, y: f.pos.y, vy: 0, ext: null, rise: 0, jitter: 0, inRock: 0 }));
+  const eels = new Map(world.fish.filter((f) => f.spine).map((f) => [f, new EelTally()] as const));
+  const cleaning = world.station ? new CleaningTally(world.station) : null;
+  const shoals = new ShoalSampler(world.fish);
+  if (qs.get('night') === '1') aq.setLight(0);
+  if (qs.has('light')) aq.setLight(Number(qs.get('light')));   // e.g. 0.35: dusk, when lionfish hunt
+  const probeAt = (qs.get('probe') || '').split(',').filter(Boolean).map((s) => Math.round(Number(s) * STEPS_PER_SECOND));
+
+  for (let n = 0; n < frames; n++) {
+    if (probeAt.includes(n)) { console.log('PROBE t', n / STEPS_PER_SECOND); probe(world); }
+    if (n % STEPS_PER_SECOND === 0) shoals.sample(world.fish);
+    world.update(DT);
+    for (const c of aq.critters) c.update(DT, world);
+    cleaning?.step(DT);
+    for (const s of stats) {
+      trackClimb(s, n);
+      const f = s.f;
+      if (!f.spine && world.rockDist(f.pos) < -IN_ROCK_DEPTH * f.size) s.inRock++;
+      eels.get(f)?.step(f, world);
+    }
+  }
+
+  const minutes = (frames * DT) / SECONDS_PER_MINUTE;
+  const rows = stats.map((s) => {
+    const eel = eels.get(s.f);
+    return {
+      fish: s.f.name || s.f.sp.id, species: s.f.sp.id, riseBLs: +s.rise.toFixed(2), jitterPerMin: +(s.jitter / minutes).toFixed(1), inRockFrames: s.inRock,
+      ...(eel ? eel.row() : {}),
+    };
+  });
+  const perMinute = (count: (f: Fish) => number): number => +(world.fish.reduce((a, f) => a + count(f), 0) / minutes).toFixed(1);
+  const eelRows = [...eels.values()];
+  const sum = {
+    fish: rows.length,
+    maxRiseBLs: Math.max(...rows.map((r) => r.riseBLs)),
+    meanJitterPerMin: +(rows.reduce((a, r) => a + r.jitterPerMin, 0) / rows.length).toFixed(2),
+    inRockFrames: rows.reduce((a, r) => a + r.inRockFrames, 0),
+    eelRoofFrames: eelRows.map((e) => e.roof),
+    // Eel body nodes inside the rock field (any node > 0.08 deep), of all frames.
+    eelBodyInRock: eelRows.map((e) => e.summary()),
+    // Fear passed on by a neighbour's flight (brain _perceive), per simulated minute.
+    contagionPerMin: perMinute((f) => f.brain.contagions),
+    firstHandPerMin: perMinute((f) => f.brain.firstHand),
+    shoals: shoals.summary(),
+    shelteredShare: shoals.shelteredShare(),
+    lionfishStrikes: world.fish.reduce((a, f) => a + f.brain.strikes, 0),
+    truces: world.fish.reduce((a, f) => a + [...(f.brain.lostTo?.values() ?? [])].filter((k) => k >= TRUCE_LOSSES).length, 0),
+    ...(cleaning ? { cleaning: cleaning.summary() } : {}),
+  };
+  Reflect.set(window, 'motionCheck', { sum, rows });   // debugging hook, as the JS build exposed it
+  console.table(rows);
+  console.log('motion check', sum);
+  await postDone(JSON.stringify({ sum, rows }));
+}

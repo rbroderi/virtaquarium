@@ -1,0 +1,30 @@
+{
+  "name": "virtaquarium-ts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Strictly typed TypeScript port of the virtual reef aquarium (PC build + Node tools)",
+  "type": "module",
+  "scripts": {
+    "build": "tsx tools/build.ts",
+    "watch": "tsx tools/build.ts --watch",
+    "serve": "tsx tools/serve.ts 8090",
+    "start": "npm run build && npm run serve",
+    "bake": "npm run build && tsx tools/bake.ts",
+    "check": "npm run build && tsx tools/check.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "three": "0.170.0",
+    "three-mesh-bvh": "0.9.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/three": "0.170.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,38 @@
+{
+    "name": "screensaver-test",
+    "version": "1.0.0",
+    "description": "RSG 2.0 test: the virtual aquarium as a Roku screensaver",
+    "main": "src/index.ts",
+    "type": "module",
+    "scripts": {
+        "sync-assets": "node scripts/sync-assets.mjs",
+        "build": "rk build",
+        "test": "jest",
+        "coverage": "jest --coverage --runInBand --passWithNoTests --testTimeout=60000 --forceExit",
+        "lint": "eslint --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,mjs,cjs,js}\"",
+        "type-check": "rk gen-types && tsc --noEmit",
+        "clean": "rm -rf dist-dev dist-build coverage"
+    },
+    "dependencies": {
+        "@roku-sdk/components": "^2.19.1",
+        "@roku-sdk/interfaces": "^2.19.1",
+        "@roku-sdk/rsg-ts": "^2.19.1",
+        "@roku-sdk/solid": "^2.19.1",
+        "@roku-sdk/testing-library": "^2.19.1",
+        "@roku-sdk/tooling": "^2.19.1"
+    },
+    "devDependencies": {
+        "@roku-sdk/dev-tools": "^2.19.1",
+        "@types/jest": "^30.0.0",
+        "eslint": "^9.39.2",
+        "jest": "^30.4.1",
+        "typescript": "^5.9.3"
+    },
+    "engines": {
+        "npm": ">=8.5.0",
+        "node": ">=24.0.0"
+    },
+    "author": "Roku SDK Team",
+    "license": "MIT",
+    "prettier": "@roku-sdk/dev-tools/linter-config/.prettierrc.json"
+}

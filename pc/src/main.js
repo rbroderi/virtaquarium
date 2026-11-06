@@ -114,7 +114,7 @@ const rig = new LightRig(scene, sun, params.get('rig') || 'sun');
 const _ndc = new THREE.Vector3();   // autofocus scratch
 // f/5.6 keeps most of the reef sharp with the far rock and near-glass motes softened, as a typical tank
 // photo; gentler grain than a high-ISO shot. ?fstop=2.8 for a shallower look.
-const photo = PHOTO ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 5.6, iso: 0.6, glass: params.get('glass') !== '0' }) : null;
+const photo = PHOTO ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 5.6, iso: 0.6, glass: params.get('glass') === '1' }) : null;   // front-glass reflection: off unless ?glass=1
 stage('renderer, environment, caustics');
 
 // Optional Tripo3D / GLB models replace procedural fish species by species.
@@ -451,5 +451,7 @@ window.aquarium = { THREE, scene, camera, renderer, world, reef, jellies, SPECIE
 if (params.get('check') === 'critters') import('./critterCheck.js').then((m) => m.main(window.aquarium));
 // ?check=motion: fish climb, bobbing and eel-in-roof checks (motionCheck.js).
 if (params.get('check') === 'motion') import('./motionCheck.js').then((m) => m.main(window.aquarium));
+// ?check=perf: what a frame costs (perfCheck.js).
+if (params.get('check') === 'perf') import('./perfCheck.js').then((m) => m.main(window.aquarium));
 // ?check=look: render fixed moments to out/look-*.png, with close-ups (lookCheck.js).
 if (params.get('check') === 'look') import('./lookCheck.js').then((m) => m.main(window.aquarium));

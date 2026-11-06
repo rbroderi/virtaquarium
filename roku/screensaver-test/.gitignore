@@ -1,0 +1,7 @@
+# Local AI-context breadcrumb (rk update-ai-context)
+.roku/
+# Copied from ../assets by scripts/sync-assets.mjs
+pkg/aquarium/
+src/aquarium/manifest.generated.ts
+# Build output (rebuilt from pkg and src)
+dist-build/

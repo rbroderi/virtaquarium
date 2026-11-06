@@ -1,0 +1,13 @@
+<?xml version = "1.0" encoding = "utf-8" ?>
+<!--
+Copyright (c) 2026 Roku, Inc.
+SPDX-License-Identifier: MIT
+-->
+
+
+<component name="BaseAppScene" extends="Scene" backExitsScene="true">
+    <children>
+        <AquariumScene id="aquariumScene" />
+    </children>
+    <script type="text/brightscript" uri="BaseAppScene.brs" />
+</component>

@@ -1,0 +1,7 @@
+# pnpm 11 refuses to install until every dependency with an install script is
+# either allowed or denied here. Add new entries with `pnpm approve-builds`.
+allowBuilds:
+  "@roku-sdk/tooling": true
+  "@parcel/watcher": false
+  esbuild: false
+  unrs-resolver: false

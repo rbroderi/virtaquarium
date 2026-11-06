@@ -8,6 +8,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, lerp, mulberry32, makeCanvas, shade, rgba } from './util.js';
 import { addCaustics } from './water.js';
 import { organicPass, roundCorners, wobble, valueNoise } from './organic.js';
+import { useLods } from './lod.js';
 
 // ---------- side profile ----------
 
@@ -1936,6 +1937,12 @@ function bodyGeometry(prof, sp) {
   return g;
 }
 
+// Levels of detail (lod.js): the body is ~36k triangles at every size, several to a pixel on a small
+// fish, three times a frame (view, shadow map, motion-blur velocity). The weights put each attribute's
+// error in body lengths, as the position's is: u runs along the length (x 2 for margin, the texture
+// has sharp stripes), v round the girth, about a third of it (x 6); the jaw and gill weights 1. The
+// gape and the gill margin are seams, so they are locked.
+const BODY_LOD_WEIGHTS = { normal: 1, uv: [2, 6], aJaw: 1, aJawG: 1, aCover: 1, aSlit: 1, aThick: 0 };
 // ---------- assembled model (cached per species) ----------
 
 const cache = new Map();
@@ -2223,6 +2230,7 @@ export function buildFishModel(sp, opts = {}) {
 
   const group = new THREE.Group();
   const body = new THREE.Mesh(a.bodyGeo, bodyMat);
+  useLods(body, BODY_LOD_WEIGHTS);
   const fins = new THREE.Mesh(a.finGeo, finMat);
   fins.renderOrder = 1;
   group.add(fins, body);

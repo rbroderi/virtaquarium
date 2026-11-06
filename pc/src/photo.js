@@ -12,7 +12,8 @@
 //                    0.04) and, fainter, off its inner face (glass/water, F0 0.0044), shifted by the
 //                    pane's thickness (2 t tan of the angle inside the glass), so a bright edge in the
 //                    room shows a double contour. A dim room with one window; 12 mm glass, the room
-//                    ~2.5 m behind the camera. glass: false turns it off (?glass=0).
+//                    ~2.5 m behind the camera. Off by default in the tank (main.js; ?glass=1 turns
+//                    it on); glass: false here turns it off.
 import * as THREE from 'three';
 import { METRES_PER_UNIT } from './water.js';
 

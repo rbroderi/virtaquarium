@@ -528,7 +528,9 @@ export class WaterRenderer {
       g.traverse((o) => {
         if (!o.isMesh) return;
         o.layers.enable(1);
-        o.onBeforeRender = (r, s, cam, geo, mat) => {
+        const own = o.onBeforeRender;   // e.g. the body's level of detail (fishModel.js pickLod)
+        o.onBeforeRender = (r, s, cam, geo, mat, grp) => {
+          own.call(o, r, s, cam, geo, mat, grp);
           if (mat !== V.mat) return;
           inv.copy(g.matrixWorld).invert();
           V.mat.uniforms.uPrevModel.value.multiplyMatrices(ud.prevWorld, V._m.multiplyMatrices(inv, o.matrixWorld));

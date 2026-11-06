@@ -64,7 +64,18 @@ class SpineChain {
     this.prev = Array.from({ length: SPINE_N }, () => new THREE.Vector3());
     this.ready = false;
   }
-  update(dt, fish, world, stiff) {
+  // Move node i to where the shader draws it (write() below, fishModel.js spineAt): the point on the
+  // straight body axis at its station, offset only across the body and up, each clamped as written to
+  // uSpine. The chain's own position along the axis and any offset past the clamps are not drawn, so
+  // the collision has to work on this point, or the body seen is somewhere it never tested.
+  drawn(i, fish, up, side, out = this.p[i]) {
+    const L = fish.size, x = 0.5 - i / (SPINE_N - 1);
+    _b.copy(fish.pos).addScaledVector(fish.dir, x * L);
+    _c.subVectors(this.p[i], _b);
+    const s = clamp(_c.dot(side) / L, -0.35, 0.35), u = clamp(_c.dot(up) / L, -0.25, 0.25);
+    return out.copy(_b).addScaledVector(side, (Number.isFinite(s) ? s : 0) * L).addScaledVector(up, (Number.isFinite(u) ? u : 0) * L);
+  }
+  update(dt, fish, world, stiff, up, side) {
     const L = fish.size, seg = L / (SPINE_N - 1), P = this.p;
     const head = _a.copy(fish.pos).addScaledVector(fish.dir, 0.5 * L);
     if (!this.ready) {
@@ -78,7 +89,7 @@ class SpineChain {
       P[i].add(_b);
     }
     P[0].copy(head); this.prev[0].copy(head);
-    const R = spineClear(fish);
+    const R = spineClear(fish), sand = world.bounds.y0;
     for (let it = 0; it < 4; it++) {
       for (let i = 1; i < SPINE_N; i++) {
         // Bending stiffness: pull towards the straight continuation of the two nodes ahead.
@@ -88,26 +99,27 @@ class SpineChain {
         _b.subVectors(P[i], P[i - 1]);
         const d = _b.length() || 1e-6;
         P[i].copy(P[i - 1]).addScaledVector(_b, seg / d);
-        // Rock and sand: the body lies over a ledge a little below the head. Rock well above the head is
-        // the crevice the eel is in (the height field is the rock's top), so that doesn't lift it.
-        // (Not in its burrow: there the body runs on into the reef behind the cave, hidden in the rock.)
-        if (fish.inBurrow(P[i])) continue;
-        const floor = world.reefHeight(P[i].x, P[i].z) - 0.05;
-        if (P[i].y < floor && floor < P[0].y + 0.15 * L) P[i].y = floor;
-        // The real rock surface in 3D (rockField.js): out along its normal, so the body that cuts a corner
-        // behind the head slides round the rock instead of through it. Tested where the shader draws the
-        // node (with the head lift).
-        const up = liftAt(fish, i), dr = world.rockDist(_c.set(P[i].x, P[i].y + up, P[i].z));
-        if (dr < R) {
-          world.rockNormal(_c, _t);
-          // Under a cave roof with the head below it, rock overhead is the roof: always out downwards,
-          // or a node pushed past the slab's middle pops out on top of it (and the body with it).
-          const roof = _t.y > 0.3 && P[0].y < P[i].y + up && world.roofAt(P[i].x, P[i].z);
-          if (roof && P[0].y < roof.y) _t.set(0, -1, 0);
-          P[i].addScaledVector(_t, R - dr);
+      }
+      // The body as drawn, kept off the rock by the same field the other fish use (rockField.js, which
+      // holds every rock and cave roof in 3D): each drawn node, with the shader's head lift, is pushed
+      // out along the surface normal to the body's radius, and off the sand. In its burrow (the crevice
+      // behind the cave, where the body runs on into the reef) the body may be in the rock, but wholly:
+      // a node within a body radius of the surface goes to whichever side is nearer, fully in or fully
+      // out, so the tail never straddles the surface and shows through it.
+      for (let i = 1; i < SPINE_N; i++) {
+        this.drawn(i, fish, up, side);
+        const lift = liftAt(fish, i);
+        _c.copy(P[i]).addScaledVector(up, lift);
+        const dr = world.rockDist(_c);
+        if (fish.inBurrow(_c)) {
+          if (Math.abs(dr) < R) P[i].addScaledVector(world.rockNormal(_c, _t), (dr < 0 ? -R : R) - dr);
+          continue;
         }
+        if (dr < R) P[i].addScaledVector(world.rockNormal(_c, _t), R - dr);
+        if (_c.y < sand + R) P[i].y += sand + R - _c.y;
       }
     }
+    for (let i = 1; i < SPINE_N; i++) this.drawn(i, fish, up, side);
     // Lurking at home, the body behind home lies along its burrow (inBurrow): held near the burrow's
     // axis, so the tail stays straight and hidden in the rock instead of snaking out of it.
     const b = fish.brain;
@@ -120,16 +132,6 @@ class SpineChain {
         const lim = 0.6 * (0.3 + 0.4 * Math.min(-s, 0.55 * L) / L), off = _t.length();
         if (off > lim) P[i].addScaledVector(_t, lim / off - 1);
       }
-    }
-    // Cave roofs (not in the height field): the body stays under one the head is below, or over one it
-    // swims across. The shader's head lift (uLift, liftY) raises the front further, so allow for it.
-    const lift = fish.model.userData.uniforms.uLift.value, r = 0.05 * L;
-    for (let i = 0; i < SPINE_N; i++) {
-      const roof = world.roofAt(P[i].x, P[i].z);
-      if (!roof) continue;
-      const x = 0.5 - i / (SPINE_N - 1), up = lift * Math.max(0, x - 0.1) ** 2 * 2.5 * L;
-      if (P[0].y < roof.y) P[i].y = Math.min(P[i].y, roof.y - r - up);
-      else P[i].y = Math.max(P[i].y, roof.top + r - up);
     }
     // Never let a bad step (a NaN from anywhere) stick in the chain: lay it out straight again next time.
     if (!P.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z))) this.ready = false;
@@ -341,12 +343,6 @@ export class Fish {
       if (head.y < B.y0) this.pos.y += Math.min(B.y0 - head.y, (0.5 * L + 1.2 * U) * dt);
     }
     this.pos.y = clamp(this.pos.y, B.y0, B.y1);
-    // A cave roof is a slab the height field doesn't hold: keep to the side of it the fish is on. (The
-    // rock field holds the roof for the others.)
-    const roof = this.spine && world.roofAt(this.pos.x, this.pos.z), rr = 0.05 * L;
-    if (roof && this.pos.y > roof.y - rr && this.pos.y < roof.top + rr) {
-      this.pos.y = this.pos.y < (roof.y + roof.top) / 2 ? roof.y - rr : roof.top + rr;
-    }
 
     // ---- orientation: heading + bank into turns ----
     _up.set(0, 1, 0).addScaledVector(this.dir, -this.dir.y).normalize();
@@ -415,7 +411,7 @@ export class Fish {
     }
     if (this.spine) {
       // The moray's chain does the bending; the analytic bend is off. Braced in its crevice, the body is stiff.
-      this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12);
+      this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12, _up, _side);
       this.spine.write(u.uSpine.value, this, _up, _side);
       u.uSpineOn.value = 1;
       u.uBend.value = u.uBendTail.value = 0;

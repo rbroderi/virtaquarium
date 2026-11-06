@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "Physically based virtual reef aquarium with per-fish brains (PC + Roku)",
   "dependencies": {
+    "meshoptimizer": "^0.22.0",
     "three": "^0.170.0",
     "three-mesh-bvh": "^0.9.18"
   },
