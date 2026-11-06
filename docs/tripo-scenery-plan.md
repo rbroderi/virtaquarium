@@ -5,8 +5,10 @@ Results: `rock_i` came out saturated magenta (toned with a `grade`), `rock_j` gr
 blobs (used); the first Montipora grew finger branches (kept as `coral_digitata`) and its retry gave
 plates; `sponge_ear` grew tubes (kept as `sponge_tube_orange`); the brain coral now has meandering
 ridges (the old one is `coral_brain_v1`, retired); the urchin has thin spines rather than slate pencils.
-`rock_b`, `rock_c` and `rock_e` are retired from the rock pool. Not done from section 5: the 1.15x stretch
-cap, the continuous back wall, the foreground pull-back. Roku: the backdrop needs a rebake.
+`rock_b`, `rock_c` and `rock_e` are retired from the rock pool. Section 5 layout fixes done the same day:
+the 1.15x stretch cap (`STRETCH` in reef.js), a continuous back wall in two staggered rows (1.8-3.2
+units tall), and the foreground pulled back half a unit (small props only at the front). Roku: the
+backdrop needs a rebake.
 
 Originally a plan only. Cost basis: the
 README and `tools/tripo.mjs` say a model costs 10-40 credits (1 credit = $0.01). The jobs here use

@@ -601,6 +601,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   const rockMat = addParallax(stdMat({ vertexColors: true, map: rockDetailTexture(rng), roughness: 0.95, bumpMap: pores, bumpScale: 3.0 }, 0.7), 0.05);
   const rocks = new THREE.Group();
   reef.add(rocks);
+  const STRETCH = 1.15;   // how far a generated rock may be stretched off its own proportions, per axis
   // A generated rock for a w x h x d slot, stretched by kx (sideways) and ky (up). Rocks stay near their
   // own proportions: each slot takes one of the two whose shape fits it best, turned a quarter if that
   // fits better (a branching piece stretched into a low slab reads as melted).
@@ -611,23 +612,31 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       return { m, e: Math.min(e, e2), swap: e2 < e };
     }).sort((p, q) => p.e - q.e);
     const pick = ranked[Math.min(ranked.length - 1, Math.floor(r() * 2))], m = pick.m.clone();
-    if (pick.swap) { m.scale.set(d * kx, h * ky, w * kx); m.rotation.y = yaw + Math.PI / 2; }
-    else { m.scale.set(w * kx, h * ky, d * kx); m.rotation.y = yaw; }
+    // Keep the rock near its own shape: scale it uniformly to the slot's size (geometric mean), then let
+    // each axis stretch at most STRETCH towards the slot. (Stretched further, the pores became oval holes
+    // several cm across and every rock read as the same sponge.) The pile fills any gap with more rocks.
+    const n = pick.m.userData.natural || new THREE.Vector3(1, 1, 1);
+    const tx = (pick.swap ? d : w) * kx, ty = h * ky, tz = (pick.swap ? w : d) * kx;
+    const s = Math.cbrt((tx / n.x) * (ty / n.y) * (tz / n.z));
+    const fit = (t, nn) => s * nn * clamp(t / (s * nn), 1 / STRETCH, STRETCH);
+    m.scale.set(fit(tx, n.x), fit(ty, n.y), fit(tz, n.z));
+    m.rotation.y = pick.swap ? yaw + Math.PI / 2 : yaw;
     return m;
   };
-  const addRock = (x, z, w, h, d, sink = 0) => {
+  // r: the random stream (pieces added after the original layout use their own, so it doesn't shift).
+  const addRock = (x, z, w, h, d, sink = 0, r = rng) => {
     const ground = Math.max(hf.sample(x, z), 0);
     let m;
     if (scenery.rocks.length) {
-      // Generated rock stretched to the footprint, base slightly buried in the sand. Scanned rocks fill
+      // Generated rock fitted to the footprint, base slightly buried in the sand. Scanned rocks fill
       // less of their bounding box than the procedural blobs, so enlarge them to keep the piles continuous.
       // (Any yaw: the footprint's two sides are interchangeable.)
-      m = fitRock(rng, w, h, d, 1.45, 1.3, rng() * Math.PI * 2);
-      m.position.set(x, ground - sink - h * 0.15, z);
+      m = fitRock(r, w, h, d, 1.45, 1.3, r() * Math.PI * 2);
+      m.position.set(x, ground - sink - m.scale.y * (0.15 / 1.3), z);   // sunk 15% of the slot's height
     } else {
-      m = new THREE.Mesh(rockGeometry(rng, noise, w, h, d), rockMat);
+      m = new THREE.Mesh(rockGeometry(r, noise, w, h, d), rockMat);
       m.position.set(x, ground + h * 0.55 - sink, z);
-      m.rotation.y = rng() * Math.PI * 2;
+      m.rotation.y = r() * Math.PI * 2;
     }
     m.castShadow = m.receiveShadow = true;
     rocks.add(m);
@@ -635,9 +644,22 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     return m;
   };
 
-  // Distant back wall of rock: gives depth and fills the frame edges.
+  // Distant back wall of rock: gives depth and fills the frame edges. A continuous wall in two staggered
+  // rows (a reef tank's back is rockwork fading into murk; gaps showed the bright sand running to a hard
+  // horizon). The first row keeps its original draws, remapped taller (1.8-3.2), so the seeded layout
+  // after it is unchanged; the second row, in front of the gaps, has its own stream.
+  const wallX = [];
   for (let x = -width * 0.75; x <= width * 0.75; x += range(rng, 1.6, 2.4)) {
-    addRock(x, range(rng, -5.2, -4.2), range(rng, 1.3, 2.1), range(rng, 1.2, 2.6), range(rng, 1.0, 1.6));
+    const z = range(rng, -5.2, -4.2), w = range(rng, 1.3, 2.1), h = 1.8 + (range(rng, 1.2, 2.6) - 1.2) * 1.0, d = range(rng, 1.0, 1.6);
+    addRock(x, z, w, h, d);
+    wallX.push(x);
+  }
+  {
+    const wrng = mulberry32(seed + 31);
+    for (let i = 0; i + 1 < wallX.length; i++) {
+      const x = (wallX[i] + wallX[i + 1]) / 2 + range(wrng, -0.2, 0.2);
+      addRock(x, range(wrng, -4.0, -3.6), range(wrng, 1.2, 1.7), range(wrng, 1.3, 2.2), range(wrng, 0.9, 1.3), 0, wrng);
+    }
   }
   // Main piles: [x, z, base width, height levels]
   const piles = [
@@ -656,8 +678,9 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       }
     }
   }
-  // Foreground rubble and small rocks
-  for (const x of [-6.8, -3.6, 2.0, 3.3, 6.6]) addRock(x * sx + range(rng, -0.5, 0.5), range(rng, 1.4, 2.4), range(rng, 0.6, 1.0), range(rng, 0.4, 0.8), range(rng, 0.5, 0.8), 0.15);
+  // Foreground rubble and small rocks, set back from the front (z 0.9-1.5; the original draws remapped)
+  // so the front of the sand stays open for small, low things: the scale cues of a real tank floor.
+  for (const x of [-6.8, -3.6, 2.0, 3.3, 6.6]) addRock(x * sx + range(rng, -0.5, 0.5), 0.9 + (range(rng, 1.4, 2.4) - 1.4) * 0.6, range(rng, 0.6, 1.0), range(rng, 0.4, 0.8), range(rng, 0.5, 0.8), 0.15);
 
   const corals = new THREE.Group();
   reef.add(corals);
@@ -705,7 +728,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     // Two small domes, front centre: a zoanthid-covered rubble rock and a bubble coral when generated
     // (the procedural bead domes read as toys).
     const d3 = domeCluster(rng, 0.55, 300, '#3b52d1', '#6070e8', 'finger');
-    d3.position.set(1.4 * sx, Math.max(0, top(1.4 * sx, 1.6, 0.3)) - 0.05, 1.6);
+    d3.position.set(1.4 * sx, Math.max(0, top(1.4 * sx, 1.1, 0.3)) - 0.05, 1.1);
     corals.add(d3);
     swapCoral(corals, d3, scenery.coral.zoanthid_rock);
     const d4 = domeCluster(rng, 0.45, 240, '#a8c45c', '#d8e070', 'finger');
@@ -717,7 +740,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   {
     const m = new THREE.Mesh(brainCoral(rng, noise), stdMat({ vertexColors: true, roughness: 0.8 }, 0.9));
     m.scale.setScalar(0.8);
-    m.position.set(-1.6 * sx, Math.max(0, top(-1.6 * sx, 1.2, 0.4)) - 0.05, 1.2);
+    m.position.set(-1.9 * sx, Math.max(0, top(-1.9 * sx, 0.7, 0.4)) - 0.05, 0.7);   // set back, clear of the bubble coral
     m.castShadow = m.receiveShadow = true;
     corals.add(m);
     swapCoral(corals, m, scenery.coral.brain);
@@ -731,7 +754,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     cap.rotation.z = 0.15;
     stalk.castShadow = cap.castShadow = true; cap.receiveShadow = true;
     g.add(stalk, cap);
-    g.position.set(-4.0 * sx, top(-4.0 * sx, 1.5, 0.3) - 0.1, 1.5);
+    g.position.set(-4.0 * sx, top(-4.0 * sx, 1.0, 0.3) - 0.1, 1.0);
     corals.add(g);
     swapCoral(corals, g, scenery.coral.leather);
   }
@@ -823,13 +846,20 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   let tableShelter = null;
   {
     const crng = mulberry32(seed + 21), C = scenery.coral;
-    const put = (model, size, x, z, { sink = 0.08, soft = false, overhang = false, yaw = crng() * Math.PI * 2, tilt = 0 } = {}) => {
+    // onSand: stand on the sand even where rock is under the footprint's edge.
+    const put = (model, size, x, z, { sink = 0.08, soft = false, overhang = false, yaw = crng() * Math.PI * 2, tilt = 0, onSand = false } = {}) => {
       if (!model) return null;
       const m = model.clone();
       m.scale.setScalar(size);
       x *= sx;
       m.rotation.set(tilt, yaw, 0);
-      m.position.set(x, top(x, z, 0.15 * size) - sink * size, z);   // settles to the lowest point under its foot
+      let y = top(x, z, 0.15 * size);
+      if (onSand) {
+        groundRay.set(new THREE.Vector3(x, 30, z), DOWN);
+        const hit = groundRay.intersectObject(sandMesh, false)[0];
+        if (hit) y = hit.point.y;
+      }
+      m.position.set(x, y - sink * size, z);   // settles to the lowest point under its foot
       m.traverse((o) => {
         if (!o.isMesh) return;
         o.castShadow = o.receiveShadow = true;
@@ -847,7 +877,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
       tableShelter = { pos: new THREE.Vector3(c.x, b.min.y + (b.max.y - b.min.y) * 0.35, c.z), floor: top(c.x, c.z), top: b.max.y - 0.15, r: 0.6, kind: 'ledge' };
     }
     // Barrel sponge back left, filling the back-wall gap and breaking the skyline.
-    put(C.sponge_barrel, 2.6, -4.4, -3.4, { sink: 0.04 });
+    put(C.sponge_barrel, 2.2, -4.4, -2.9, { sink: 0.04, onSand: true });
     // Tube sponges standing up from pile tops: yellow on the back-left pile, orange on the right pile.
     put(C.sponge_tube, 1.8, -2.9, -2.5, { sink: 0.05 });
     put(C.sponge_tube_orange, 1.5, 5.2, -1.4, { sink: 0.05 });
