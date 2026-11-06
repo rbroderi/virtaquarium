@@ -11,6 +11,8 @@ export const VIEW_ANCHOR = 0.85;
 /** Seconds for one sweep across and back. */
 export const PAN_PERIOD = 120;
 const DEFAULT_ZOOM = 1.6;
+/** Nominal height (px) to frame by while the page has no size yet. */
+const UNSIZED_HEIGHT = 1000;
 const PAN_CENTRE = 0.5;
 
 export interface ViewOptions {
@@ -34,11 +36,16 @@ export function panAt(t: number, view: ViewOptions): number {
 }
 
 /** Point `camera` (whose aspect is w / h) at the window for pan position p, for a w x h screen. */
-export function setView(camera: THREE.PerspectiveCamera, w: number, h: number, view: ViewOptions, p: number): void {
+export function setView(camera: THREE.PerspectiveCamera, wIn: number, hIn: number, view: ViewOptions, p: number): void {
   if (view.zoom <= 1) {
     camera.clearViewOffset();
     return;
   }
+  // A page started in a hidden tab has no size yet: frame by the camera's aspect instead (the offset is
+  // relative, so any size of that shape gives the same window). A 0 x 0 offset made the projection NaN,
+  // and with it the swim box's top, which every fish and jelly then inherited.
+  const sized = wIn > 0 && hIn > 0;
+  const h = sized ? hIn : UNSIZED_HEIGHT, w = sized ? wIn : UNSIZED_HEIGHT * camera.aspect;
   const fw = w * view.zoom, fh = h * view.zoom;
   camera.setViewOffset(fw, fh, (fw - w) * p, (fh - h) * VIEW_ANCHOR, w, h);
 }

@@ -16,10 +16,14 @@ uniform float uTime, uSeed, uLight;
 uniform vec3 uTrail;     // bell-space sweep of the trailing parts: they drag behind the bell's motion and hang towards the world's down
 varying vec3 vView;
 varying float vDist;
-// Bell margin under contraction: s = 0 at the apex .. 1 at the margin.
+// Bell margin under contraction: s = 0 at the apex .. 1 at the margin. The coronal muscle pulls the
+// lower bell in hard (the margin to about two thirds of its width) and down a little, so the flat dome
+// deepens into a bell; the rim itself curls further in. Late in the recovery uPulse dips below 0: the
+// relaxing bell flares just past its rest shape before the next beat.
 vec2 bellShape(float r, float y, float s) {
-  float c = uPulse * s * s;
-  return vec2(r * (1.0 - 0.22 * c), y + uR * (0.1 * c - 0.03 * uPulse));
+  float c = uPulse * pow(s, 1.5);
+  float curl = max(uPulse, 0.0) * smoothstep(0.8, 1.0, s);
+  return vec2(r * (1.0 - 0.3 * c - 0.1 * curl), y + uR * (-0.05 * c - 0.04 * curl + 0.04 * uPulse * (1.0 - s)));
 }
 // The margin (a = 0..1 round the bell): 8 notches, where the rhopalia (the balance and light organs)
 // sit, and two scalloped lappets between each pair. Returns the radius factor; the notches also lift

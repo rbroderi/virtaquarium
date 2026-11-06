@@ -21,6 +21,7 @@ interface JellyUniforms {
 const ADDITIVE = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false } as const;
 
 const CONTRACT_SHARE = 0.3;          // of each pulse cycle: the quick close; the rest relaxes
+const RELAX_FLARE = 0.35;            // how far the relaxing bell overshoots its rest shape (dips to about -0.07)
 const THRUST_PER_RADIUS = 0.3;       // speed gained per unit contraction per unit bell radius
 const SINK_RATE = 0.04;              // slightly heavier than water (units/s^2)
 const DRAG_RATE = 1.2;
@@ -40,6 +41,8 @@ const NIGHT_GLOW = 0.25;             // light through the jelly with the tank li
 const SEED_RANGE = 10;
 const PULSE_HZ_REFERENCE_RADIUS = 0.5;
 const PULSE_HZ_SCALE = 0.9;
+/** Pulse rate spread between individuals (Hz at the reference radius, before PULSE_HZ_SCALE). */
+const PULSE_HZ_RANGE: readonly [number, number] = [0.7, 1.1];
 
 export class Jelly {
   readonly sp: JellySpecies;
@@ -90,13 +93,18 @@ export class Jelly {
     this.prefY = range(rng, 0.6, B.y1 - 1.8);
     this.prefX = this.pos.x;
     this.axis = new THREE.Vector3(range(rng, -0.4, 0.4), 1, range(rng, -0.4, 0.4)).normalize();
-    this.hz = range(rng, 0.55, 0.95) * (PULSE_HZ_SCALE / Math.sqrt(this.R / PULSE_HZ_REFERENCE_RADIUS));   // bigger bells pulse slower
+    this.hz = range(rng, PULSE_HZ_RANGE[0], PULSE_HZ_RANGE[1]) * (PULSE_HZ_SCALE / Math.sqrt(this.R / PULSE_HZ_REFERENCE_RADIUS));   // bigger bells pulse slower
     this.phase = rng();
   }
 
-  /** Bell contraction over one pulse cycle: quick (30%), then a slow relaxation. */
+  /**
+   * Bell contraction over one pulse cycle: quick (30%), then a slower relaxation that overshoots a
+   * little below 0 near its end (the bell flares past its rest shape, then settles).
+   */
   static contraction(ph: number): number {
-    return ph < CONTRACT_SHARE ? Math.sin((ph / CONTRACT_SHARE) * Math.PI / 2) : Math.cos(((ph - CONTRACT_SHARE) / (1 - CONTRACT_SHARE)) * Math.PI / 2) ** 2;
+    if (ph < CONTRACT_SHARE) return Math.sin((ph / CONTRACT_SHARE) * Math.PI / 2);
+    const t = (ph - CONTRACT_SHARE) / (1 - CONTRACT_SHARE);
+    return Math.cos(t * Math.PI / 2) ** 2 - RELAX_FLARE * t * Math.sin(t * Math.PI);
   }
 
   update(dt: number, world: JellyWorld, others: readonly Jelly[] = []): void {
@@ -129,7 +137,8 @@ export class Jelly {
    * contraction now.
    */
   private pulse(dt: number): number {
-    const prev = Jelly.contraction(this.phase);
+    // Thrust comes from the bell closing, not from easing back out of the flare.
+    const prev = Math.max(0, Jelly.contraction(this.phase));
     this.phase = (this.phase + dt * this.hz) % 1;
     const c = Jelly.contraction(this.phase);
     const effort = clamp(0.6 + (this.prefY - this.pos.y) * 0.35, 0.15, 1.3);
