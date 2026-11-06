@@ -10,6 +10,7 @@ import { RockField } from './rockField.js';
 import { addTranslucency } from './softSkin.js';
 import { FanWorms } from './fanWorms.js';
 import { addParallax } from './parallax.js';
+import { organicPass } from './organic.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 
 const C = (hex) => new THREE.Color(hex);
@@ -329,6 +330,8 @@ function seaFanTexture(rng) {
     const x = rng() * W, y = rng() * H * 0.85;
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + range(rng, -14, 14), y + range(rng, -14, 14)); g.stroke();
   }
+  // Straight branches bend and thicken unevenly (organic.js).
+  organicPass(g, W, H, rng, { warp: [[6, 6, 6, 6], [20, 20, 2, 2]], mottle: { cellsX: 6, cellsY: 6, value: 0.06, chroma: 0.03 } });
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;

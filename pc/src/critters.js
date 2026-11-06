@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { addCaustics } from './water.js';
 import { addTranslucency } from './softSkin.js';
 import { range, clamp, lerp, wrapAngle, makeCanvas, mulberry32, Noise } from './util.js';
+import { organicPass } from './organic.js';
 
 // The blended (distance-field) bodies, meshed offline by tools/softbodies.mjs into
 // pc/models/critters/*.glb (shapes: softBodies.js), loaded once here before any critter is made
@@ -207,6 +208,8 @@ function cuttleSkin(rng) {
   for (const u0 of [0.093, 0.407]) {
     for (let i = 0; i < 70; i++) { g.beginPath(); g.arc(u0 * W + range(rng, -4, 4), (0.05 + 0.9 * i / 70) * H, range(rng, 1.5, 2.6), 0, 7); g.fill(); }
   }
+  // Grown, not drawn (organic.js): the bars and spot rows wander and the colour is patchy. u wraps round the mantle.
+  organicPass(g, W, H, rng, { warp: [[8, 4, 10, 6], [24, 12, 3, 2]], mottle: { cellsX: 10, cellsY: 5, value: 0.07, chroma: 0.03 }, wrapX: true });
   return canvasTexture(c);
 }
 
@@ -227,6 +230,7 @@ function cuttleFinTex(rng) {
     const y = H * Math.sqrt(rng());   // more towards the edge (v = 1)
     g.beginPath(); g.arc(rng() * W, y, range(rng, 0.6, 1.3), 0, 7); g.fill();
   }
+  organicPass(g, W, H, rng, { warp: [[10, 2, 4, 2]], mottle: { cellsX: 8, cellsY: 2, value: 0.06, chroma: 0.03 } });
   return canvasTexture(c);
 }
 
@@ -566,6 +570,8 @@ function octoSkin(rng, armSpots = 0) {
   // Bold white spots, densest on the arms (the left quarter of the texture is the arms' strip).
   g.fillStyle = 'rgba(248,240,232,0.85)';
   for (let i = 0; i < armSpots; i++) { g.beginPath(); g.ellipse(rng() * W * 0.25, rng() * H, range(rng, 2, 4.5), range(rng, 1.5, 3), rng() * 3, 0, 7); g.fill(); }
+  // Its own seed, so the body's and the arms' copies of the skin warp alike; the texture tiles.
+  organicPass(g, W, H, mulberry32(91), { warp: [[8, 4, 5, 3], [24, 12, 2, 1]], mottle: { cellsX: 8, cellsY: 4, value: 0.06, chroma: 0.03 }, wrapX: true, wrapY: true });
   const t = canvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
@@ -1231,6 +1237,8 @@ function carapaceTex(rng) {
     d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255;
   }
   g.putImageData(img, 0, 0);
+  // The scute seams wander instead of running as straight Voronoi edges.
+  organicPass(g, S, S, rng, { warp: [[6, 6, 10, 10], [20, 20, 3, 3]], mottle: { cellsX: 6, cellsY: 6, value: 0.06, chroma: 0.03 } });
   return canvasTexture(c);
 }
 function scaleTex(rng) {
@@ -1245,6 +1253,8 @@ function scaleTex(rng) {
     for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2 + 0.5 + rng() * 0.2; g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); }
     g.fill();
   }
+  // Strong enough that the hexagons become uneven polygons, as a turtle's head scales are.
+  organicPass(g, S, S, rng, { warp: [[4, 4, 7, 7], [12, 12, 2.5, 2.5]], mottle: { cellsX: 4, cellsY: 4, value: 0.08, chroma: 0.03 }, wrapX: true, wrapY: true });
   const t = canvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(1.4, 1.4);

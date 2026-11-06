@@ -16,6 +16,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCaustics, waterUniforms } from './water.js';
 import { addTranslucency } from './softSkin.js';
 import { makeCanvas } from './util.js';
+import { organicPass } from './organic.js';
 
 const MAX = 24;            // worms (uniform array size)
 const RADIOLES = 44;
@@ -37,6 +38,8 @@ function radioleTexture(rng, bands) {
   }
   // The rachis, darker and solid.
   g.globalAlpha = 1; g.fillStyle = bands.rachis; g.fillRect(W / 2 - 2, 0, 4, H);
+  // The colour bands' edges and the rachis wander a little (organic.js).
+  organicPass(g, W, H, rng, { warp: [[2, 8, 1.5, 3]], mottle: { cellsX: 2, cellsY: 6, value: 0.07, chroma: 0.04 } });
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;

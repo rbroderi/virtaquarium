@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, lerp, mulberry32, makeCanvas, shade, rgba } from './util.js';
 import { addCaustics } from './water.js';
+import { organicPass, roundCorners, wobble, valueNoise } from './organic.js';
 
 // ---------- side profile ----------
 
@@ -114,6 +115,23 @@ function applyShade(g, sg) {
   g.putImageData(img, 0, 0);
 }
 
+// ---- Organic imperfection (organic.js) ----
+// The skin's pattern layer is resampled through a smooth random warp, then its colour is mottled.
+// The warp has two octaves (~0.07 and ~0.02 TL across, up to ~0.006 and ~0.0015 TL): the coarse one
+// bends an edge and swings its angle; the fine one moves the two edges of a band apart and together,
+// so its width varies. The mottle (~0.1 TL patches) varies value by ~6% and each channel by ~2.5%.
+// sp.organic = { warp, mottle } scales both (default 1).
+function organicSkin(g, sp, prof) {
+  const o = { warp: 1, mottle: 1, ...sp.organic };
+  const len = sp.body.len, Hh = 2 * prof.H;   // texture spans len along u and about 2 H across v
+  const pxU = TW / len, pxV = TH / Hh;        // texels per unit length
+  const oct = (cell, amp) => [len / cell, Hh / cell, amp * o.warp * pxU, amp * o.warp * pxV];
+  organicPass(g, TW, TH, mulberry32(sp.id.length * 104729 + 71), {
+    warp: o.warp ? [oct(0.07, 0.006), oct(0.022, 0.0015)] : [],
+    mottle: o.mottle ? { cellsX: len / 0.1, cellsY: Hh / 0.1, value: 0.06 * o.mottle, chroma: 0.025 * o.mottle } : null,
+  });
+}
+
 function paintSkin(sp, prof) {
   // willReadFrequently: these canvases are read back (scale pigment, melanin), so they stay on the CPU.
   const c = makeCanvas(TW, TH), g = c.getContext('2d', { willReadFrequently: true });
@@ -179,8 +197,9 @@ function paintSkin(sp, prof) {
         break;
       }
       case 'poly': {
+        // Corners round to ~0.03 TL, in texels so a corner rounds the same way however the patch is stretched.
         g.beginPath();
-        for (const [u, v] of p.pts) g.lineTo(U(u), V(v));
+        for (const [x, y] of roundCorners(p.pts.map(([u, v]) => [U(u), V(v)]), (0.03 * TW) / len)) g.lineTo(x, y);
         g.closePath();
         g.fillStyle = p.color; g.fill();
         break;
@@ -232,6 +251,7 @@ function paintSkin(sp, prof) {
     }
     g.restore();
   }
+  organicSkin(g, sp, prof);
 
   const K = TW / 512;   // stroke widths below were tuned at 512 px
   const e = sp.eye, g0 = gillU(sp);
@@ -629,6 +649,23 @@ function smoothPath(g, pts, close) {
   if (close) g.closePath();
 }
 
+// smoothPath's curve as a dense polyline (per points on each quadratic).
+function smoothPts(pts, close, per = 8) {
+  const out = [pts[0]];
+  let a = pts[0];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const c = pts[i], m = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2];
+    for (let k = 1; k <= per; k++) {
+      const t = k / per, u = 1 - t;
+      out.push([u * u * a[0] + 2 * u * t * c[0] + t * t * m[0], u * u * a[1] + 2 * u * t * c[1] + t * t * m[1]]);
+    }
+    a = m;
+  }
+  out.push(pts[pts.length - 1]);
+  if (close) out.push(pts[0]);
+  return out;
+}
+
 function finFill(g, fill, x0, x1) {
   if (!Array.isArray(fill)) return fill;
   const gr = g.createLinearGradient(x0, 0, x1, 0);
@@ -661,7 +698,12 @@ function paintFins(sp, prof, cachedMaps = false) {
 
   const meshes = [];   // { rays, n }: ray field per fin, for the 3D membrane
   const tubes = [];    // spines and rays modelled as tapered tubes (tubeGeometry)
-  const drawFin = (spec, outlinePts, rays, mer = {}, marginPts = null) => {
+  const drawFin = (spec, outlinePts, rays0, mer = {}, marginPts = null) => {
+    // Rays are never evenly spaced: the layout drifts by up to ~25% of a ray gap, slowly enough that
+    // the order holds, and not at the fin's ends. Everything below (paint, rays, the membrane's
+    // pleats) uses the drifted layout, so they stay together.
+    const n0 = mer.n ?? 15, wr = wobble(rng, n0 / 8), ja = (0.25 / n0) * (sp.organic?.warp ?? 1);
+    const rays = (t) => rays0(clamp(t + ja * wr(t) * Math.sin(Math.PI * clamp(t, 0, 1)), 0, 1));
     g.save();
     g.beginPath(); smoothPath(g, outlinePts, true);
     const xs = outlinePts.map((p) => p[0]);
@@ -669,19 +711,23 @@ function paintFins(sp, prof, cachedMaps = false) {
     g.fill();
     g.clip();
     g.globalAlpha = 1;
-    for (const pnt of spec.paint || []) {
-      g.fillStyle = pnt.color;
+    // A painted area between rays t0 and t1. Its sides wander across the rays (up to ~0.012 of the
+    // fin's ray span) instead of running straight down one, so the band bends and changes width; a
+    // side on the fin's own edge (t 0 or 1) stays put.
+    const wavyBand = (t0, t1) => {
+      const amp = 0.012 * (sp.organic?.warp ?? 1), side = (t) => {
+        const w = wobble(rng, 2), a = t <= 0 || t >= 1 ? 0 : amp;
+        return Array.from({ length: 17 }, (_, i) => {
+          const s = -0.05 + (1.15 * i) / 16, [b, e] = rays(clamp(t + a * w(s), 0, 1));
+          return [lerp(b[0], e[0], s), lerp(b[1], e[1], s)];
+        });
+      };
       g.beginPath();
-      g.moveTo(...rays(pnt.t0)[0]); g.lineTo(...rays(pnt.t0)[1]); g.lineTo(...rays(pnt.t1)[1]); g.lineTo(...rays(pnt.t1)[0]);
+      for (const p of [...side(t0), ...side(t1).reverse()]) g.lineTo(...p);
       g.closePath(); g.fill();
-    }
-    if (spec.band) {
-      g.fillStyle = spec.band.color;
-      g.beginPath();
-      const a = spec.band.t, b = spec.band.t + spec.band.w;
-      g.moveTo(...rays(a)[0]); g.lineTo(...rays(a)[1]); g.lineTo(...rays(b)[1]); g.lineTo(...rays(b)[0]);
-      g.fill();
-    }
+    };
+    for (const pnt of spec.paint || []) { g.fillStyle = pnt.color; wavyBand(pnt.t0, pnt.t1); }
+    if (spec.band) { g.fillStyle = spec.band.color; wavyBand(spec.band.t, spec.band.t + spec.band.w); }
     if (spec.spots) {
       g.fillStyle = spec.spots;
       // spotR: mean spot radius (TL); spotN: how many.
@@ -726,27 +772,35 @@ function paintFins(sp, prof, cachedMaps = false) {
     // Spines are single, stiff and unjointed; soft rays (lepidotrichia) are jointed and branch towards
     // the margin (the outermost principal caudal rays stay simple).
     const rayCol = spec.rays || 'rgba(35,20,5,0.13)';
-    const line = (a, b, w, col) => {
-      g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    // A ray as a curve from a to b, bowed sideways by up to `bow` of its length (rays are flexible and
+    // seldom straight); line() draws its stretch s0..s1, colour and relief together.
+    const bowed = (a, b, bow) => (s) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], o = bow * Math.sin(Math.PI * s);
+      return [a[0] + dx * s - dy * o, a[1] + dy * s + dx * o];
+    };
+    const line = (P, s0, s1, w, col) => {
+      const pts = Array.from({ length: 7 }, (_, k) => P(lerp(s0, s1, k / 6)));
+      g.strokeStyle = col; g.lineWidth = w; g.beginPath(); for (const p of pts) g.lineTo(p[0], p[1]); g.stroke();
       if (spec.solid) return;   // a moray's skin-covered fin fold: smooth
       hg.lineWidth = w * 1.3; hg.globalAlpha = Math.min(1, g.globalAlpha * 1.4); hg.setLineDash(g.getLineDash());
-      hg.beginPath(); hg.moveTo(a[0], a[1]); hg.lineTo(b[0], b[1]); hg.stroke();
+      hg.beginPath(); for (const p of pts) hg.lineTo(p[0], p[1]); hg.stroke();
     };
+    const org = sp.organic?.warp ?? 1;
     for (let i = 0; i <= n; i++) {
-      const t = i / n, [a, b] = rays(t);
+      // Each ray its own thickness (~±25%) and bow (up to ~4% of its length either way).
+      const t = i / n, [a, b] = rays(t), wk = 1 + 0.5 * org * (rng() - 0.5), P = bowed(a, b, 0.08 * org * (rng() - 0.5));
       if (i < spines) {
         g.setLineDash([]);
-        line(a, b, 0.0045, rayCol);
+        line(P, 0, 1, 0.0045 * wk, rayCol);
         continue;
       }
       g.setLineDash([0.035, 0.0012]);   // soft-ray joints
-      const simple = mer.simpleEnds && (i === 0 || i === n);
-      const m = simple ? b : [lerp(a[0], b[0], 0.55), lerp(a[1], b[1], 0.55)], q = [lerp(a[0], b[0], 0.2), lerp(a[1], b[1], 0.2)];
+      const simple = mer.simpleEnds && (i === 0 || i === n), sm = simple ? 1 : 0.55;
       g.globalAlpha = 0.35;   // rays crowd together at the base; they read fainter there
-      line(a, q, 0.0026, rayCol);
+      line(P, 0, 0.2, 0.0026 * wk, rayCol);
       g.globalAlpha = 1;
-      line(q, m, 0.0026, rayCol);
-      if (!simple) for (const s of [-1, 1]) line(m, rays(clamp(t + (s * 0.22) / n, 0, 1))[1], 0.0018, rayCol);
+      line(P, 0.2, sm, 0.0026 * wk, rayCol);
+      if (!simple) for (const s of [-1, 1]) line(bowed(P(sm), rays(clamp(t + (s * 0.22) / n, 0, 1))[1], 0.04 * org * (rng() - 0.5)), 0, 1, 0.0018 * wk, rayCol);
     }
     g.setLineDash([]); hg.setLineDash([]); hg.globalAlpha = 1;
     g.restore();
@@ -757,9 +811,25 @@ function paintFins(sp, prof, cachedMaps = false) {
       const ew = spec.edgeW || 0.006, fw = spec.fringe ? spec.fringeW || 0.008 : 0;
       g.save();
       g.beginPath(); smoothPath(g, outlinePts, true); g.clip();
-      g.beginPath(); smoothPath(g, marginPts || outlinePts, !marginPts);
+      // The pigment's inner edge wanders: its width varies by up to ~40% along the margin, about once
+      // per 0.05 TL. Filled as a strip along the margin curve (clipped to the fin, so only the inner
+      // half shows), rather than stroked at one width.
+      const M = smoothPts(marginPts || outlinePts, !marginPts);
+      let mlen = 0;
+      for (let i = 1; i < M.length; i++) mlen += Math.hypot(M[i][0] - M[i - 1][0], M[i][1] - M[i - 1][1]);
+      const wm = wobble(rng, Math.max(2, mlen / 0.05)), vary = 0.4 * (sp.organic?.warp ?? 1);
+      const left = [], right = [];
+      let s = 0;
+      for (let i = 0; i < M.length; i++) {
+        if (i) s += Math.hypot(M[i][0] - M[i - 1][0], M[i][1] - M[i - 1][1]);
+        const a = M[Math.max(0, i - 1)], b = M[Math.min(M.length - 1, i + 1)], dl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const nx = -(b[1] - a[1]) / dl, ny = (b[0] - a[0]) / dl, h = ew * (1 + vary * wm(s / mlen)) + fw;
+        left.push([M[i][0] + nx * h, M[i][1] + ny * h]); right.push([M[i][0] - nx * h, M[i][1] - ny * h]);
+      }
       g.globalAlpha = 0.95;
-      g.strokeStyle = spec.edge; g.lineWidth = 2 * (ew + fw); g.stroke();
+      g.fillStyle = spec.edge;
+      g.beginPath(); for (const p of [...left, ...right.reverse()]) g.lineTo(...p); g.closePath(); g.fill();
+      g.beginPath(); smoothPath(g, marginPts || outlinePts, !marginPts);
       if (fw) {
         g.globalAlpha = 1; g.lineWidth = 2 * fw;
         g.globalCompositeOperation = 'destination-out'; g.stroke();
@@ -1137,6 +1207,9 @@ function paintPectoral(sp) {
     g.beginPath(); margin(true); g.stroke();
   }
   g.restore();
+  // Bands, spots and margin wander a little and the colour is patchy (organic.js); small, so the
+  // painted outline stays on the fin's shape.
+  organicPass(g, W, H, mulberry32(sp.id.length * 313 + 9), { warp: [[4, 4, 3, 3], [14, 14, 1, 1]], mottle: { cellsX: 4, cellsY: 4, value: 0.05, chroma: 0.02 } });
   return c;
 }
 
@@ -1886,7 +1959,7 @@ const loadBitmap = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(
 let skinBase = null;           // where to save live-painted maps, or null (not local)
 function skinKey(sp) {
   const look = JSON.stringify(sp, (k, v) => (['brain', 'fact', 'name', 'sci', 'swim'].includes(k) ? undefined : v));
-  const src = [paintSkin, paintFins, finMaps, applyShade, makeProfile, gillU, gillOf, naresOf, mouthOf, finOutline, caudalOutline, pelvicOutline, cellHash].map(String).join('');
+  const src = [paintSkin, organicSkin, organicPass, valueNoise, wobble, roundCorners, smoothPts, paintFins, finMaps, applyShade, makeProfile, gillU, gillOf, naresOf, mouthOf, finOutline, caudalOutline, pelvicOutline, cellHash].map(String).join('');
   let h = 0x811c9dc5;
   for (const s of [String(SKIN_CACHE_VERSION), look, src]) for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
   return (h >>> 0).toString(16);
