@@ -16,6 +16,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCaustics, waterUniforms } from './water.js';
 import { addTranslucency } from './softSkin.js';
 import { makeCanvas, context2d, type Rng } from './util.js';
+import { organicPass, type OrganicOptions } from './core/organic.js';
 import type { SolidField } from './rockField.js';
 import { markNoHeight } from './reef/flags.js';
 
@@ -96,6 +97,9 @@ export type HeightSampler = (x: number, z: number) => number;
  * The radiole texture: a rachis up the middle, pinnules angled up either side (alpha), colour bands
  * along its length. u across (0..1), v along (0 base .. 1 tip).
  */
+/** The colour bands' edges and the rachis wander a little. */
+const RADIOLE_ORGANIC: OrganicOptions = { warp: [[2, 8, 1.5, 3]], mottle: { cellsX: 2, cellsY: 6, value: 0.07, chroma: 0.04 } };
+
 function radioleTexture(rng: Rng, bands: RadioleBands): THREE.CanvasTexture {
   const W = 64, H = 256, c = makeCanvas(W, H), g = context2d(c);
   g.clearRect(0, 0, W, H);
@@ -111,6 +115,7 @@ function radioleTexture(rng: Rng, bands: RadioleBands): THREE.CanvasTexture {
   }
   // The rachis, darker and solid.
   g.globalAlpha = 1; g.fillStyle = bands.rachis; g.fillRect(W / 2 - 2, 0, 4, H);
+  organicPass(g, W, H, rng, RADIOLE_ORGANIC);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;

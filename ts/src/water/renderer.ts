@@ -131,7 +131,9 @@ class VelocityPass {
     model.traverse((o) => {
       if (!isMesh(o)) return;
       o.layers.enable(VELOCITY_LAYER);
-      o.onBeforeRender = (_renderer, _scene, _camera, _geometry, material) => {
+      const own = o.onBeforeRender;   // e.g. the fish body's level of detail (lod.ts pickLod)
+      o.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+        own.call(o, renderer, scene, camera, geometry, material, group);
         if (material !== this.material) return;
         inverse.copy(model.matrixWorld).invert();
         this.uniforms.uPrevModel.value.multiplyMatrices(prevWorld, this.scratch.multiplyMatrices(inverse, o.matrixWorld));

@@ -3,6 +3,7 @@
 import { clamp, lerp, mulberry32, makeCanvas, rgba, context2d } from '../util.js';
 import type { BlotchesOp, PatternOp, Species, SpotsOp } from '../species/types.js';
 import { cellHash, gillOf, gillU, mouthOf, naresOf, smooth01, type Profile } from './profile.js';
+import { organicPass, roundCorners } from '../core/organic.js';
 
 /** Skin texture size (texels); the scale maps are half this. */
 export const SKIN_TEX_W = 2048, SKIN_TEX_H = 1024;
@@ -141,8 +142,9 @@ function paintPatternOp(P: Painter, p: PatternOp): void {
       break;
     }
     case 'poly': {
+      // Corners round to ~0.03 TL, in texels so a corner rounds the same way however the patch is stretched.
       g.beginPath();
-      for (const [u, v] of p.pts) g.lineTo(U(u), V(v));
+      for (const [x, y] of roundCorners(p.pts.map(([u, v]) => [U(u), V(v)] as const), (POLY_CORNER_RADIUS * TW) / len)) g.lineTo(x, y);
       g.closePath();
       g.fillStyle = p.color; g.fill();
       break;
@@ -167,6 +169,29 @@ interface Lattice { r0: number; b0: number; nb: number; ca: Float32Array; cb: Fl
 /** Per scale (compact id): tilt, reflector strength and film thickness, brightness and tint, colour sums. */
 interface ScaleCells { tx: number[]; ty: number[]; irS: number[]; irT: number[]; val: number[]; t0: number[]; t1: number[]; t2: number[]; sum: number[] }
 
+// ---- Organic imperfection (core/organic.ts) ----
+// The skin's pattern layer is resampled through a smooth random warp, then its colour is mottled.
+// The warp has two octaves (~0.07 and ~0.02 TL across, up to ~0.006 and ~0.0015 TL): the coarse one
+// bends an edge and swings its angle; the fine one moves the two edges of a band apart and together,
+// so its width varies. The mottle (~0.1 TL patches) varies value by ~6% and each channel by ~2.5%.
+// sp.organic = { warp, mottle } scales both (default 1).
+/** Pattern polygons' corners round to this radius (TL). */
+const POLY_CORNER_RADIUS = 0.03;
+const SKIN_WARP_OCTAVES = [[0.07, 0.006], [0.022, 0.0015]] as const;   // [cell size, amplitude] in TL
+const SKIN_MOTTLE = { cell: 0.1, value: 0.06, chroma: 0.025 } as const;
+const ORGANIC_SKIN_SEED = { perIdChar: 104729, offset: 71 } as const;
+
+export function organicSkin(g: CanvasRenderingContext2D, sp: Species, prof: Profile): void {
+  const o = { warp: 1, mottle: 1, ...sp.organic };
+  const len = sp.body.len, Hh = 2 * prof.H;   // texture spans len along u and about 2 H across v
+  const pxU = TW / len, pxV = TH / Hh;        // texels per unit length
+  const oct = ([cell, amp]: readonly [number, number]) => [len / cell, Hh / cell, amp * o.warp * pxU, amp * o.warp * pxV] as const;
+  organicPass(g, TW, TH, mulberry32(sp.id.length * ORGANIC_SKIN_SEED.perIdChar + ORGANIC_SKIN_SEED.offset), {
+    warp: o.warp ? SKIN_WARP_OCTAVES.map(oct) : [],
+    mottle: o.mottle ? { cellsX: len / SKIN_MOTTLE.cell, cellsY: Hh / SKIN_MOTTLE.cell, value: SKIN_MOTTLE.value * o.mottle, chroma: SKIN_MOTTLE.chroma * o.mottle } : null,
+  });
+}
+
 export function paintSkin(sp: Species, prof: Profile): SkinMaps {
   // willReadFrequently: these canvases are read back (scale pigment, melanin), so they stay on the CPU.
   const c = makeCanvas(TW, TH), g = context2d(c, { willReadFrequently: true });
@@ -181,6 +206,7 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
     paintPatternOp(painter, p);
     g.restore();
   }
+  organicSkin(g, sp, prof);
 
   const K = TW / TUNED_WIDTH;
   const e = sp.eye, g0 = gillU(sp);

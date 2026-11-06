@@ -282,6 +282,9 @@ export interface Pace {
 export interface SkinTable { scales: number; hump: number; scaleType?: ScaleType }
 
 /** A species as written in the catalogue, before the derived tables are merged in. */
+/** How strongly a species' paint is warped and mottled (core/organic.ts); 0 turns one off. */
+export interface Organic { warp?: number; mottle?: number }
+
 export interface SpeciesDefinition {
   id: string;
   name: string;
@@ -312,6 +315,8 @@ export interface SpeciesDefinition {
   iridescent?: boolean;
   irid?: Iridescence;
   speckle?: number;
+  /** Organic imperfection scales (fishModel organicSkin and fin paint), default 1 each. */
+  organic?: Organic;
   brain: BrainTraits;
 }
 

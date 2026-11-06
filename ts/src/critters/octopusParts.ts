@@ -1,10 +1,15 @@
 // The octopus's textures and its arms: a tube along a chain of points, rebuilt in place each frame,
 // with two staggered rows of suckers.
 import * as THREE from 'three';
-import { range, clamp, lerp, makeCanvas, context2d, Noise, type Rng } from '../util.js';
+import { range, clamp, lerp, makeCanvas, context2d, Noise, mulberry32, type Rng } from '../util.js';
+import { organicPass, type OrganicOptions } from '../core/organic.js';
 import { canvasTexture } from './shared.js';
 
 const FULL_CIRCLE = 7;   // > 2 PI: canvas arcs drawn as whole discs
+
+/** The skin's own warp seed, so the body's and the arms' copies of the skin warp alike; the texture tiles. */
+const SKIN_WARP_SEED = 91;
+const SKIN_ORGANIC: OrganicOptions = { warp: [[8, 4, 5, 3], [24, 12, 2, 1]], mottle: { cellsX: 8, cellsY: 4, value: 0.06, chroma: 0.03 }, wrapX: true, wrapY: true };
 
 /** Red-brown skin with a net of grooves and pale spots; armSpots adds the arms' bold white spots. */
 export function octoSkin(rng: Rng, armSpots = 0): THREE.CanvasTexture {
@@ -30,6 +35,7 @@ export function octoSkin(rng: Rng, armSpots = 0): THREE.CanvasTexture {
   // Bold white spots, densest on the arms (the left quarter of the texture is the arms' strip).
   g.fillStyle = 'rgba(248,240,232,0.85)';
   for (let i = 0; i < armSpots; i++) { g.beginPath(); g.ellipse(rng() * W * 0.25, rng() * H, range(rng, 2, 4.5), range(rng, 1.5, 3), rng() * 3, 0, FULL_CIRCLE); g.fill(); }
+  organicPass(g, W, H, mulberry32(SKIN_WARP_SEED), SKIN_ORGANIC);
   const t = canvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;

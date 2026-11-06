@@ -1,6 +1,7 @@
 // Pectoral fins: planform, ray layout, the painted membrane and the cupped, pleated 3D surface.
 import * as THREE from 'three';
 import { mulberry32, makeCanvas, context2d } from '../util.js';
+import { organicPass } from '../core/organic.js';
 import type { Pectoral, Species } from '../species/types.js';
 import type { P2, P3, Profile } from './profile.js';
 import type { TubeSpec } from './fins.js';
@@ -159,8 +160,17 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
     g.beginPath(); margin(true); g.stroke();
   }
   g.restore();
+  // Bands, spots and margin wander a little and the colour is patchy (core/organic.ts); small, so the
+  // painted outline stays on the fin's shape.
+  organicPass(g, W, H, mulberry32(sp.id.length * PECT_ORGANIC_SEED.perIdChar + PECT_ORGANIC_SEED.offset), PECT_ORGANIC);
   return c;
 }
+
+const PECT_ORGANIC_SEED = { perIdChar: 313, offset: 9 } as const;
+const PECT_ORGANIC = {
+  warp: [[4, 4, 3, 3], [14, 14, 1, 1]],
+  mottle: { cellsX: 4, cellsY: 4, value: 0.05, chroma: 0.02 },
+} as const;
 
 // Pectoral fin: rays fan out from the base; pleated like the median fins and slightly cupped.
 export function pectoralGeometry(sp: Species): THREE.BufferGeometry {

@@ -55,11 +55,19 @@ function texture(c: TexImage, srgb = true): THREE.Texture {
   return t;
 }
 
-// The skin's mean colour (for the velvet sheen of minute-scaled species), from an 8 x 4 reduction.
+// The skin's mean colour (for the velvet sheen of minute-scaled species), from an 8 x 4 reduction made
+// by halving (each step an exact 2 x 2 average; one drawImage straight down to 8 x 4 point-samples a
+// few texels, and differently for an <img>, a canvas and a bitmap).
 function meanColour(map: TexImage): THREE.Color {
+  let src: TexImage = map, w = src.width, h = src.height;
+  while (w > AVG_W || h > AVG_H) {
+    const nw = Math.max(AVG_W, w >> 1), nh = Math.max(AVG_H, h >> 1), half = makeCanvas(nw, nh), hg = context2d(half);
+    hg.imageSmoothingQuality = 'low';
+    hg.drawImage(src, 0, 0, nw, nh);
+    src = half; w = nw; h = nh;
+  }
   const t = makeCanvas(AVG_W, AVG_H), tg = context2d(t, { willReadFrequently: true });
-  if (isBitmap(map)) { tg.translate(0, AVG_H); tg.scale(1, -1); }   // back upright: sampled as the <img> was
-  tg.drawImage(map, 0, 0, AVG_W, AVG_H);
+  tg.drawImage(src, 0, 0, AVG_W, AVG_H);
   const px = tg.getImageData(0, 0, AVG_W, AVG_H).data, s = [0, 0, 0];
   const n = AVG_W * AVG_H;
   for (let i = 0; i < px.length; i += 4) for (let ch = 0; ch < 3; ch++) s[ch] = (s[ch] ?? 0) + (px[i + ch] ?? 0) / 255 / n;

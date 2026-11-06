@@ -6,6 +6,14 @@ import { gillOf, mouthOf } from './profile.js';
 import { IN_WATER_IOR, makeSwimMaterial, swimUniforms, type SwimUniforms, type Tissue } from './swimShader.js';
 import { speciesAssets, type SpeciesCanvases } from './assets.js';
 import { buildCustomModel, customModelFor, type NormalisedModel } from './customModels.js';
+import { useLods, type LodWeights } from '../lod.js';
+
+// Levels of detail (lod.ts): the body is ~36k triangles at every size, several to a pixel on a small
+// fish, three times a frame (view, shadow map, motion-blur velocity). The weights put each attribute's
+// error in body lengths, as the position's is: u runs along the length (x 2 for margin, the texture
+// has sharp stripes), v round the girth, about a third of it (x 6); the jaw and gill weights 1. The
+// gape and the gill margin are seams, so they are locked.
+const BODY_LOD_WEIGHTS: LodWeights = { normal: 1, uv: [2, 6], aJaw: 1, aJawG: 1, aCover: 1, aSlit: 1, aThick: 0 };
 import { FishModel, PectoralPivot } from './model.js';
 
 /** Pectoral tips' lag behind the stroke (fin lengths), tuned in the lab (setPectLag). */
@@ -117,6 +125,7 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   const pects: PectoralPivot[] = [];
   const group = new FishModel({ uniforms, pects, fan: p?.kind === 'fan', custom: false });
   const body = new THREE.Mesh(a.bodyGeo, bodyMat);
+  useLods(body, BODY_LOD_WEIGHTS);
   const fins = new THREE.Mesh(a.finGeo, finMat);
   fins.renderOrder = 1;
   group.add(fins, body);

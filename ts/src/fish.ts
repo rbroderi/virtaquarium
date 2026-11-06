@@ -297,12 +297,6 @@ export class Fish implements SpineBody {
     if (!this.spine) this.pushOutOfRock(dt, world, U);
     else this.pushEelHeadOutOfRock(dt, world, U);
     this.pos.y = clamp(this.pos.y, B.y0, B.y1);
-    // A cave roof is a slab the height field doesn't hold: keep to the side of it the fish is on. (The
-    // rock field holds the roof for the others.)
-    const roof = this.spine ? world.roofAt(this.pos.x, this.pos.z) : null, rr = 0.05 * L;
-    if (roof && this.pos.y > roof.y - rr && this.pos.y < roof.top + rr) {
-      this.pos.y = this.pos.y < (roof.y + roof.top) / 2 ? roof.y - rr : roof.top + rr;
-    }
   }
 
   /**
@@ -440,7 +434,7 @@ export class Fish implements SpineBody {
     }
     if (this.spine) {
       // The moray's chain does the bending; the analytic bend is off. Braced in its crevice, the body is stiff.
-      this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12);
+      this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12, _up, _side);
       this.spine.write(u.uSpine.value, this, _up, _side);
       u.uSpineOn.value = 1;
       u.uBend.value = u.uBendTail.value = 0;

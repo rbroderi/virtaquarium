@@ -3,8 +3,12 @@
 import * as THREE from 'three';
 import { range, clamp, lerp, makeCanvas, context2d, Noise, type Rng } from '../util.js';
 import { canvasTexture } from './shared.js';
+import { organicPass, type OrganicOptions } from '../core/organic.js';
 
 const FULL_CIRCLE = 7;   // > 2 PI: canvas arcs drawn as whole discs
+/** Grown, not drawn: the bars and spot rows wander and the colour is patchy. u wraps round the mantle. */
+const SKIN_ORGANIC: OrganicOptions = { warp: [[8, 4, 10, 6], [24, 12, 3, 2]], mottle: { cellsX: 10, cellsY: 5, value: 0.07, chroma: 0.03 }, wrapX: true };
+const FIN_ORGANIC: OrganicOptions = { warp: [[10, 2, 4, 2]], mottle: { cellsX: 8, cellsY: 2, value: 0.06, chroma: 0.03 } };
 
 /** The mantle skin: zebra bars on the back, white spots along the fin base, a pale belly. */
 export function cuttleSkin(rng: Rng): THREE.CanvasTexture {
@@ -35,6 +39,7 @@ export function cuttleSkin(rng: Rng): THREE.CanvasTexture {
   for (const u0 of [0.093, 0.407]) {
     for (let i = 0; i < SPOTS; i++) { g.beginPath(); g.arc(u0 * W + range(rng, -4, 4), (0.05 + 0.9 * i / SPOTS) * H, range(rng, 1.5, 2.6), 0, FULL_CIRCLE); g.fill(); }
   }
+  organicPass(g, W, H, rng, SKIN_ORGANIC);
   return canvasTexture(c);
 }
 
@@ -50,6 +55,7 @@ export function cuttleFinTex(rng: Rng): THREE.CanvasTexture {
     const y = H * Math.sqrt(rng());   // more towards the edge (v = 1)
     g.beginPath(); g.arc(rng() * W, y, range(rng, 0.6, 1.3), 0, FULL_CIRCLE); g.fill();
   }
+  organicPass(g, W, H, rng, FIN_ORGANIC);
   return canvasTexture(c);
 }
 

@@ -1,6 +1,10 @@
 // Procedural canvas textures for the reef: sand grain, rock pores and crust, the sea fan's lattice.
 import * as THREE from 'three';
 import { clamp, context2d, makeCanvas, range, type Rng } from '../util.js';
+import { organicPass, type OrganicOptions } from '../core/organic.js';
+
+/** Straight sea-fan branches bend and thicken unevenly. */
+const SEA_FAN_ORGANIC: OrganicOptions = { warp: [[6, 6, 6, 6], [20, 20, 2, 2]], mottle: { cellsX: 6, cellsY: 6, value: 0.06, chroma: 0.03 } };
 
 const BYTE_MAX = 255;
 
@@ -101,6 +105,7 @@ export function seaFanTexture(rng: Rng): THREE.CanvasTexture {
     const x = rng() * W, y = rng() * H * 0.85;
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + range(rng, -14, 14), y + range(rng, -14, 14)); g.stroke();
   }
+  organicPass(g, W, H, rng, SEA_FAN_ORGANIC);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;

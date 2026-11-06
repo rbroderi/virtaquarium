@@ -7,8 +7,9 @@
 import { isRecord } from '../util.js';
 import type { Species } from '../species/types.js';
 import { cellHash, gillOf, gillU, makeProfile, mouthOf, naresOf } from './profile.js';
-import { applyShade, paintSkin } from './skin.js';
-import { caudalOutline, finMaps, finOutline, paintFins, pelvicOutline, type TexImage } from './fins.js';
+import { applyShade, organicSkin, paintSkin } from './skin.js';
+import { organicPass, roundCorners, valueNoise, wobble } from '../core/organic.js';
+import { caudalOutline, finMaps, finOutline, paintFins, pelvicOutline, smoothPts, type TexImage } from './fins.js';
 
 const SKIN_CACHE_VERSION = 1;
 export const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'] as const;
@@ -47,7 +48,7 @@ const loadImage = (url: string): Promise<HTMLImageElement> => new Promise((ok, f
 
 /** The painters whose source is part of every key. */
 const PAINTERS: readonly ((...args: never[]) => unknown)[] = [
-  paintSkin, paintFins, finMaps, applyShade, makeProfile, gillU, gillOf, naresOf, mouthOf, finOutline, caudalOutline, pelvicOutline, cellHash,
+  paintSkin, organicSkin, organicPass, valueNoise, wobble, roundCorners, smoothPts, paintFins, finMaps, applyShade, makeProfile, gillU, gillOf, naresOf, mouthOf, finOutline, caudalOutline, pelvicOutline, cellHash,
 ];
 
 export function skinKey(sp: Species): string {

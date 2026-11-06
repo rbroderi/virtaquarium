@@ -99,6 +99,7 @@ async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle): P
     critters: () => import('./critterCheck.js'),
     motion: () => import('./motionCheck.js'),
     look: () => import('./lookCheck.js'),
+    perf: () => import('./perfCheck.js'),
   };
   const load = check ? loaders[check] : undefined;
   if (load) await (await load()).main(aquarium);
@@ -129,9 +130,15 @@ async function main(): Promise<void> {
   const ao = new ScreenAO(stage.renderer);
   const useReefLight = !isJellyTank && options.reefLight;
   if (useReefLight) useSoftFishShadows(stage);
-  // Shaders compile in parallel while the rest of startup runs, instead of blocking on first draw.
-  const precompile = (): Promise<void> => stage.renderer.compileAsync(stage.scene, stage.camera)
-    .then(() => undefined, (e: unknown) => console.warn('compileAsync:', e instanceof Error ? e.message : e));
+  // Shaders compile in parallel while the rest of startup runs, instead of blocking on first draw. Bound
+  // to the target the tank draws into (the water renderer's): a program is specific to its target (an
+  // HDR target has no tone mapping or sRGB output), and the screen's would go unused.
+  const precompile = (): Promise<void> => {
+    stage.renderer.setRenderTarget(stage.water.target);
+    const compiling = stage.renderer.compileAsync(stage.scene, stage.camera);   // issues every compile now, then waits
+    stage.renderer.setRenderTarget(null);
+    return compiling.then(() => undefined, (e: unknown) => console.warn('compileAsync:', e instanceof Error ? e.message : e));
+  };
   if (options.precompile) void precompile();
   if (useReefLight) await bakeReefLight(stage, reef);
   timer.stage('reef light bake');

@@ -2,6 +2,7 @@
 // midline holding the dorsal, anal, caudal and pelvic fins) and the relief maps of their rays.
 import * as THREE from 'three';
 import { clamp, lerp, mulberry32, makeCanvas, context2d } from '../util.js';
+import { wobble } from '../core/organic.js';
 import type {
   CaudalBand, FinCount, FinLook, FinPaint, FinSpot, MembraneFin, Meristic, SpineFin, Species,
 } from '../species/types.js';
@@ -14,6 +15,31 @@ const SHEET_X_MIN = -0.52;
 const CAUDAL_PRINCIPAL_RAYS = 17;
 const DEFAULT_SPINE_HEIGHTS = [0.7, 1, 1, 0.9, 0.7, 0.5, 0.35];
 const DEFAULT_SPINE_LEAN: P2 = [25, 50];
+
+// Organic imperfection in the fin paint (core/organic.ts), each scaled by sp.organic.warp:
+/** Ray count assumed for the layout drift when the meristics don't give one. */
+const DEFAULT_RAY_COUNT = 15;
+/** The ray layout drifts by up to this fraction of a ray gap, with one slow swing per this many rays. */
+const RAY_DRIFT = 0.25;
+const RAY_DRIFT_CYCLES_PER_RAY = 8;
+/** Painted areas' sides wander across the rays by up to this (fraction of the ray span), in ~2 swings. */
+const BAND_WANDER = 0.012;
+const BAND_WANDER_CYCLES = 2;
+/** Points along each wandering side, which runs from just inside the base to past the margin. */
+const BAND_SIDE_POINTS = 17;
+const BAND_OVERHANG_START = -0.05;
+const BAND_OVERHANG_SPAN = 1.15;
+/** Each ray's thickness varies by +-half this; it bows by up to +-half RAY_BOW of its length. */
+const RAY_THICKNESS_SPREAD = 0.5;
+const RAY_BOW = 0.08;
+const BRANCH_BOW = 0.04;
+/** Points along a drawn ray curve. */
+const RAY_CURVE_POINTS = 7;
+/** The pigmented margin's width varies by up to this fraction, about once per this length (TL). */
+const MARGIN_WIDTH_VARY = 0.4;
+const MARGIN_WANDER_PERIOD = 0.05;
+/** Points per quadratic segment when smoothPath's curve is sampled as a polyline. */
+const SMOOTH_POINTS_PER_SEGMENT = 8;
 
 /** Base and outer edge points of a fin at t (0 front .. 1 rear). */
 export type Rays = (t: number) => [P2, P2];
@@ -165,12 +191,30 @@ function smoothPath(g: CanvasRenderingContext2D, pts: readonly P2[], close: bool
   if (close) g.closePath();
 }
 
+/** smoothPath's curve as a dense polyline (per points on each quadratic). */
+export function smoothPts(pts: readonly P2[], close: boolean, per = SMOOTH_POINTS_PER_SEGMENT): P2[] {
+  const first = pt(pts, 0), out: P2[] = [first];
+  let a = first;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const c = pt(pts, i), d = pt(pts, i + 1), m: P2 = [(c[0] + d[0]) / 2, (c[1] + d[1]) / 2];
+    for (let k = 1; k <= per; k++) {
+      const t = k / per, u = 1 - t;
+      out.push([u * u * a[0] + 2 * u * t * c[0] + t * t * m[0], u * u * a[1] + 2 * u * t * c[1] + t * t * m[1]]);
+    }
+    a = m;
+  }
+  out.push(pt(pts, pts.length - 1));
+  if (close) out.push(first);
+  return out;
+}
+
 function finFill(g: CanvasRenderingContext2D, fill: FinLook['fill'], x0: number, x1: number): string | CanvasGradient {
   if (!Array.isArray(fill)) return fill;
   const gr = g.createLinearGradient(x0, 0, x1, 0);
   for (const [t, col] of fill) gr.addColorStop(1 - t, col);
   return gr;
 }
+
 
 const lerp2 = (a: P2, b: P2, t: number): P2 => [lerp(a[0], b[0], t), lerp(a[1], b[1], t)];
 
@@ -199,7 +243,13 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
 
   const meshes: FinMeshSpec[] = [];   // { rays, n }: ray field per fin, for the 3D membrane
   const tubes: TubeSpec[] = [];       // spines and rays modelled as tapered tubes (tubeGeometry)
-  const drawFin = (spec: SheetFin, outlinePts: P2[], rays: Rays, mer: RayCount = {}, marginPts: P2[] | null = null): void => {
+  const organicWarp = sp.organic?.warp ?? 1;
+  const drawFin = (spec: SheetFin, outlinePts: P2[], rays0: Rays, mer: RayCount = {}, marginPts: P2[] | null = null): void => {
+    // Rays are never evenly spaced: the layout drifts by up to ~25% of a ray gap, slowly enough that
+    // the order holds, and not at the fin's ends. Everything below (paint, rays, the membrane's
+    // pleats) uses the drifted layout, so they stay together.
+    const n0 = mer.n ?? DEFAULT_RAY_COUNT, wr = wobble(rng, n0 / RAY_DRIFT_CYCLES_PER_RAY), ja = (RAY_DRIFT / n0) * organicWarp;
+    const rays: Rays = (t) => rays0(clamp(t + ja * wr(t) * Math.sin(Math.PI * clamp(t, 0, 1)), 0, 1));
     g.save();
     g.beginPath(); smoothPath(g, outlinePts, true);
     const xs = outlinePts.map((p) => p[0]);
@@ -207,21 +257,24 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
     g.fill();
     g.clip();
     g.globalAlpha = 1;
-    const quad = (a: number, b: number): void => {
-      const [a0, a1] = rays(a), [b0, b1] = rays(b);
+    // A painted area between rays t0 and t1. Its sides wander across the rays (up to ~0.012 of the
+    // fin's ray span) instead of running straight down one, so the band bends and changes width; a
+    // side on the fin's own edge (t 0 or 1) stays put.
+    const wavyBand = (t0: number, t1: number): void => {
+      const amp = BAND_WANDER * organicWarp;
+      const side = (t: number): P2[] => {
+        const w = wobble(rng, BAND_WANDER_CYCLES), a = t <= 0 || t >= 1 ? 0 : amp;
+        return Array.from({ length: BAND_SIDE_POINTS }, (_, i): P2 => {
+          const s = BAND_OVERHANG_START + (BAND_OVERHANG_SPAN * i) / (BAND_SIDE_POINTS - 1), [b, e] = rays(clamp(t + a * w(s), 0, 1));
+          return [lerp(b[0], e[0], s), lerp(b[1], e[1], s)];
+        });
+      };
       g.beginPath();
-      g.moveTo(...a0); g.lineTo(...a1); g.lineTo(...b1); g.lineTo(...b0);
-    };
-    for (const pnt of spec.paint || []) {
-      g.fillStyle = pnt.color;
-      quad(pnt.t0, pnt.t1);
+      for (const p of [...side(t0), ...side(t1).reverse()]) g.lineTo(...p);
       g.closePath(); g.fill();
-    }
-    if (spec.band) {
-      g.fillStyle = spec.band.color;
-      quad(spec.band.t, spec.band.t + spec.band.w);
-      g.fill();
-    }
+    };
+    for (const pnt of spec.paint || []) { g.fillStyle = pnt.color; wavyBand(pnt.t0, pnt.t1); }
+    if (spec.band) { g.fillStyle = spec.band.color; wavyBand(spec.band.t, spec.band.t + spec.band.w); }
     if (spec.spots) {
       g.fillStyle = spec.spots;
       // spotR: mean spot radius (TL); spotN: how many.
@@ -266,27 +319,37 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
     // Spines are single, stiff and unjointed; soft rays (lepidotrichia) are jointed and branch towards
     // the margin (the outermost principal caudal rays stay simple).
     const rayCol = spec.rays || 'rgba(35,20,5,0.13)';
-    const line = (a: P2, b: P2, w: number, col: string): void => {
-      g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    // A ray as a curve from a to b, bowed sideways by up to `bow` of its length (rays are flexible and
+    // seldom straight); line() draws its stretch s0..s1, colour and relief together.
+    const bowed = (a: P2, b: P2, bow: number) => (s: number): P2 => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], o = bow * Math.sin(Math.PI * s);
+      return [a[0] + dx * s - dy * o, a[1] + dy * s + dx * o];
+    };
+    const line = (P: (s: number) => P2, s0: number, s1: number, w: number, col: string): void => {
+      const pts = Array.from({ length: RAY_CURVE_POINTS }, (_, k) => P(lerp(s0, s1, k / (RAY_CURVE_POINTS - 1))));
+      g.strokeStyle = col; g.lineWidth = w; g.beginPath(); for (const p of pts) g.lineTo(p[0], p[1]); g.stroke();
       if (spec.solid) return;   // a moray's skin-covered fin fold: smooth
       hg.lineWidth = w * 1.3; hg.globalAlpha = Math.min(1, g.globalAlpha * 1.4); hg.setLineDash(g.getLineDash());
-      hg.beginPath(); hg.moveTo(a[0], a[1]); hg.lineTo(b[0], b[1]); hg.stroke();
+      hg.beginPath(); for (const p of pts) hg.lineTo(p[0], p[1]); hg.stroke();
     };
     for (let i = 0; i <= n; i++) {
-      const t = i / n, [a, b] = rays(t);
+      // Each ray its own thickness (~±25%) and bow (up to ~4% of its length either way).
+      const t = i / n, [a, b] = rays(t), wk = 1 + RAY_THICKNESS_SPREAD * organicWarp * (rng() - 0.5);
+      const P = bowed(a, b, RAY_BOW * organicWarp * (rng() - 0.5));
       if (i < spines) {
         g.setLineDash([]);
-        line(a, b, 0.0045, rayCol);
+        line(P, 0, 1, 0.0045 * wk, rayCol);
         continue;
       }
       g.setLineDash([0.035, 0.0012]);   // soft-ray joints
-      const simple = mer.simpleEnds && (i === 0 || i === n);
-      const m = simple ? b : lerp2(a, b, 0.55), q = lerp2(a, b, 0.2);
+      const simple = mer.simpleEnds && (i === 0 || i === n), sm = simple ? 1 : 0.55;
       g.globalAlpha = 0.35;   // rays crowd together at the base; they read fainter there
-      line(a, q, 0.0026, rayCol);
+      line(P, 0, 0.2, 0.0026 * wk, rayCol);
       g.globalAlpha = 1;
-      line(q, m, 0.0026, rayCol);
-      if (!simple) for (const s of [-1, 1]) line(m, rays(clamp(t + (s * 0.22) / n, 0, 1))[1], 0.0018, rayCol);
+      line(P, 0.2, sm, 0.0026 * wk, rayCol);
+      if (!simple) {
+        for (const s of [-1, 1]) line(bowed(P(sm), rays(clamp(t + (s * 0.22) / n, 0, 1))[1], BRANCH_BOW * organicWarp * (rng() - 0.5)), 0, 1, 0.0018 * wk, rayCol);
+      }
     }
     g.setLineDash([]); hg.setLineDash([]); hg.globalAlpha = 1;
     g.restore();
@@ -297,9 +360,8 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
       const ew = spec.edgeW || 0.006, fw = spec.fringe ? spec.fringeW || 0.008 : 0;
       g.save();
       g.beginPath(); smoothPath(g, outlinePts, true); g.clip();
+      fillMargin(g, smoothPts(marginPts || outlinePts, !marginPts), ew, fw, spec.edge);
       g.beginPath(); smoothPath(g, marginPts || outlinePts, !marginPts);
-      g.globalAlpha = 0.95;
-      g.strokeStyle = spec.edge; g.lineWidth = 2 * (ew + fw); g.stroke();
       if (fw && spec.fringe) {
         g.globalAlpha = 1; g.lineWidth = 2 * fw;
         g.globalCompositeOperation = 'destination-out'; g.stroke();
@@ -307,6 +369,28 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
       }
       g.restore();
     }
+  };
+  /**
+   * The pigment's inner edge wanders: its width varies by up to ~40% along the margin, about once per
+   * 0.05 TL. Filled as a strip along the margin curve (clipped to the fin, so only the inner half
+   * shows), rather than stroked at one width.
+   */
+  const fillMargin = (ctx: CanvasRenderingContext2D, M: readonly P2[], ew: number, fw: number, colour: string): void => {
+    let mlen = 0;
+    for (let i = 1; i < M.length; i++) mlen += Math.hypot(pt(M, i)[0] - pt(M, i - 1)[0], pt(M, i)[1] - pt(M, i - 1)[1]);
+    const wm = wobble(rng, Math.max(2, mlen / MARGIN_WANDER_PERIOD)), vary = MARGIN_WIDTH_VARY * organicWarp;
+    const left: P2[] = [], right: P2[] = [];
+    let s = 0;
+    for (let i = 0; i < M.length; i++) {
+      const m = pt(M, i);
+      if (i) s += Math.hypot(m[0] - pt(M, i - 1)[0], m[1] - pt(M, i - 1)[1]);
+      const a = pt(M, Math.max(0, i - 1)), b = pt(M, Math.min(M.length - 1, i + 1)), dl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const nx = -(b[1] - a[1]) / dl, ny = (b[0] - a[0]) / dl, h = ew * (1 + vary * wm(s / mlen)) + fw;
+      left.push([m[0] + nx * h, m[1] + ny * h]); right.push([m[0] - nx * h, m[1] - ny * h]);
+    }
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = colour;
+    ctx.beginPath(); for (const p of [...left, ...right.reverse()]) ctx.lineTo(...p); ctx.closePath(); ctx.fill();
   };
   const meristics = (name: Meristic | 'pelvic' | undefined): RayCount => {
     const m: FinCount | undefined = name ? sp.anatomy?.[name] : undefined;

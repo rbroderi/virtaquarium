@@ -2,6 +2,12 @@
 import * as THREE from 'three';
 import { range, clamp, lerp, makeCanvas, context2d, Noise, type Rng } from '../util.js';
 import { canvasTexture } from './shared.js';
+import { organicPass, type OrganicOptions } from '../core/organic.js';
+
+/** The scute seams wander instead of running as straight Voronoi edges. */
+const CARAPACE_ORGANIC: OrganicOptions = { warp: [[6, 6, 10, 10], [20, 20, 3, 3]], mottle: { cellsX: 6, cellsY: 6, value: 0.06, chroma: 0.03 } };
+/** Strong enough that the hexagons become uneven polygons, as a turtle's head scales are. */
+const SCALE_ORGANIC: OrganicOptions = { warp: [[4, 4, 7, 7], [12, 12, 2.5, 2.5]], mottle: { cellsX: 4, cellsY: 4, value: 0.08, chroma: 0.03 }, wrapX: true, wrapY: true };
 
 type Scute = readonly [cx: number, cy: number, r: number];
 
@@ -50,6 +56,7 @@ export function carapaceTex(rng: Rng): THREE.CanvasTexture {
     d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255;
   }
   g.putImageData(img, 0, 0);
+  organicPass(g, S, S, rng, CARAPACE_ORGANIC);
   return canvasTexture(c);
 }
 
@@ -67,6 +74,7 @@ export function scaleTex(rng: Rng): THREE.CanvasTexture {
     for (let k = 0; k < SIDES; k++) { const a = (k / SIDES) * Math.PI * 2 + 0.5 + rng() * 0.2; g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); }
     g.fill();
   }
+  organicPass(g, S, S, rng, SCALE_ORGANIC);
   const t = canvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(1.4, 1.4);

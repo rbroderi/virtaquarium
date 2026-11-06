@@ -4,8 +4,8 @@
 import { viewOptions, type ViewOptions } from '../view.js';
 import { toneFor, type ToneCurve } from '../rig.js';
 
-export type CheckName = 'motion' | 'look' | 'critters' | 'startup';
-const CHECKS: readonly CheckName[] = ['motion', 'look', 'critters', 'startup'];
+export type CheckName = 'motion' | 'look' | 'critters' | 'startup' | 'perf';
+const CHECKS: readonly CheckName[] = ['motion', 'look', 'critters', 'startup', 'perf'];
 const isCheckName = (v: string | null): v is CheckName => v !== null && (CHECKS as readonly string[]).includes(v);
 
 /** f/5.6 keeps most of the reef sharp with the far rock and near-glass motes softened. */
@@ -15,6 +15,7 @@ export interface AppOptions {
   /** Camera model (depth of field, lens fall-off, grain); ?photo=0 turns it off. */
   readonly photo: boolean;
   readonly fNumber: number;
+  /** The room's reflection in the front glass: off unless ?glass=1. */
   readonly glass: boolean;
   /** Baked reef light; ?reeflight=0 to compare. */
   readonly reefLight: boolean;
@@ -40,7 +41,7 @@ export function parseAppOptions(params: URLSearchParams): AppOptions {
   return {
     photo: params.get('photo') !== '0',
     fNumber: Number(params.get('fstop')) || DEFAULT_F_NUMBER,
-    glass: params.get('glass') !== '0',
+    glass: params.get('glass') === '1',
     reefLight: params.get('reeflight') !== '0',
     precompile: params.get('precompile') !== '0',
     motionBlur: params.get('blur') !== '0',
