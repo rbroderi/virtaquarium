@@ -7,12 +7,14 @@
   "rock_b": {
     "file": "scenery/rock_b.glb",
     "kind": "rock",
-    "task": "73ff0dc1-6100-48c2-a37f-9b2099ac50eb"
+    "task": "73ff0dc1-6100-48c2-a37f-9b2099ac50eb",
+    "retired": true
   },
   "rock_c": {
     "file": "scenery/rock_c.glb",
     "kind": "rock",
-    "task": "c1e48cc7-5409-4087-a712-cc99b0cecd74"
+    "task": "c1e48cc7-5409-4087-a712-cc99b0cecd74",
+    "retired": true
   },
   "rock_d": {
     "file": "scenery/rock_d.glb",
@@ -37,7 +39,7 @@
   "coral_brain": {
     "file": "scenery/coral_brain.glb",
     "kind": "coral",
-    "task": "1256286a-4015-4b22-be57-8fbc67d195bb"
+    "task": "f8003d9b-a6fe-484e-9f26-e7c6a37e4aee"
   },
   "coral_leather": {
     "file": "scenery/coral_leather.glb",
@@ -71,7 +73,8 @@
   "rock_e": {
     "file": "scenery/rock_e.glb",
     "kind": "rock",
-    "task": "a2a04708-afc4-4d7b-9851-3f7f06f64d53"
+    "task": "a2a04708-afc4-4d7b-9851-3f7f06f64d53",
+    "retired": true
   },
   "rock_f": {
     "file": "scenery/rock_f.glb",
@@ -99,5 +102,89 @@
     "kind": "plant",
     "stiff": 0.35,
     "task": "79947196-1e41-441e-8430-fd707372c1c0"
+  },
+  "rock_i": {
+    "file": "scenery/rock_i.glb",
+    "kind": "rock",
+    "task": "3b2be377-3024-4aa5-9c46-be2ddab7109a",
+    "grade": {
+      "sat": 0.55,
+      "gain": 0.8
+    }
+  },
+  "rock_j": {
+    "file": "scenery/rock_j.glb",
+    "kind": "rock",
+    "task": "fc482967-6bf9-4ec2-84ac-5a33791aa8c5"
+  },
+  "coral_table": {
+    "file": "scenery/coral_table.glb",
+    "kind": "coral",
+    "task": "ad6afa1a-a3f0-42bb-8e1f-114390752161"
+  },
+  "sponge_barrel": {
+    "file": "scenery/sponge_barrel.glb",
+    "kind": "coral",
+    "task": "406594c6-01ca-4f45-a5f3-bb974aa32a6e"
+  },
+  "coral_montipora": {
+    "file": "scenery/coral_montipora.glb",
+    "kind": "coral",
+    "task": "e86f235c-e43f-4334-9e8e-9a1ad7709604"
+  },
+  "clam_tridacna": {
+    "file": "scenery/clam_tridacna.glb",
+    "kind": "prop",
+    "task": "a87803ff-2e47-4f26-8a41-d0aa0d2775aa",
+    "rotate": [
+      -25,
+      -90,
+      0
+    ]
+  },
+  "sponge_tube": {
+    "file": "scenery/sponge_tube.glb",
+    "kind": "coral",
+    "task": "7ffaf873-0331-4336-b8ca-ae0ccd7a5962"
+  },
+  "coral_bubble": {
+    "file": "scenery/coral_bubble.glb",
+    "kind": "coral",
+    "task": "a3faecab-732f-41c3-b5f8-0a1e1e155c3c"
+  },
+  "zoanthid_rock": {
+    "file": "scenery/zoanthid_rock.glb",
+    "kind": "coral",
+    "task": "71783098-475b-4414-8d69-0adc3e84e40b"
+  },
+  "sea_rod": {
+    "file": "scenery/sea_rod.glb",
+    "kind": "coral",
+    "task": "bfac8dba-ffd2-4a68-aaa2-a7a5ed490bf9",
+    "sway": 1.5
+  },
+  "sea_cucumber": {
+    "file": "scenery/sea_cucumber.glb",
+    "kind": "prop",
+    "task": "06baed53-c84b-4f31-9747-0f05bd0f4dca"
+  },
+  "urchin_pencil": {
+    "file": "scenery/urchin_pencil.glb",
+    "kind": "prop",
+    "task": "d74755e8-a756-4e25-8c62-67c2bd1a5270"
+  },
+  "sponge_tube_orange": {
+    "file": "scenery/sponge_tube_orange.glb",
+    "kind": "coral",
+    "task": "56f177f7-465f-4a1c-98ea-e5307f54a56a"
+  },
+  "coral_digitata": {
+    "file": "scenery/coral_digitata.glb",
+    "kind": "coral"
+  },
+  "coral_brain_v1": {
+    "file": "scenery/coral_brain_v1.glb",
+    "kind": "coral",
+    "retired": true
   }
 }

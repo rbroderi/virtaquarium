@@ -1,6 +1,14 @@
 # Tripo scenery plan
 
-This is a plan only. Nothing here has been generated, and no credits have been spent. Cost basis: the
+**Status (2026-11-05): batches 1 and 2 generated and placed**, 15 jobs at 30 credits each (450 credits).
+Results: `rock_i` came out saturated magenta (toned with a `grade`), `rock_j` grey with small raised
+blobs (used); the first Montipora grew finger branches (kept as `coral_digitata`) and its retry gave
+plates; `sponge_ear` grew tubes (kept as `sponge_tube_orange`); the brain coral now has meandering
+ridges (the old one is `coral_brain_v1`, retired); the urchin has thin spines rather than slate pencils.
+`rock_b`, `rock_c` and `rock_e` are retired from the rock pool. Not done from section 5: the 1.15x stretch
+cap, the continuous back wall, the foreground pull-back. Roku: the backdrop needs a rebake.
+
+Originally a plan only. Cost basis: the
 README and `tools/tripo.mjs` say a model costs 10-40 credits (1 credit = $0.01). The jobs here use
 `texture_quality: 'detailed'` and PBR, and `photoreal-behaviour-plan.md` budgets 4 rocks at about 120
 credits, so this plan assumes **about 30 credits per job** (40 at worst).

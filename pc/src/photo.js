@@ -99,7 +99,8 @@ vec3 roomAt(vec3 r) {
   vec2 w = vec2(r.x / max(r.z, 0.05) + 0.55, r.y / max(r.z, 0.05) - 0.3);   // on a plane in front of r
   vec2 e = smoothstep(vec2(0.33, 0.21), vec2(0.3, 0.18), abs(w));
   float mull = smoothstep(0.006, 0.012, abs(w.y));
-  return L + vec3(0.9, 0.95, 1.0) * 0.9 * e.x * e.y * mull;
+  // (a dim, overcast window: a bright one read as a pasted rectangle over the open water)
+  return L + vec3(0.9, 0.95, 1.0) * 0.22 * e.x * e.y * mull;
 }
 float schlick(float f0, float c) { return f0 + (1.0 - f0) * pow(1.0 - c, 5.0); }
 vec3 glassReflection(vec2 ndc) {

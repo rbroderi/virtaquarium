@@ -11,6 +11,7 @@ import sharp from 'sharp';
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { textureCompress, dedup, prune } from '@gltf-transform/functions';
+import { addHeight } from './heightmaps.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = path.join(ROOT, 'pc', 'models', 'scenery');
@@ -30,6 +31,8 @@ export async function optimize(id, { dir = DIR, size = id.startsWith('rock') ? 2
     textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [size, size], quality: 96, slots: /^normal/ }),
   );
   await io.write(out, doc);
+  // Scenery: a parallax height map in the normal map's alpha (fish models don't use one).
+  if (dir === DIR) await addHeight(out);
   const mb = (f) => (fs.statSync(f).size / 1e6).toFixed(1);
   console.log(`${id}: ${mb(src)} MB -> ${mb(out)} MB (${size}px)`);
 }

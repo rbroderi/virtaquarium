@@ -40,12 +40,32 @@ export const JOBS = {
   coral_staghorn: { kind: 'coral', faces: 40000, prompt: 'Living staghorn acropora coral colony, many thick cylindrical branches forking upward, bright orange tissue with paler yellow growing tips, tiny polyp bumps along the branches' },
   coral_finger: { kind: 'coral', faces: 40000, prompt: 'Dome-shaped colony of white finger coral (Porites), hundreds of short blunt cream-white fingers packed into a hemisphere' },
   coral_cauliflower: { kind: 'coral', faces: 40000, prompt: 'Lavender cauliflower coral colony (Pocillopora), rounded bush of short knobby lumpy branches, soft lavender-purple with pale tips' },
-  coral_brain: { kind: 'coral', faces: 30000, prompt: 'Round brain coral (Diploria) boulder, deep meandering grooves and ridges over the whole dome, olive green ridges with tan valleys' },
   coral_leather: { kind: 'coral', faces: 30000, prompt: 'Toadstool leather coral (Sarcophyton), short thick smooth stalk with a wide wavy folded mushroom cap, pale green-yellow cap covered in fine polyp texture' },
   coral_fan: { kind: 'coral', faces: 30000, prompt: 'Pink ruffled lettuce coral (Pectinia), clusters of thin wavy upright plates with frilly edges, pink and magenta with lighter edges' },
   // Plants: 'plant' kind, placed on sand and rock feet by reef.js, swaying with the current in the shader.
   plant_halimeda: { kind: 'plant', faces: 30000, prompt: 'Clump of Halimeda cactus macroalgae, many upright branching chains of small flat green coin-shaped calcified segments, bright green with pale lime edges, growing from a small holdfast in sand' },
   plant_caulerpa: { kind: 'plant', faces: 30000, prompt: 'Clump of Caulerpa racemosa grape macroalgae, upright stalks densely covered in small glossy round green bead-like vesicles, short creeping runners at the base, rich green' },
+  // docs/tripo-scenery-plan.md, batch 1: two rock families with flat crusts (the first rocks' "coralline
+  // algae" came out as raised blobs), a table coral and Montipora plates (horizontals), a barrel sponge.
+  // neg: extra negatives for that job.
+  rock_i: { kind: 'rock', faces: 30000, neg: 'raised growths, flowers, blobs, bumps on top', prompt: 'Large reef aquarium live rock boulder after years in a reef tank, dense irregular shape with a few deep holes and ledges, surface almost entirely covered in smooth flat paint-like coralline algae crust in mottled deep purple, maroon and dusky pink, flush with the rock with no raised growths, olive-brown turf algae in the hollows, a few small flat orange encrusting sponges' },
+  rock_j: { kind: 'rock', faces: 30000, neg: 'raised growths, flowers, blobs', prompt: 'Reef live rock ledge, tall irregular slab with an undercut base, weathered dark grey and brown limestone with small pores, short olive-green and brown turf algae on the upper faces, scattered flat maroon coralline patches flush with the surface, a few white calcareous worm tubes, no raised growths' },
+  coral_table: { kind: 'coral', faces: 40000, neg: 'rubble, gravel, dome, mound, bowl', prompt: 'Table coral colony (Acropora hyacinthus), one broad flat horizontal plate of tightly fused fine branchlets on a short thick central stalk, plate thick at the edge, upper surface covered in tiny upright branchlet tips, soft brown and olive tissue with pale cream growing rim, colony base broken off cleanly, no rubble' },
+  sponge_barrel: { kind: 'coral', faces: 30000, neg: 'closed top, rubble', prompt: 'Giant barrel sponge (Xestospongia muta), tall thick-walled vase shape wider at the top with a deep central opening, outer wall covered in rough knobbly vertical ridges and furrows, dull brownish red to terracotta, paler inside the rim' },
+  // (The first take of this prompt grew orange finger branches: kept as coral_digitata in scenery.json.
+  // Retried with the shape spelled out and branches forbidden. sponge_ear came out as orange tubes:
+  // kept as sponge_tube_orange.)
+  coral_montipora: { kind: 'coral', faces: 30000, neg: 'branches, fingers, tubes, cylinders, spikes, single blob, dome, rubble', prompt: 'Plating Montipora coral (Montipora capricornis), a stack of four thin flat overlapping plates like curled dinner plates or rose petals spiralling outwards, each plate horizontal and wavy-edged, no branches, plate upper surfaces smooth and finely pitted with tiny polyp pores, rich orange-red tissue with paler cream rims' },
+  // Batch 2: accents, scale cues and silhouettes.
+  clam_tridacna: { kind: 'prop', faces: 20000, neg: 'closed shell', prompt: 'Maxima giant clam (Tridacna maxima), oval fluted grey-white shell with wavy scalloped ridges, opened with the thick fleshy mantle spread over the shell lips, mantle electric blue and teal with dark green mottled spots and a pale siphon opening in the middle' },
+  coral_brain: { kind: 'coral', faces: 30000, neg: 'spikes, points, spines, pagoda, hedgehog', prompt: 'Grooved brain coral (Diploria labyrinthiformis) round boulder, smooth rounded meandering ridges and valleys winding over the whole dome exactly like a human brain, no spikes, no points, ridges olive-tan, valleys pale cream-green' },
+  sponge_tube: { kind: 'coral', faces: 30000, neg: 'fused, solid, closed tops', prompt: 'Cluster of five yellow tube sponges (Aplysina fistularis), thick upright hollow tubes of different heights joined at the base, each open at the top, rough porous outer surface, bright sulphur yellow' },
+  coral_bubble: { kind: 'coral', faces: 30000, neg: 'branches, cauliflower', prompt: 'Bubble coral (Plerogyra sinuosa) colony, rounded mound densely covered in plump grape-like translucent bubble vesicles, creamy white with a faint green tint, short ridged skeleton walls showing at the base' },
+  zoanthid_rock: { kind: 'coral', faces: 30000, prompt: 'Small reef rubble rock carpeted on top with a dense mat of zoanthid polyps (Zoanthus), hundreds of short fleshy tubes with flat open discs, discs bright orange centres with green rims, rock underside grey and porous' },
+  sea_rod: { kind: 'coral', faces: 30000, neg: 'thin twigs, many branches, broken, fan, net', prompt: 'Knobby sea rod gorgonian (Eunicea), a few thick upright candelabra branches forking from a short trunk, each branch finger-thick and covered in raised polyp calyces, dull purple-brown with tan tips' },
+  sea_cucumber: { kind: 'prop', faces: 20000, prompt: 'Sea cucumber (Holothuria), soft elongated sausage-shaped body lying on sand, wrinkled leathery skin with small rounded papillae, dark brown with mottled tan' },
+  urchin_pencil: { kind: 'prop', faces: 20000, neg: 'thin needles, long sharp spines', prompt: 'Slate pencil sea urchin (Heterocentrotus mamillatus), round test with about twenty thick blunt cylindrical spines radiating, spines banded red-brown and cream' },
+  sponge_ear: { kind: 'coral', faces: 30000, neg: 'lettuce, ruffles', prompt: 'Orange elephant ear sponge (Agelas clathrodes), a few thick wavy upright ear-shaped plates growing from a common base, rough porous surface, bright orange' },
   fish_clownfish: { kind: 'fish', species: 'clownfish', faces: 20000, prompt: 'Single Ocellaris clownfish (Amphiprion ocellaris), oval laterally compressed body, bright orange, three white vertical bands (behind the eye, mid-body bulging forward, at the tail base) each with a thin black edge, rounded orange fins with black margins, large dark eye' },
 };
 
@@ -79,7 +99,7 @@ async function generate(key, id, job) {
   const { dir, name, size } = target(id, job);
   const { task_id } = await call(key, 'POST', `${API}/generation/text-to-model`, {
     prompt: `${job.prompt}. ${fish ? FISH_STYLE : STYLE}`,
-    negative_prompt: fish ? FISH_NEG : NEG,
+    negative_prompt: (fish ? FISH_NEG : NEG) + (job.neg ? ', ' + job.neg : ''),
     model: 'v3.1-20260211',
     texture: true,
     pbr: true,
@@ -117,6 +137,11 @@ async function generate(key, id, job) {
 const args = process.argv.slice(2);
 if (args.includes('--list')) {
   for (const [id, j] of Object.entries(JOBS)) console.log(`${id.padEnd(18)} ${j.kind.padEnd(6)} ${j.prompt}`);
+  process.exit(0);
+}
+if (args.includes('--balance')) {
+  const r = await fetch('https://api.tripo3d.ai/v2/openapi/user/balance', { headers: { Authorization: `Bearer ${apiKey()}` } }).then((x) => x.json()).catch(() => null);
+  console.log(r?.code === 0 ? `API balance: ${r.data.balance} credits (frozen ${r.data.frozen ?? 0})` : 'Balance unavailable');
   process.exit(0);
 }
 const manifest = fs.existsSync(MANIFEST) ? JSON.parse(fs.readFileSync(MANIFEST, 'utf8')) : {};

@@ -475,10 +475,12 @@ export async function loadScenery(base = './models/') {
   } catch { return out; }
   const loader = new GLTFLoader();
   await Promise.all(Object.entries(manifest).map(async ([id, cfg]) => {
+    // retired: kept on disk and in the manifest, out of the tank (restoring it brings a seeded layout back).
+    if (cfg.retired) return;
     try {
       const gltf = await loader.loadAsync(base + cfg.file);
       if (cfg.rotate) gltf.scene.rotation.set(...cfg.rotate.map((d) => (d * Math.PI) / 180));
-      const obj = cfg.kind === 'rock' ? normaliseScenery(gltf.scene, 0.7, false) : normaliseScenery(gltf.scene, 0.9, true);
+      const obj = cfg.kind === 'rock' ? normaliseScenery(gltf.scene, 0.7, false, cfg.grade) : normaliseScenery(gltf.scene, 0.9, true, cfg.grade);
       obj.name = id;   // GLB scene names repeat ("Scene"), so sort by the manifest id below
       if (cfg.kind === 'rock') out.rocks.push(obj);
       else if (cfg.kind === 'prop') out.props[id] = obj;
@@ -502,7 +504,9 @@ export async function loadScenery(base = './models/') {
   return out;
 }
 
-function normaliseScenery(root, caustic, uniform) {
+// grade: { sat, gain } a colour grade for a model whose colours came out too strong (scenery.json):
+// saturation scale and a brightness gain on its albedo.
+function normaliseScenery(root, caustic, uniform, grade = null) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root), size = box.getSize(new THREE.Vector3());
   const sc = uniform ? new THREE.Vector3().setScalar(1 / Math.max(size.x, size.y, size.z)) : new THREE.Vector3(1 / size.x, 1 / size.y, 1 / size.z);
@@ -519,6 +523,21 @@ function normaliseScenery(root, caustic, uniform) {
       color: src.color || 0xffffff, roughness: Math.max(0.6, src.roughness ?? 0.9), metalness: 0,
     }, caustic);
     if (mat.normalMap) mat.normalScale.set(1.2, 1.2);
+    // Parallax from the height that tools/heightmaps.mjs put in the normal map's alpha: the deepest pits
+    // ~1.5 cm (world units, whatever size the piece is placed at).
+    if (mat.normalMap && src.userData?.pomHeight) addParallax(mat, 0.12, { source: 'normalAlpha' });
+    if (grade) {
+      const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat), f = (x) => x.toFixed(3);
+      mat.onBeforeCompile = (s, r) => {
+        prev(s, r);
+        // (after the colour map: parallax may already have replaced map_fragment's include)
+        s.fragmentShader = s.fragmentShader.replace('#include <color_fragment>', `
+          { float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+            diffuseColor.rgb = mix(vec3(l), diffuseColor.rgb, ${f(grade.sat ?? 1)}) * ${f(grade.gain ?? 1)}; }
+          #include <color_fragment>`);
+      };
+      mat.customProgramCacheKey = () => prevKey() + `-grade${grade.sat ?? 1}_${grade.gain ?? 1}`;
+    }
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
@@ -683,12 +702,16 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     d2.position.set(-2.4 * sx, top(-2.4 * sx, -0.3, 0.45) - 0.05, -0.3);
     corals.add(d2);
     swapCoral(corals, d2, scenery.coral.cauliflower);
+    // Two small domes, front centre: a zoanthid-covered rubble rock and a bubble coral when generated
+    // (the procedural bead domes read as toys).
     const d3 = domeCluster(rng, 0.55, 300, '#3b52d1', '#6070e8', 'finger');
     d3.position.set(1.4 * sx, Math.max(0, top(1.4 * sx, 1.6, 0.3)) - 0.05, 1.6);
     corals.add(d3);
+    swapCoral(corals, d3, scenery.coral.zoanthid_rock);
     const d4 = domeCluster(rng, 0.45, 240, '#a8c45c', '#d8e070', 'finger');
     d4.position.set(-1.0 * sx, top(-1.0 * sx, 0.4, 0.25) - 0.05, 0.4);
     corals.add(d4);
+    swapCoral(corals, d4, scenery.coral.bubble);
   }
   // Brain coral on the sand, front-left of centre
   {
@@ -786,6 +809,54 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     // Far enough back to sit whole above the bottom of the zoomed window (view.js), which cuts the sand at z ~2.
     place(props.starfish, 17, (0.2 + range(prng, -0.3, 0.3)) * sx, range(prng, 1.4, 1.7));
     place(props.conch, 16, (4.4 + range(prng, -0.3, 0.3)) * sx, range(prng, 1.1, 1.4), true);
+    // Scale cues on the open sand and a low front rock: a sea cucumber, a giant clam (mantle to the
+    // light and the camera) and a pencil urchin.
+    place(props.sea_cucumber, 22, (-2.8 + range(prng, -0.2, 0.2)) * sx, range(prng, 1.6, 1.8));
+    place(props.clam_tridacna, 19, (-5.3 + range(prng, -0.2, 0.2)) * sx, range(prng, 1.6, 1.8), true);
+    place(props.urchin_pencil, 11, (-6.6 + range(prng, -0.2, 0.2)) * sx, range(prng, 1.7, 1.9));
+  }
+
+  // Generated corals and sponges with no procedural stand-in (docs/tripo-scenery-plan.md), from their
+  // own random stream so the seeded layout above stays as it was. Each: model, largest side (units),
+  // x (x sx), z, sink into its footing; flags: soft (fish swim through: not solid), overhang (solid in the
+  // rock field but not in the height field, so fish can get under it, with a shelter there).
+  let tableShelter = null;
+  {
+    const crng = mulberry32(seed + 21), C = scenery.coral;
+    const put = (model, size, x, z, { sink = 0.08, soft = false, overhang = false, yaw = crng() * Math.PI * 2, tilt = 0 } = {}) => {
+      if (!model) return null;
+      const m = model.clone();
+      m.scale.setScalar(size);
+      x *= sx;
+      m.rotation.set(tilt, yaw, 0);
+      m.position.set(x, top(x, z, 0.15 * size) - sink * size, z);   // settles to the lowest point under its foot
+      m.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = o.receiveShadow = true;
+        if (soft || overhang) o.userData.noHeight = true;
+        if (overhang) o.userData.solid = true;
+      });
+      corals.add(m);
+      return m;
+    };
+    // Table Acropora high on the back-right pile, tilted a little to the camera so the plate reads as a
+    // plate: the first horizontal in the reef, and an overhang for the gramma and lionfish.
+    const table = put(C.table, 3.0, 2.6, -2.5, { overhang: true, tilt: 0.12, yaw: 0.3, sink: 0.05 });
+    if (table) {
+      const b = new THREE.Box3().setFromObject(table), c = b.getCenter(new THREE.Vector3());
+      tableShelter = { pos: new THREE.Vector3(c.x, b.min.y + (b.max.y - b.min.y) * 0.35, c.z), floor: top(c.x, c.z), top: b.max.y - 0.15, r: 0.6, kind: 'ledge' };
+    }
+    // Barrel sponge back left, filling the back-wall gap and breaking the skyline.
+    put(C.sponge_barrel, 2.6, -4.4, -3.4, { sink: 0.04 });
+    // Tube sponges standing up from pile tops: yellow on the back-left pile, orange on the right pile.
+    put(C.sponge_tube, 1.8, -2.9, -2.5, { sink: 0.05 });
+    put(C.sponge_tube_orange, 1.5, 5.2, -1.4, { sink: 0.05 });
+    // Sea rods in the back corners, filling the empty upper frame; they flex, and fish swim through.
+    put(C.sea_rod, 3.4, -7.0, -3.7, { soft: true, sink: 0.03 });
+    put(C.sea_rod, 2.8, 7.1, -3.9, { soft: true, sink: 0.03 });
+    // Plating Montipora on the right pile's front; the branching finger Montipora on the left pile.
+    put(C.montipora, 1.6, 4.9, -0.9, { sink: 0.03 });
+    put(C.digitata, 1.1, -6.3, -0.2);
   }
 
   hf.splatObject(corals);
@@ -1026,7 +1097,7 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
   // the sand meets rock overhead, the front is open, and there is room for a fish), and the branches of
   // the home staghorn. { pos (middle of the gap), floor, top (rock above), r (how near counts as in it),
   // kind }. The height field holds the rock's top, so a fish inside one is let below it (fish.js).
-  const shelters = [];
+  const shelters = tableShelter ? [tableShelter] : [];   // under the table coral's plate first
   {
     reef.updateMatrixWorld(true);
     // From the open water in front of each rock face, look back into it at two heights: where the low
@@ -1067,7 +1138,8 @@ export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: 
     const t0 = performance.now(), top = new THREE.Box3().setFromObject(rocks).union(new THREE.Box3().setFromObject(corals)).max.y;
     const f = new RockField({ x0: -width / 2, x1: width / 2, y0: -0.3, y1: Math.min(top, 7) + 0.4, z0: -3.8, z1: 3.2 }, 0.08);
     f.add(rocks);
-    f.add(corals, (o) => o.userData.noHeight || (() => { for (let p = o; p; p = p.parent) if (p.userData.noHeight) return true; return false; })());
+    // (overhanging pieces, userData.solid, are solid here though kept out of the height field)
+    f.add(corals, (o) => !o.userData.solid && (o.userData.noHeight || (() => { for (let p = o; p; p = p.parent) if (p.userData.noHeight) return true; return false; })()));
     const info = f.finish();
     console.log('Rock field', JSON.stringify({ ...info, ms: Math.round(performance.now() - t0) }));
     return f;
