@@ -1,24 +1,41 @@
 {
   "name": "virtaquarium",
   "version": "1.0.0",
+  "private": true,
+  "description": "Physically based virtual reef aquarium with per-fish brains (PC + Roku), in strict TypeScript",
+  "type": "module",
   "scripts": {
-    "start": "node tools/serve.mjs 8080",
-    "bake": "node tools/bake.mjs"
+    "build": "bun tools/build.ts",
+    "watch": "bun tools/build.ts --watch",
+    "serve": "bun tools/serve.ts 8080",
+    "start": "bun run build && bun run serve",
+    "bake": "bun run build && bun tools/bake.ts",
+    "check": "bun run build && bun tools/check.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "verify": "bun run typecheck && bun run test",
+    "fit-anatomy": "bun tools/fit-anatomy.ts",
+    "softbodies": "bun tools/softbodies.ts",
+    "heightmaps": "bun tools/heightmaps.ts",
+    "optimize-scenery": "bun tools/optimize-scenery.ts",
+    "tripo": "bun tools/tripo.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "Physically based virtual reef aquarium with per-fish brains (PC + Roku)",
   "dependencies": {
     "meshoptimizer": "^0.22.0",
-    "three": "^0.170.0",
-    "three-mesh-bvh": "^0.9.18"
+    "three": "0.170.0",
+    "three-mesh-bvh": "0.9.18"
   },
-  "type": "module",
   "devDependencies": {
     "@gltf-transform/core": "^4.5.1",
     "@gltf-transform/extensions": "^4.5.1",
     "@gltf-transform/functions": "^4.5.1",
-    "sharp": "^0.35.5"
-  }
+    "@types/node": "^22.10.0",
+    "@types/three": "0.170.0",
+    "esbuild": "^0.24.0",
+    "sharp": "^0.35.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "packageManager": "bun@1.4.4"
 }

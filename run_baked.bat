@@ -14,24 +14,27 @@ if /i "%~1"=="nobake" (
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=8082"
 
-where node >nul 2>nul
+where bun >nul 2>nul
 if errorlevel 1 (
-  echo Node.js was not found on PATH. Install it from https://nodejs.org/ and try again.
+  echo Bun was not found on PATH. Install it with "winget install Oven-sh.Bun" or from https://bun.sh/ and try again.
   pause
   exit /b 1
 )
 
 if not exist node_modules (
   echo Installing dependencies...
-  call npm install || (pause & exit /b 1)
+  call bun install || (pause & exit /b 1)
 )
+
+echo Building...
+call bun run build || (pause & exit /b 1)
 
 if not exist roku\assets\manifest.json set "BAKE=1"
 if defined BAKE (
   echo Baking Roku assets...
-  node tools\bake.mjs || (pause & exit /b 1)
+  bun tools\bake.ts || (pause & exit /b 1)
 )
 
-echo Serving http://localhost:%PORT%/pc/roku.html  ^(Ctrl+C to stop, F11 in the browser for full screen^)
-start "" "http://localhost:%PORT%/pc/roku.html"
-node tools\serve.mjs %PORT%
+echo Serving http://localhost:%PORT%/roku.html  ^(Ctrl+C to stop, F11 in the browser for full screen^)
+start "" "http://localhost:%PORT%/roku.html"
+bun tools\serve.ts %PORT%

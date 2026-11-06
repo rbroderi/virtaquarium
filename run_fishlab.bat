@@ -10,18 +10,21 @@ if "%SP%"=="" set "SP=all"
 set "PORT=%~2"
 if "%PORT%"=="" set "PORT=8081"
 
-where node >nul 2>nul
+where bun >nul 2>nul
 if errorlevel 1 (
-  echo Node.js was not found on PATH. Install it from https://nodejs.org/ and try again.
+  echo Bun was not found on PATH. Install it with "winget install Oven-sh.Bun" or from https://bun.sh/ and try again.
   pause
   exit /b 1
 )
 
 if not exist node_modules (
   echo Installing dependencies...
-  call npm install || (pause & exit /b 1)
+  call bun install || (pause & exit /b 1)
 )
 
-echo Serving http://localhost:%PORT%/pc/lab.html?sp=%SP%  ^(Ctrl+C to stop^)
-start "" "http://localhost:%PORT%/pc/lab.html?sp=%SP%"
-node tools\serve.mjs %PORT%
+echo Building...
+call bun run build || (pause & exit /b 1)
+
+echo Serving http://localhost:%PORT%/lab.html?sp=%SP%  ^(Ctrl+C to stop^)
+start "" "http://localhost:%PORT%/lab.html?sp=%SP%"
+bun tools\serve.ts %PORT%

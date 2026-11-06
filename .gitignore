@@ -1,8 +1,16 @@
 node_modules/
 *.key
-pc/models/scenery/src/
-pc/models/fish/src/
+web/build/
+web/models/scenery/src/
+web/models/fish/src/
+web/models/skins/
+web/models/cache/
 out/
-pc/models/skins/
-pc/models/cache/
 .tools/
+
+# Local working notes, plans and AI-assistant files (kept on disk, never committed)
+notes/
+.claude/
+.agents/
+CLAUDE.md
+AGENTS.md
