@@ -10,6 +10,7 @@ import { RockField } from './rockField.js';
 import { addTranslucency } from './softSkin.js';
 import { FanWorms } from './fanWorms.js';
 import { addParallax } from './parallax.js';
+import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 
 const C = (hex) => new THREE.Color(hex);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
@@ -570,7 +571,28 @@ function swapCoral(parent, proc, model) {
 
 // scenery: optional { rocks, coral } from loadScenery(); generated models replace procedural ones.
 // view: the camera's rest position (main.js CAM_BASE, bake.js), which the moray caves must face.
-export function buildReef(scene, width, seed = 7, scenery = { rocks: [], coral: {}, props: {}, plants: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
+// The layout ray casts (corals finding the ground, cave sight lines, shelters) go through bounding
+// volume hierarchies (three-mesh-bvh) while the reef is built: the same hits, triangle for triangle, as
+// three's brute-force test of every triangle, which took seconds against the generated models. Each
+// BVH is built on a geometry's first ray (indirect: the geometry's index is left as it was) and freed
+// when the reef is done.
+export function buildReef(...args) {
+  if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('bvh') === '0') return buildReefLayout(...args);   // A/B
+  const plain = THREE.Mesh.prototype.raycast, built = new Set();
+  THREE.Mesh.prototype.raycast = function (raycaster, hits) {
+    const g = this.geometry;
+    if (!g.boundsTree && (g.index ? g.index.count : g.attributes.position.count) > 300) {
+      g.boundsTree = new MeshBVH(g, { indirect: true });
+      built.add(g);
+    }
+    return g.boundsTree ? acceleratedRaycast.call(this, raycaster, hits) : plain.call(this, raycaster, hits);
+  };
+  try { return buildReefLayout(...args); } finally {
+    THREE.Mesh.prototype.raycast = plain;
+    for (const g of built) delete g.boundsTree;
+  }
+}
+function buildReefLayout(scene, width, seed = 7, scenery = { rocks: [], coral: {}, props: {}, plants: {} }, view = new THREE.Vector3(0, 4.6, 15)) {
   const rng = mulberry32(seed);
   const noise = new Noise(mulberry32(seed + 1));
   const sx = width / 16;   // layout scales with the tank width

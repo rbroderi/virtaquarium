@@ -198,7 +198,10 @@ Headless, in software GL; the page's console is printed. `--seeds=7,42` runs one
 node tools/check.mjs motion --seconds=300
 node tools/check.mjs motion --night=1
 node tools/check.mjs look --at=5,30 --close=station,chromis
+node tools/check.mjs startup --gpu=1 --profile=1
 ```
+
+`--gpu=1` uses the machine's GPU instead of software GL (any check; needed for real timings and quick reef-light renders).
 
 - **`look`** (`lookCheck.js`) renders the tank at the given simulated seconds. It saves `out/look-<tag>-<t>s.png` (git-ignored), close-ups of the cleaning station or a species, and the frame's mean luminance and saturation. Add `--light=0.35` for dusk or `--tone=aces` for a tone A/B. The reef-light bake (`--reeflight=1`) followed by a live render overloads software GL, so judge the reef light from the Roku bake's backdrop instead.
 - **`motion`** reports, besides what is listed below:
@@ -213,9 +216,21 @@ node tools/check.mjs look --at=5,30 --close=station,chromis
 `?check=motion` steps the tank for two simulated minutes without drawing (`&seconds=N` to change that; add `&reeflight=0` to skip the slow light bake) and reports in the console and `window.motionCheck`:
 - each fish's fastest climb, in body lengths per second (a snap up a coral head shows as a spike);
 - quick up-down reversals per minute (bobbing over branching coral);
-- for each eel, the frames in which its body is inside a cave roof.
+- for each eel, the frames in which its body is inside a cave roof, and `eelBodyInRock`: its 12 body points as drawn that are more than 0.08 inside rock, outside the burrow behind its cave where the hidden tail may lie.
 
-Measured on seed 7, before and after the fish started looking about a second ahead for the reef top and the rock stopped snapping them upwards: the fastest climb fell from 67 to 11.5 body lengths per second, reversals from 0.39 to 0.15 per fish per minute, and the eel's frames inside its roof from 3598 of 3600 to 0.
+Measured on seed 7, before and after the fish started looking about a second ahead for the reef top and the rock stopped snapping them upwards: the fastest climb fell from 67 to 11.5 body lengths per second, reversals from 0.39 to 0.15 per fish per minute, and the eel's frames inside its roof from 3598 of 3600 to 0. With the eel's whole body pushed out of the rock field (`fish.js` `SpineChain`), its frames with a body point in rock fell from 3595 to 1118 (all while lurking, at the cave mouth and where the tail leaves the burrow).
+
+### Startup
+
+`node tools/check.mjs startup --gpu=1` times each startup stage on the machine's GPU (`main.js` `stage()`; also logged in any page's console and kept in `window.startupTimes`). Add `--profile=1` for the functions that took the longest (the page samples itself with the JS Self-Profiling API, which `tools/serve.mjs` enables), and `--keep=1` to keep one browser profile between runs, so its shader cache is warm as for a returning visitor.
+
+On seed 7 startup went from 91 s to 21 s with a cold shader cache, and from 43 s to 12-16 s with a warm one:
+- **The reef light is cached** (`reefLight.js` `bakeReefLightCached`). The bake is about 10 s of GPU ray casting, and it depends only on the reef, the light and the rest view. Everything it reads is hashed: every reef mesh's geometry in full, transforms, materials, an 8 × 8 thumbnail of each texture, the light, the camera, and the source of the modules that build the reef and the bake. The result, the two half-float texture arrays exactly as the GPU had them, is saved gzipped to `pc/models/cache/reeflight-<hash>.bin` (about 50 MB, git-ignored) by the local dev server, and loaded on the next start in about 1-2 s. A cached start renders the same as a fresh bake: their frames differ by 0.03% of pixels, the same as two fresh bakes differ, from run-to-run simulation noise. The screen bake depends on the window's shape, so each shape gets its own file. `?rlcache=0` always bakes.
+- **The layout's ray casts use bounding volume hierarchies** (three-mesh-bvh, only while `buildReef` runs): corals finding the ground, cave sight lines and shelters tested every triangle of the generated models, about 8 s. The hits are the same; the reef-light hash, which covers every mesh's transform, is identical with and without it (`?bvh=0`).
+- **Shaders compile in parallel** (`renderer.compileAsync`, KHR_parallel_shader_compile) while the reef light and fish load, bound to the HDR target the tank draws into (a program made for the screen would go unused). The shadow type is now set before anything compiles. `?precompile=0` turns this off.
+- **Cached fish skins decode as ImageBitmaps** off the main thread, flipped and unpremultiplied as the upload would have done (the texels on the GPU are identical). `?skinbmp=0` uses `<img>` again. The skin's mean colour, which drives the sheen, is now a true average by halving; a single draw down to 8 × 4 had point-sampled a few texels.
+
+The bake's packed maps had been 8-bit and nearest-filtered all along. three r170's `WebGLArrayRenderTarget` replaces the texture its options set up, so the half-float type was dropped, and the signed SH terms, the bounce above 1 and the screen bake's distance channel were clipped. They are half float now: deeper shadows and contact darkening under rock (65% of the frame's pixels change).
 
 ## Roku (in progress)
 

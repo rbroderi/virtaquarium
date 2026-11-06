@@ -281,9 +281,14 @@ function cone(axis, a, n) {
 // Copy same-sized 2D textures, texel for texel, into the layers of one texture array (half float,
 // linear filtering, as the bake targets were). Returns the array texture.
 function packLayers(renderer, textures, w, h) {
-  const out = new THREE.WebGLArrayRenderTarget(w, h, textures.length, {
-    type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-  });
+  const out = new THREE.WebGLArrayRenderTarget(w, h, textures.length, { depthBuffer: false });
+  // WebGLArrayRenderTarget replaces the texture its options set up (three r170), so the type and
+  // filters go on its own: before this the maps were 8-bit, which clipped the signed SH terms, the
+  // bounce above 1 and the screen bake's distance channel (so its depth test failed), and were
+  // nearest-filtered.
+  out.texture.type = THREE.HalfFloatType;
+  out.texture.minFilter = out.texture.magFilter = THREE.LinearFilter;
+  out.texture.generateMipmaps = false;
   const mat = new THREE.ShaderMaterial({
     uniforms: { src: { value: null } },
     vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
@@ -296,8 +301,10 @@ function packLayers(renderer, textures, w, h) {
   textures.forEach((t, i) => { mat.uniforms.src.value = t; renderer.setRenderTarget(out, i); renderer.render(scene, cam); });
   renderer.setRenderTarget(prev);
   mat.dispose(); quad.geometry.dispose();
-  return out.texture;
+  out.texture.userData.rl = true;
+  return out;
 }
+let lastBake = null;   // the last bake's packed targets and uniforms, for saving (bakeReefLightCached)
 
 // Bake the reef light. Call once after buildReef (static geometry only: fish excluded).
 //   sun:  { dir (towards the light), irr (Color: colour x intensity at full daylight), cone (half-angle, rad) }
@@ -490,21 +497,229 @@ export function bakeReefLight(renderer, reef, {
 
   const L = reefLightUniforms;
   const prevGrid = L.uRLGrid.value, prevScr = L.uRLScr.value;
-  L.uRLGrid.value = packLayers(renderer, [skyRT.texture, fin.textures[0], fin.textures[1]], aw, ah);
+  const gridArr = packLayers(renderer, [skyRT.texture, fin.textures[0], fin.textures[1]], aw, ah);
+  L.uRLGrid.value = gridArr.texture;
   skyRT.dispose(); fin.dispose();
-  if (prevGrid.isRenderTargetTexture) prevGrid.dispose();   // a re-bake replaces the last one
+  if (prevGrid.userData.rl) prevGrid.dispose();   // a re-bake replaces the last one
   L.uRLMin.value.copy(box.min); L.uRLSize.value.copy(size); L.uRLRes.value.copy(n);
   L.uRLTiles.value = tiles; L.uRLCell.value = cell; L.uRLOn.value = 1;
   L.uRLSunDir.value.copy(sun.dir).normalize();
+  let scrArr = null;
   if (scrRT) {
-    L.uRLScr.value = packLayers(renderer, scrRT.textures, sw, shh);
+    scrArr = packLayers(renderer, scrRT.textures, sw, shh);
+    L.uRLScr.value = scrArr.texture;
     scrRT.dispose();
-    if (prevScr.isRenderTargetTexture) prevScr.dispose();
+    if (prevScr.userData.rl) prevScr.dispose();
     L.uRLScrVP.value.multiplyMatrices(eye.projectionMatrix, eye.matrixWorldInverse);
     L.uRLScrEye.value.copy(eye.position); L.uRLScrOn.value = 1;
   }
+  lastBake = { grid: gridArr, scr: scrArr, gw: aw, gh: ah, sw, shh };
   const info = { cells: n.toArray(), cell: +cell.toFixed(3), screen: scrRT ? [sw, shh] : null, ms: Math.round(performance.now() - t0) };
   console.info('Reef light baked:', info);
+  return info;
+}
+
+// ---------- cache ----------
+//
+// The bake depends only on the reef, the light and the rest view, so its result is kept on disk and
+// reused: bakeReefLightCached hashes everything the bake reads (every reef mesh's geometry in full,
+// transforms, instances, material settings and a thumbnail of each texture, the light, the camera,
+// the bake's options, and the source of the modules that make the reef and the bake) and loads
+// pc/models/cache/reeflight-<hash>.bin if it exists. The file holds the two texture arrays exactly as
+// the GPU had them (half floats, gzipped), so a cached start renders the same as a baked one. After a
+// real bake on the local dev server, the result is saved for next time (git-ignored; the screen bake
+// depends on the window's shape, so each shape gets its own file).
+const RL_CACHE_VERSION = 1;
+const RL_SOURCES = ['./reefLight.js', './reef.js', './water.js', './rockField.js', './sdfMesh.js', './fanWorms.js', './parallax.js', './util.js'];
+
+class Hasher {
+  constructor() { this.a = 0x811c9dc5; this.b = 0x2545f491; }
+  u32(x) { this.a = Math.imul(this.a ^ x, 0x01000193); this.b = Math.imul((this.b ^ x) + 0x9e3779b9 | 0, 0x5bd1e995); this.b ^= this.b >>> 15; }
+  words(view) { for (let i = 0; i < view.length; i++) this.u32(view[i]); }
+  bytes(arr) {   // any typed array, by its bytes
+    const b = arr.byteLength;
+    this.u32(b);
+    if (b % 4 === 0) this.words(new Uint32Array(arr.buffer, arr.byteOffset, b >> 2));
+    else this.words(new Uint16Array(arr.buffer, arr.byteOffset, b >> 1));
+  }
+  str(s) { this.u32(s.length); for (let i = 0; i < s.length; i++) this.u32(s.charCodeAt(i)); }
+  floats(list) { this.bytes(Float32Array.from(list)); }
+  hex() { return (this.a >>> 0).toString(16).padStart(8, '0') + (this.b >>> 0).toString(16).padStart(8, '0'); }
+}
+
+// Each texture's hash: its settings, size and an 8 x 8 thumbnail (data textures: a strided sample of
+// their texels). The thumbnails are drawn side by side into one canvas and read back once (a read per
+// texture cost a GPU round trip each).
+function hashTextures(list) {
+  const out = new Map(), draw = [];
+  for (const t of list) {
+    const H = new Hasher(), im = t.image;
+    H.str(`${t.constructor.name}|${t.wrapS},${t.wrapT}|${t.repeat.x},${t.repeat.y},${t.offset.x},${t.offset.y},${t.rotation}|${t.colorSpace}|${t.flipY}|${t.channel}`);
+    if (im) {
+      H.u32(im.width | 0); H.u32(im.height | 0);
+      if (im.data) {
+        const d = im.data, step = Math.max(1, Math.floor(d.length / 8192));
+        const s = new d.constructor(Math.ceil(d.length / step));
+        for (let i = 0, j = 0; i < d.length; i += step, j++) s[j] = d[i];
+        H.bytes(s);
+      } else draw.push([t, H]);
+    }
+    out.set(t, H);
+  }
+  if (draw.length) {
+    const cols = 64, c = document.createElement('canvas');
+    c.width = cols * 8; c.height = Math.ceil(draw.length / cols) * 8;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    draw.forEach(([t], i) => { try { g.drawImage(t.image, (i % cols) * 8, Math.floor(i / cols) * 8, 8, 8); } catch { /* undrawable: its size stands in */ } });
+    const px = g.getImageData(0, 0, c.width, c.height).data, cell = new Uint8Array(256);
+    draw.forEach(([, H], i) => {
+      const x0 = (i % cols) * 8, y0 = Math.floor(i / cols) * 8;
+      for (let y = 0; y < 8; y++) cell.set(px.subarray(((y0 + y) * c.width + x0) * 4, ((y0 + y) * c.width + x0 + 8) * 4), y * 32);
+      H.bytes(cell);
+    });
+  }
+  return new Map([...out].map(([t, H]) => [t, H.hex()]));
+}
+
+async function reefLightKey(renderer, reef, opts) {
+  const H = new Hasher();
+  H.u32(RL_CACHE_VERSION);
+  const srcs = await Promise.all(RL_SOURCES.map((s) => fetch(new URL(s, import.meta.url), { cache: 'no-cache' }).then((r) => r.text())));
+  srcs.forEach((s) => H.str(s));
+  const { sun, sky, ground, camera, ...rest } = opts;
+  H.str(JSON.stringify(rest));
+  H.floats([...sun.dir.toArray(), sun.irr.r, sun.irr.g, sun.irr.b, sun.cone ?? 0.1, sky.r, sky.g, sky.b, ground.r, ground.g, ground.b]);
+  if (camera) {
+    camera.updateMatrixWorld();
+    H.floats([...camera.projectionMatrix.elements, ...camera.matrixWorld.elements, camera.fov, camera.aspect, camera.near, camera.far]);
+    H.str(JSON.stringify(camera.view || null));
+  }
+  H.u32(renderer.capabilities.maxTextureSize);
+  const group = reef.group;
+  group.updateMatrixWorld(true);
+  const geos = new Map(), found = new Set();
+  const matsOf = (o) => (Array.isArray(o.material) ? o.material : [o.material]).filter(Boolean);
+  group.traverse((o) => { if (o.material) for (const m of matsOf(o)) for (const v of Object.values(m)) if (v && v.isTexture) found.add(v); });
+  const texs = hashTextures(found);
+  group.traverse((o) => {
+    H.str(`${o.type}|${o.name}|${o.visible}`);
+    if (!o.isMesh && !o.isPoints && !o.isLine) return;
+    H.floats(o.matrixWorld.elements);
+    if (o.isInstancedMesh) { H.u32(o.count); H.bytes(o.instanceMatrix.array); if (o.instanceColor) H.bytes(o.instanceColor.array); }
+    const g = o.geometry;
+    if (!geos.has(g)) {
+      const G = new Hasher();
+      if (g.index) G.bytes(g.index.array);
+      for (const [name, at] of Object.entries(g.attributes)) { G.str(name); G.bytes(at.isInterleavedBufferAttribute ? at.data.array : at.array); }
+      G.str(JSON.stringify(g.drawRange) + JSON.stringify(g.groups));
+      geos.set(g, G.hex());
+    }
+    H.str(geos.get(g));
+    for (const m of matsOf(o)) {
+      const scal = {};
+      for (const [k, v] of Object.entries(m)) {
+        if (v && v.isTexture) scal[k] = texs.get(v);
+        else if (v && (v.isColor || v.isVector2 || v.isVector3)) scal[k] = v.toArray();
+        // (not id, uuid or version: creation counters, which async loading can reorder)
+        else if ((typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') && !['id', 'uuid', 'version'].includes(k)) scal[k] = v;
+      }
+      scal.defines = m.defines; scal.key = m.customProgramCacheKey ? m.customProgramCacheKey() : '';
+      H.str(JSON.stringify(scal));
+    }
+  });
+  return H.hex();
+}
+
+// Read a texture-array target's layers back as half floats (bit for bit what the GPU holds).
+function readLayers(renderer, rt, w, h) {
+  const gl = renderer.getContext(), n = rt.depth, px = w * h * 4, out = new Uint16Array(px * n), prev = renderer.getRenderTarget();
+  for (let l = 0; l < n; l++) {
+    renderer.setRenderTarget(rt, l);
+    const dst = out.subarray(l * px, (l + 1) * px);
+    if (gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE) === gl.HALF_FLOAT && gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT) === gl.RGBA) {
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.HALF_FLOAT, dst);
+    } else {
+      const f = new Float32Array(px);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, f);
+      for (let i = 0; i < px; i++) dst[i] = THREE.DataUtils.toHalfFloat(f[i]);   // exact: they are halves
+    }
+  }
+  renderer.setRenderTarget(prev);
+  return out;
+}
+
+function arrayTexture(data, w, h, layers) {
+  const t = new THREE.DataArrayTexture(data, w, h, layers);
+  t.type = THREE.HalfFloatType; t.format = THREE.RGBAFormat;
+  t.minFilter = t.magFilter = THREE.LinearFilter; t.generateMipmaps = false;
+  t.userData.rl = true; t.needsUpdate = true;
+  return t;
+}
+
+const UNIFORM_KEYS = ['uRLMin', 'uRLSize', 'uRLRes', 'uRLTiles', 'uRLCell', 'uRLSunDir', 'uRLScrVP', 'uRLScrEye', 'uRLScrOn'];
+const uget = (v) => (typeof v === 'number' ? v : v.toArray());
+const uset = (u, v) => (typeof u.value === 'number' ? (u.value = v) : u.value.fromArray(v));
+
+async function saveReefLight(renderer, path, key, info) {
+  const b = lastBake, L = reefLightUniforms;
+  const head = { key, version: RL_CACHE_VERSION, info, grid: [b.gw, b.gh, b.grid.depth], scr: b.scr ? [b.sw, b.shh, b.scr.depth] : null, u: Object.fromEntries(UNIFORM_KEYS.map((k) => [k, uget(L[k].value)])) };
+  const grid = readLayers(renderer, b.grid, b.gw, b.gh), scr = b.scr ? readLayers(renderer, b.scr, b.sw, b.shh) : new Uint16Array(0);
+  let json = new TextEncoder().encode(JSON.stringify(head));
+  const pad = (8 - ((4 + json.length) % 8)) % 8;
+  const len = new Uint32Array([json.length + pad]);
+  const body = new Blob([len, json, new Uint8Array(pad).fill(32), grid, scr]).stream().pipeThrough(new CompressionStream('gzip'));
+  const blob = await new Response(body).blob();
+  await fetch(`/__save?path=${path}`, { method: 'POST', body: blob });
+  console.info(`Reef light cached: ${path} (${(blob.size / 1e6).toFixed(1)} MB)`);
+}
+
+async function loadReefLight(reef, res, key) {
+  const buf = await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  const hl = new Uint32Array(buf, 0, 1)[0];
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)).trim());
+  if (head.key !== key || head.version !== RL_CACHE_VERSION) return null;
+  const [gw, gh, gn] = head.grid, gpx = gw * gh * 4 * gn;
+  const L = reefLightUniforms;
+  const prevGrid = L.uRLGrid.value, prevScr = L.uRLScr.value;
+  L.uRLGrid.value = arrayTexture(new Uint16Array(buf, 4 + hl, gpx), gw, gh, gn);
+  if (prevGrid.userData.rl) prevGrid.dispose();
+  if (head.scr) {
+    const [sw, sh, sn] = head.scr;
+    L.uRLScr.value = arrayTexture(new Uint16Array(buf, 4 + hl + gpx * 2, sw * sh * 4 * sn), sw, sh, sn);
+    if (prevScr.userData.rl) prevScr.dispose();
+  }
+  for (const k of UNIFORM_KEYS) uset(L[k], head.u[k]);
+  L.uRLOn.value = 1;
+  // As after a bake: the reef's sun shadows are in the maps, the live shadow map keeps what moves.
+  reef.group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+  return { ...head.info, cached: true };
+}
+
+export let reefLightSaving = Promise.resolve();   // a save in flight (headless checks wait for it)
+// bakeReefLight, or its saved result when nothing it reads has changed (see "cache" above).
+export async function bakeReefLightCached(renderer, reef, opts, base = './models/cache/') {
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  if (new URLSearchParams(location.search).get('rlcache') === '0') return bakeReefLight(renderer, reef, opts);   // ?rlcache=0: always bake
+  let key = null;
+  const t0 = performance.now();
+  try { key = await reefLightKey(renderer, reef, opts); } catch (e) { console.warn('Reef light cache key:', e.message); }
+  const tKey = performance.now() - t0;
+  if (key) {
+    try {
+      const r = await fetch(`${base}reeflight-${key}.bin`, { cache: 'no-cache' });
+      if (r.ok) {
+        const info = await loadReefLight(reef, r, key);
+        if (info) { console.info(`Reef light from cache ${key} (key ${Math.round(tKey)} ms, total ${Math.round(performance.now() - t0)} ms)`); return info; }
+      }
+    } catch (e) { console.warn('Reef light cache:', e.message); }
+  }
+  const info = bakeReefLight(renderer, reef, opts);
+  console.info(`Reef light baked, key ${key}`);
+  if (key && local) {
+    const path = new URL(`${base}reeflight-${key}.bin`, location.href).pathname.replace(/^\//, '');
+    reefLightSaving = saveReefLight(renderer, path, key, info).catch((e) => console.warn('Reef light cache save:', e.message));
+    if (new URLSearchParams(location.search).has('check')) await reefLightSaving;   // a headless check closes the server when done
+  }
   return info;
 }
 

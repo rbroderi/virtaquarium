@@ -1875,7 +1875,14 @@ const cache = new Map();
 // painted live are saved back when the page is served locally (tools/serve.mjs accepts the POST).
 const SKIN_CACHE_VERSION = 1;
 const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'];
-const skinCache = new Map();   // id -> { key, img: { name: HTMLImageElement } }
+const skinCache = new Map();   // id -> { key, img: { name: ImageBitmap (or HTMLImageElement with ?skinbmp=0) } }
+// The maps are decoded as ImageBitmaps, off the main thread and all at once, flipped as the texture
+// upload would flip them (WebGL ignores flipY for bitmaps), unpremultiplied and with no colour
+// conversion (the PNGs carry no colour chunks), so the GPU gets the same texels as from an <img>,
+// whose decode instead ran on the main thread when each texture was first uploaded.
+const SKIN_BITMAPS = typeof createImageBitmap === 'function' && new URLSearchParams(globalThis.location?.search).get('skinbmp') !== '0';
+const loadBitmap = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+  .then((b) => createImageBitmap(b, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }));
 let skinBase = null;           // where to save live-painted maps, or null (not local)
 function skinKey(sp) {
   const look = JSON.stringify(sp, (k, v) => (['brain', 'fact', 'name', 'sci', 'swim'].includes(k) ? undefined : v));
@@ -1895,6 +1902,7 @@ export async function loadSkinCache(species, base = './models/skins/') {
       if (!r.ok || (await r.json()).key !== key) return;
       const img = {};
       await Promise.all(SKIN_MAPS.map(async (n) => {
+        if (SKIN_BITMAPS) { img[n] = await loadBitmap(`${base}${sp.id}-${n}.png?${key}`); return; }
         // onload, not decode(): decode() can wait indefinitely in a background tab.
         img[n] = await new Promise((ok, fail) => {
           const im = new Image();
@@ -1915,6 +1923,7 @@ function saveSkin(sp, key, canvases) {
     .then(() => post(`${sp.id}.json`, JSON.stringify({ key })));   // last, so a half-written set never matches
 }
 
+const isBitmap = (c) => typeof ImageBitmap !== 'undefined' && c instanceof ImageBitmap;
 function speciesAssets(sp) {
   if (cache.has(sp.id)) return cache.get(sp.id);
   const prof = makeProfile(sp.body);
@@ -1923,10 +1932,19 @@ function speciesAssets(sp) {
   const skin = hit ? { map: hit.img.skin, normal: hit.img.normal, irid: hit.img.irid, cr: hit.img.cr } : paintSkin(sp, prof);
   if (hit) { fins.normal = hit.img.finNormal; fins.data = hit.img.finData; }
   else saveSkin(sp, key, { skin: skin.map, normal: skin.normal, irid: skin.irid, cr: skin.cr, finNormal: fins.normal, finData: fins.data });
-  // The skin's mean colour (for the velvet sheen of minute-scaled species), from an 8 x 4 reduction.
+  // The skin's mean colour (for the velvet sheen of minute-scaled species), from an 8 x 4 reduction made
+  // by halving (each step an exact 2 x 2 average; one drawImage straight down to 8 x 4 point-samples a
+  // few texels, and differently for an <img>, a canvas and a bitmap).
   const avg = (() => {
+    let src = skin.map, w = src.width, h = src.height;
+    while (w > 8 || h > 4) {
+      const nw = Math.max(8, w >> 1), nh = Math.max(4, h >> 1), c = makeCanvas(nw, nh), cg = c.getContext('2d');
+      cg.imageSmoothingQuality = 'low';
+      cg.drawImage(src, 0, 0, nw, nh);
+      src = c; w = nw; h = nh;
+    }
     const t = makeCanvas(8, 4), tg = t.getContext('2d', { willReadFrequently: true });
-    tg.drawImage(skin.map, 0, 0, 8, 4);
+    tg.drawImage(src, 0, 0, 8, 4);
     const px = tg.getImageData(0, 0, 8, 4).data, s = [0, 0, 0];
     for (let i = 0; i < px.length; i += 4) for (let ch = 0; ch < 3; ch++) s[ch] += px[i + ch] / 255 / 32;
     return new THREE.Color().setRGB(s[0], s[1], s[2], THREE.SRGBColorSpace);
@@ -1936,6 +1954,7 @@ function speciesAssets(sp) {
   const tex = (c, srgb = true) => {
     const t = new THREE.CanvasTexture(c);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    if (isBitmap(c)) t.flipY = false;   // flipped when decoded
     t.anisotropy = 16;   // the flank is often seen at grazing angles (three clamps to what the GPU has)
     return t;
   };

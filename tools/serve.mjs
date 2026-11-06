@@ -63,7 +63,8 @@ export function startServer(port = PORT, onEvent = () => {}) {
     if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404).end('not found'); return; }
-      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+      // js-profiling: lets a page sample itself (main.js ?profile=1, the JS Self-Profiling API).
+      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'Document-Policy': 'js-profiling' });
       res.end(data);
     });
   });

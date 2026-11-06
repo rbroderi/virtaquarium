@@ -666,12 +666,15 @@ export class Brain {
       return speed;
     }
     const reach = 0.3 + Math.max(0, me.speed) * 1.2, hd = Math.hypot(me.dir.x, me.dir.z) || 1;
-    let top = world.reefHeight(pos.x, pos.z);
-    for (const k of [0.33, 0.67, 1]) top = Math.max(top, world.reefHeight(pos.x + (me.dir.x / hd) * reach * k, pos.z + (me.dir.z / hd) * reach * k));
+    // A lurking eel's middle (pos) lies in the rock behind its cave (fish.js inBurrow): what must stay
+    // above the reef is its head, out of the mouth. (Testing pos tipped it head-up through the roof.)
+    const at = anchored && me.spine ? _w.copy(pos).addScaledVector(me.dir, 0.5 * me.size) : pos;
+    let top = world.reefHeight(at.x, at.z);
+    for (const k of [0.33, 0.67, 1]) top = Math.max(top, world.reefHeight(at.x + (me.dir.x / hd) * reach * k, at.z + (me.dir.z / hd) * reach * k));
     this.reefSeen = top >= (this.reefSeen ?? -Infinity) ? top : Math.max(top, this.reefSeen - 0.6 * dt);
     const ahead = this.reefSeen + clearance;
-    const below = world.reefHeight(pos.x, pos.z) + clearance;
-    if (pos.y < below) dir.y += (below - pos.y) * 4 + 0.5;
+    const below = world.reefHeight(at.x, at.z) + clearance;
+    if (at.y < below) dir.y += (below - at.y) * 4 + 0.5;
     else if (pos.y < ahead && !anchored) dir.y += (ahead - pos.y) * 1.5;
     // And in 3D (rockField.js): rock on the path a moment ahead turns the fish off it along the surface
     // normal there, so it goes round a boulder's flank as readily as over it.
@@ -679,6 +682,16 @@ export class Brain {
       const want = me.size * 0.6 + clearance;
       for (const k of [0.5, 1]) {
         _v.copy(pos).addScaledVector(me.dir, reach * k);
+        const d = world.rockDist(_v);
+        if (d < want) dir.addScaledVector(world.rockNormal(_v, _n), ((want - d) / want) * 2 / k);
+      }
+    } else if (!anchored) {
+      // The eel looks ahead from its head (pos is the middle of its body), and wants less room than a
+      // body length: it threads gaps the others go round. Not into its own burrow, which it backs into.
+      const want = 0.4;
+      for (const k of [0.5, 1]) {
+        _v.copy(pos).addScaledVector(me.dir, 0.5 * me.size + reach * k);
+        if (me.inBurrow(_v)) continue;
         const d = world.rockDist(_v);
         if (d < want) dir.addScaledVector(world.rockNormal(_v, _n), ((want - d) / want) * 2 / k);
       }

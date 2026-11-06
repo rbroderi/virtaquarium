@@ -3,6 +3,7 @@
 //   node tools/check.mjs motion [--seconds=300] [--seed=7]        climb, bobbing, eel roof, cleaning
 //   node tools/check.mjs look [--at=5,30] [--close=station] [--night=1] [--tag=x]   pictures in out/
 //   node tools/check.mjs critters
+//   node tools/check.mjs startup --gpu=1     time each startup stage (main.js stage()) on the real GPU
 // --reeflight=1 runs the slow reef-light bake first (off by default: minutes in software GL).
 // Several seeds: --seeds=7,42 runs the check once per seed.
 import fs from 'node:fs';
@@ -28,17 +29,23 @@ const opts = { reeflight: '0' };
 for (const a of args) { const m = a.match(/^--([a-zA-Z]+)=(.*)$/); if (m) opts[m[1]] = m[2]; }
 const seeds = (opts.seeds || opts.seed || '7').split(',');
 delete opts.seeds; delete opts.seed;
+const gpu = opts.gpu === '1';
+delete opts.gpu;
+if (name === 'startup') delete opts.reeflight;   // time the real startup, light bake included
 const TIMEOUT_MS = 20 * 60 * 1000;
 
 function runOnce(seed) {
   return new Promise((resolve) => {
     let child, done = false;
-    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'vaq-check-'));
+    // --keep=1: one browser profile kept between runs (out/.check-profile), so its GPU shader cache is
+    // warm, as for someone who has opened the tank before.
+    const keep = opts.keep === '1';
+    const profile = keep ? path.resolve('out/.check-profile') : fs.mkdtempSync(path.join(os.tmpdir(), 'vaq-check-'));
     const finish = (ok, body) => {
       if (done) return;
       done = true;
       server.close();
-      const cleanup = () => { try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {} resolve({ ok, body }); };
+      const cleanup = () => { try { if (!keep) fs.rmSync(profile,{ recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {} resolve({ ok, body }); };
       if (child && process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('exit', cleanup);
       else { child?.kill(); setTimeout(cleanup, 500); }
     };
@@ -50,9 +57,11 @@ function runOnce(seed) {
       const q = new URLSearchParams({ check: name, seed, ...opts });
       const url = `http://localhost:${s.address().port}/pc/index.html?${q}`;
       console.log(`check ${name}, seed ${seed}: ${url}`);
+      // --gpu=1: the machine's own GPU (for timings) instead of software GL.
+      const gl = gpu ? ['--use-angle=d3d11', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
       child = spawn(browser, [
         '--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-        '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1920,1080', '--enable-logging=stderr', '--v=0', url,
+        ...gl, '--window-size=1920,1080', '--enable-logging=stderr', '--v=0', url,
       ], { stdio: ['ignore', 'ignore', 'pipe'] });
       // The page's console (errors and info lines), without Chrome's own logging.
       let buf = '';

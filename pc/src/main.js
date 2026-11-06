@@ -15,11 +15,40 @@ import { loadTank } from './tank.js';
 import { PhotoCamera } from './photo.js';
 import { LightRig, toneFor, LIGHTS } from './rig.js';
 import { viewOptions, panAt, setView, windowTopY } from './view.js';
-import { bakeReefLight, reefLightUniforms, ScreenAO } from './reefLight.js';
+import { bakeReefLightCached, reefLightUniforms, reefLightSaving, ScreenAO } from './reefLight.js';
 import { JELLY_SPECIES, Jelly, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES, Cuttlefish, Octopus, Turtle } from './critters.js';
 
 const params = new URLSearchParams(location.search);
+// Startup timing: each stage's wall time since the last, logged once the first frame is on screen
+// (window.startupTimes too).
+const T0 = performance.now(), startup = [];
+let tPrev = T0;
+const stage = (name) => { const t = performance.now(); startup.push([name, Math.round(t - tPrev)]); tPrev = t; };
+window.startupStages = startup;
+// ?profile=1: sample the startup (JS Self-Profiling API; tools/serve.mjs sends the policy it needs) and
+// report the functions that took the most time, self and with what they call.
+let profiler = null;
+if (params.get('profile') === '1' && 'Profiler' in window) {
+  try { profiler = new window.Profiler({ sampleInterval: 2, maxBufferSize: 1e6 }); } catch (e) { console.warn('Profiler:', e.message); }
+}
+async function profileReport() {
+  const tr = await profiler.stop(), self = new Map(), total = new Map();
+  const name = (i) => { const f = tr.frames[i]; return `${f.name || '(anon)'} ${(tr.resources[f.resourceId] || '').split('/').pop()}:${f.line ?? ''}`; };
+  // Each sample counts for the time to the next one (Windows samples every ~16 ms whatever was asked).
+  tr.samples.forEach((s, i) => {
+    const dt = (tr.samples[i + 1]?.timestamp ?? s.timestamp) - s.timestamp;
+    if (s.stackId === undefined) return;
+    const seen = new Set();
+    for (let id = s.stackId, top = true; id !== undefined; id = tr.stacks[id].parentId, top = false) {
+      const n = name(tr.stacks[id].frameId);
+      if (top) self.set(n, (self.get(n) || 0) + dt);
+      if (!seen.has(n)) { seen.add(n); total.set(n, (total.get(n) || 0) + dt); }
+    }
+  });
+  const top = (m, k) => Object.fromEntries([...m].sort((a, b) => b[1] - a[1]).slice(0, k).map(([n, v]) => [n, Math.round(v)]));
+  return { self: top(self, 40), total: top(total, 60) };
+}
 // The camera model (photo.js) is on by default: a photo of a tank has depth of field, lens fall-off and
 // sensor grain, and a render without them reads as CG. ?photo=0 turns it off (and saves ~2 ms a frame).
 const PHOTO = params.get('photo') !== '0';
@@ -86,10 +115,12 @@ const _ndc = new THREE.Vector3();   // autofocus scratch
 // f/5.6 keeps most of the reef sharp with the far rock and near-glass motes softened, as a typical tank
 // photo; gentler grain than a high-ISO shot. ?fstop=2.8 for a shallower look.
 const photo = PHOTO ? new PhotoCamera(renderer, { fNumber: Number(params.get('fstop')) || 5.6, iso: 0.6, glass: params.get('glass') !== '0' }) : null;
+stage('renderer, environment, caustics');
 
 // Optional Tripo3D / GLB models replace procedural fish species by species.
 const [customModels] = await Promise.all([loadCustomModels(SPECIES), loadSkinCache(SPECIES)]);
 if (customModels.length) console.info('Using GLB models for:', customModels.join(', '));
+stage('fish models + skin cache');
 
 // The jelly tank (jelly.js) is a backlit blue void with only jellies in it: no reef, sand or surface.
 const JELLY_TANK = tank.scenery === 'jelly';
@@ -101,25 +132,43 @@ if (JELLY_TANK) {
   // Optional generated rocks/corals (tools/tripo.mjs) replace the procedural ones.
   // ?tripo=0: the procedural rocks and corals only (no generated models), e.g. to check their materials.
   const scenery = params.get('tripo') === '0' ? { rocks: [], coral: {}, props: {}, plants: {} } : await loadScenery();
+  stage('load scenery');
   if (scenery.rocks.length || Object.keys(scenery.coral).length) console.info('Using generated scenery:', scenery.rocks.length, 'rocks,', Object.keys(scenery.coral).join(', '));
   reef = buildReef(scene, TANK_W, SEED, scenery, CAM_BASE);
   console.info('Planted:', JSON.stringify(reef.planted), 'plants loaded:', Object.keys(scenery.plants).join(', '));
 }
+stage('build reef');
 // Light the static reef once by ray casting (reefLight.js): soft sun shadows, ambient occlusion and
 // coloured bounce light, per pixel from the camera's rest view and in a grid for the fish.
 // ?reeflight=0 to compare; L toggles it.
 const ao = new ScreenAO(renderer);
-if (!JELLY_TANK && params.get('reeflight') !== '0') {
+const REEF_LIGHT = !JELLY_TANK && params.get('reeflight') !== '0';
+if (REEF_LIGHT) {
+  // Only the fish cast live shadows with the bake; soft ones, as from a broad light through moving
+  // water. (Set before anything compiles: the shadow type is part of every lit program.)
+  renderer.shadowMap.type = THREE.VSMShadowMap;
+  sun.shadow.radius = 6; sun.shadow.blurSamples = 12;
+}
+// Shaders compile in parallel (KHR_parallel_shader_compile) while the rest of startup runs, instead of
+// one after another, blocking, the first time each is drawn: the reef's now, the fish's below.
+// Bound to the target the tank draws into (water.js): a program is specific to its target (an HDR
+// target has no tone mapping or sRGB output), and the screen's would go unused.
+const precompile = () => {
+  renderer.setRenderTarget(water.target);
+  const p = renderer.compileAsync(scene, camera);   // issues every compile now, then waits for them
+  renderer.setRenderTarget(null);
+  return p.catch((e) => console.warn('compileAsync:', e.message));
+};
+if (params.get('precompile') !== '0') precompile();
+if (REEF_LIGHT) {
   rig.apply(1);   // baked at full daylight; the live light level scales it
-  bakeReefLight(renderer, reef, {
+  await bakeReefLightCached(renderer, reef, {
     sun: { dir: sun.position.clone(), irr: sun.color.clone().multiplyScalar(sun.intensity), cone: 0.1 },
     sky: new THREE.Color(0.86, 0.92, 1.0).multiplyScalar(LIGHTS.ambient), ground: hemi.groundColor.clone().multiplyScalar(LIGHTS.ambient),
     camera,
   });
-  // Only the fish cast live shadows now; soft ones, as from a broad light through moving water.
-  renderer.shadowMap.type = THREE.VSMShadowMap;
-  sun.shadow.radius = 6; sun.shadow.blurSamples = 12;
 }
+stage('reef light bake');
 const snow = new MarineSnow(scene, TANK_W * 1.4, rng);
 const bubbles = reef.bubbler ? new Bubbles(scene, reef.bubbler, rng) : null;
 const surface = makeSurface(TANK_W);
@@ -226,6 +275,9 @@ if (!JELLY_TANK && reef.shelters) {
   console.info('Shelters:', reef.shelters.length, 'assigned:', world.fish.filter((f) => f.brain.shelter).length);
 }
 
+stage('fish and critters');
+if (params.get('precompile') !== '0') await precompile();
+stage('compile shaders');
 const ui = new UI({ world, camera, renderer, onFeed: (x) => world.dropFood(x) });
 
 // The viewer: pointer movement over the tank, as a point just behind the glass with an activity level
@@ -293,12 +345,29 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+let firstFrame = true, programsBefore = 0;
 function frame() {
   requestAnimationFrame(frame);
   fitCanvas();
+  if (firstFrame) programsBefore = renderer.info.programs?.length || 0;
   const dt = Math.min(clock.getDelta(), 0.05);
   if (!paused) step(dt);
   present();
+  if (firstFrame) {
+    firstFrame = false;
+    window.firstFramePrograms = (renderer.info.programs || []).slice(programsBefore).map((p) => p.name);
+    renderer.getContext().finish();   // the first draw compiles every shader; count it here
+    stage('first frame (shader compile)');
+    window.startupTimes = Object.fromEntries(startup);
+    const total = Math.round(performance.now() - T0);
+    console.info(`Startup ${total} ms:`, JSON.stringify(window.startupTimes));
+    // ?check=startup (tools/check.mjs startup): report the stages and stop.
+    Promise.all([profiler ? profileReport() : null, reefLightSaving]).then(([prof]) => {
+      if (prof) window.startupProfile = prof;
+      const programs = renderer.info.programs?.length;
+      if (params.get('check') === 'startup') fetch('/__done', { method: 'POST', body: JSON.stringify({ total, programs, firstFramePrograms: window.firstFramePrograms, stages: window.startupTimes, profile: prof }, null, 1) });
+    });
+  }
 }
 
 // One step of the tank: light, feeder, fish, critters, water. The checks (lookCheck.js) drive it too.
@@ -339,7 +408,7 @@ function step(dt) {
   if (photo) autofocus(dt);
 }
 // The checks step the tank themselves (the motion check draws nothing).
-if (!params.has('check') || params.get('check') === 'critters') frame();
+if (!params.has('check') || ['critters', 'startup'].includes(params.get('check'))) frame();
 
 function present() {
   if (!photo) water.render(scene, camera, sun);
