@@ -78,6 +78,13 @@ export class WebGpuWaterPost {
   private readonly size = new THREE.Vector2();
   private readonly velocityTarget: THREE.RenderTarget | null = null;
   private readonly velocityMaterial: InstanceType<Tsl['NodeMaterial']> | null = null;
+  /** Previous-vertex uniforms of the velocity pass (mirrors the WebGL VELOCITY_VERT uniforms). */
+  private readonly uPrevModel: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
+  private readonly uPrevVP: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
+  /** Each tracked model's pose at the start of the last step, and the camera's previous view-projection. */
+  private readonly prevWorld = new WeakMap<THREE.Object3D, THREE.Matrix4>();
+  private readonly prevViewProjection = new THREE.Matrix4();
+  private readonly scratch = new THREE.Matrix4();
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -90,16 +97,22 @@ export class WebGpuWaterPost {
     this.depthNode = this.scenePass.getTextureNode('depth');
     const colorNode = this.scenePass.getTextureNode('output') as UvSamplerNode;
 
+    const uPrevModel = this.uPrevModel = t.uniform(new THREE.Matrix4());
+    const uPrevVP = this.uPrevVP = t.uniform(new THREE.Matrix4());
     if (motionBlur) {
       this.velocityTarget = new THREE.RenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: true });
       const velocityMaterial = this.velocityMaterial = new t.NodeMaterial();
       velocityMaterial.side = THREE.DoubleSide;
-      // The same velocity as the WebGL pass (motion in texture units since the previous step, and this
-      // surface's NDC depth), from the built-in `velocity` node's per-object previous matrices.
+      // The same velocity as the WebGL VELOCITY_VERT / VELOCITY_FRAG: clip positions now and at the previous
+      // step (uPrevModel / uPrevVP, set per mesh draw from track()), motion in texture units, and this
+      // surface's NDC depth (so the composite blurs only where the fish is what's seen). The built-in
+      // `velocity` node cannot be used here: it advances its previous matrices only when the pass renders,
+      // but the checks step the simulation many times per present, so it would blend against a stale pose.
+      const vCur = t.cameraProjectionMatrix.mul(t.modelViewMatrix).mul(t.positionLocal).varying();
+      const vPrev = uPrevVP.mul(uPrevModel).mul(t.positionLocal).varying();
       velocityMaterial.fragmentNode = t.Fn(() => {
-        const vel = t.velocity.mul(t.float(0.5));
-        const clip = t.cameraProjectionMatrix.mul(t.modelViewMatrix).mul(t.positionLocal);
-        const depth = clip.z.div(clip.w);
+        const vel = vCur.xy.div(vCur.w).sub(vPrev.xy.div(vPrev.w)).mul(t.float(0.5));
+        const depth = vCur.z.div(vCur.w);
         return t.vec4(vel.x, vel.y, depth, t.float(1));
       })();
     }
@@ -142,7 +155,8 @@ export class WebGpuWaterPost {
           acc.addAssign(colorNode.uv(uv.add(offset)).xyz);
         });
         const moving = vel.w.greaterThan(t.float(0.5))
-          .and(t.dot(v, v).greaterThan(t.float(1e-8)));
+          .and(t.dot(v, v).greaterThan(t.float(1e-8)))
+          .and(t.abs(vel.z.sub(d)).lessThan(t.float(0.0006)));
         col = t.select(moving, acc.div(t.float(BLUR_TAPS)), col);
       }
 
@@ -197,14 +211,42 @@ export class WebGpuWaterPost {
     this.uSunColor.value.copy(sun.color).multiplyScalar(sun.intensity);
   }
 
-  /** Motion blur for the moving models (the fish): put their meshes on the velocity layer. */
-  track(models: Iterable<THREE.Object3D>): void {
+  /**
+   * Motion blur for the moving models (the fish): record their pose as the "previous" one (call at the start
+   * of each simulation step, before they move) and put their meshes on the velocity layer.
+   */
+  track(models: Iterable<THREE.Object3D>, camera: THREE.PerspectiveCamera): void {
     if (!this.velocityMaterial) return;
     for (const model of models) {
-      model.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.layers.enable(VELOCITY_LAYER);
-      });
+      model.updateMatrixWorld();
+      const known = this.prevWorld.get(model);
+      if (known) {
+        known.copy(model.matrixWorld);
+        continue;
+      }
+      const prevWorld = model.matrixWorld.clone();
+      this.prevWorld.set(model, prevWorld);
+      this.hook(model, prevWorld);
     }
+    camera.updateMatrixWorld();
+    this.prevViewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  }
+
+  // Meshes enable the velocity layer and, while the override material draws them, set their own previous
+  // model matrix (the model's previous pose times the mesh's place in it), as the WebGL VelocityPass hook.
+  private hook(model: THREE.Object3D, prevWorld: THREE.Matrix4): void {
+    const inverse = new THREE.Matrix4();
+    model.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      o.layers.enable(VELOCITY_LAYER);
+      const own = o.onBeforeRender;   // e.g. the fish body's level of detail (lod.ts pickLod)
+      o.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+        own.call(o, renderer, scene, camera, geometry, material, group);
+        if (material !== this.velocityMaterial) return;
+        inverse.copy(model.matrixWorld).invert();
+        this.uPrevModel.value.multiplyMatrices(prevWorld, this.scratch.multiplyMatrices(inverse, o.matrixWorld));
+      };
+    });
   }
 
   /** Draw the scene and composite it to the screen (async on the backend). */
@@ -243,6 +285,7 @@ export class WebGpuWaterPost {
     scene.overrideMaterial = this.velocityMaterial;
     scene.background = null;
     (scene as typeof scene & { backgroundNode: unknown }).backgroundNode = null;
+    this.uPrevVP.value.copy(this.prevViewProjection);
     r.setRenderTarget(target);
     cr.setClearColor(0x000000, 0);
     r.clear();

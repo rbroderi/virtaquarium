@@ -107,7 +107,7 @@ export class TankLoop {
         stage.water.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
       }
       if (stage.post) {
-        stage.post.track(world.fish.map((f) => f.model));
+        stage.post.track(world.fish.map((f) => f.model), stage.camera);
         stage.post.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
       }
     }
@@ -126,7 +126,7 @@ export class TankLoop {
     if (this.parts.drift) this.driftCamera();
     stage.frameView(this.time);
     this.parts.afterStep(dt);
-    if (stage.photo) this.autofocus(dt);
+    if (stage.photo ?? stage.post?.photo) this.autofocus(dt);
   }
 
   present(): void | Promise<void> {
