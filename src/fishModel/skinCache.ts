@@ -16,8 +16,8 @@ export const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'
 export type SkinMapName = (typeof SKIN_MAPS)[number];
 export type SkinImages = Record<SkinMapName, TexImage>;
 
-/** A cache hit: the key it was saved under, its decoded maps, and (variants) the skin's mean colour. */
-export interface SkinCacheHit { key: string; img: SkinImages; avg?: readonly [number, number, number] }
+/** A cache hit: the key it was saved under and its decoded maps. */
+export interface SkinCacheHit { key: string; img: SkinImages }
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const IMAGE_TIMEOUT_MS = 20000;
@@ -116,30 +116,19 @@ class SkinCache {
     this.current = this.current.then(() => done);
   }
 
-  /** Fetches and decodes a variant's saved skin albedo, if present (its other maps are variant 0's). */
-  async loadVariant(sp: Species, variant: number): Promise<SkinCacheHit | undefined> {
+  /** The URLs and key for a variant's saved skin, or null when there's no local cache to read. */
+  variantUrls(sp: Species, variant: number): { metaUrl: string; skinUrl: string; key: string } | null {
     const base = this.base;
-    if (!base || variant <= 0) return undefined;
-    const id = SkinCache.hitId(sp.id, variant);
-    const cached = this.hits.get(id);
-    if (cached) return cached;
+    if (!base || variant <= 0) return null;
     const key = skinKey(sp);
-    try {
-      const r = await fetch(`${base}${sp.id}-v${variant}.json`, { cache: 'no-cache' });
-      if (!r.ok) return undefined;
-      const meta: unknown = await r.json();
-      if (!isRecord(meta) || meta['key'] !== key) return undefined;
-      const bitmaps = useBitmaps();
-      const skin = bitmaps
-        ? await loadBitmap(`${base}${sp.id}-v${variant}-skin.png?${key}`)
-        : await loadImage(`${base}${sp.id}-v${variant}-skin.png?${key}`);
-      const avg = Array.isArray(meta['avg']) && meta['avg'].length === 3 && meta['avg'].every((v) => typeof v === 'number')
-        ? (meta['avg'] as [number, number, number])
-        : undefined;
-      const hit: SkinCacheHit = { key, img: { skin } as SkinImages, ...(avg ? { avg } : {}) };
-      this.hits.set(id, hit);
-      return hit;
-    } catch { return undefined; }
+    // Absolute URLs: the worker reads them, and its own script URL is not the page's, so a relative base
+    // would resolve to the wrong path.
+    const root = new URL(base, location.href).href;
+    return {
+      key,
+      metaUrl: `${root}${sp.id}-v${variant}.json`,
+      skinUrl: `${root}${sp.id}-v${variant}-skin.png?${key}`,
+    };
   }
 
   /** Saves a variant's painted skin albedo (its relief maps are shared with variant 0). */
