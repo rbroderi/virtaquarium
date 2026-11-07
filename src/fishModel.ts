@@ -19,9 +19,11 @@ export { makeProfile, gillU, gillOf, naresOf, mouthOf, type Profile, type Gill, 
 export { spineLayout, finOutline, caudalOutline, pelvicOutline, type FinSheet, type TubeSpec, type Rays } from './fishModel/fins.js';
 export { pectoralOutline } from './fishModel/pectoral.js';
 export { makeSwimMaterial, swimUniforms, IN_WATER_IOR, type SwimUniforms, type Tissue } from './fishModel/swimShader.js';
-export { loadSkinCache } from './fishModel/skinCache.js';
+export { loadSkinCache, pendingSkinSave } from './fishModel/skinCache.js';
 export { loadCustomModels, loadFishModel, parseModelConfig, type ModelConfig, type NormalisedModel } from './fishModel/customModels.js';
-export { buildFishModel, posePectoral, posePectoralFan, FAN_POSE, setPectLag, fishRender, speciesCanvases, type BuildFishOptions, type FanPose } from './fishModel/builder.js';
+export { buildFishModel, posePectoral, posePectoralFan, FAN_POSE, setPectLag, fishRender, speciesCanvases, applyVariantMaps, type BuildFishOptions, type FanPose } from './fishModel/builder.js';
+export { VARIANT_COUNT, BAKE_VARIANT, pickVariant, bakeVariant, variantSpecies, variantTweak, type VariantTweak } from './fishModel/variant.js';
+export { requestVariant, startIdleVariantPainting, paintPendingVariants, pendingVariantCount } from './fishModel/variantLoader.js';
 export { mountPectoral, spineH } from './fishModel/swimWave.js';
 export { FishModel, PectoralPivot } from './fishModel/model.js';
 export type { SpeciesCanvases } from './fishModel/assets.js';

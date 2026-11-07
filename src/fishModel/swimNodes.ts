@@ -4,11 +4,12 @@
 // Ported: the whole vertex deformation from SWIM_GLSL's begin_vertex branch (body wave / tail bend /
 // median-fin flutter and fold, jaw shear, erectile spines, pectoral ray bending and ripple, the moray
 // path) plus the night/stress colour patch, the bend-corrected normals (beginnormal_vertex), the tissue
-// light transport (TISSUE_GLSL direct transmission + wrap), and specular anti-aliasing. The packed-map
-// second channels are read through iridescenceThicknessNode/aoNode.
+// light transport (TISSUE_GLSL direct transmission + wrap), specular anti-aliasing with the grazing
+// variance, the normal-map edge fade and the grazing specular guard. The packed-map second channels are
+// read through iridescenceThicknessNode/aoNode.
 import * as THREE from 'three';
 import type {
-  LightingModelDirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode, UniformArrayNode, UniformNode,
+  LightingModelDirectInput, LightingModelIndirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode, UniformArrayNode, UniformNode,
 } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
@@ -344,7 +345,12 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
     if (normalMapTex) {
       const mapN = t.texture(normalMapTex).rgb.mul(2).sub(1);
       const scaled = t.vec3(mapN.x.mul(normalScale.x), mapN.y.mul(normalScale.y), mapN.z);
-      return perturbNormal2Arb(t.positionView, viewN, scaled);
+      const perturbed = perturbNormal2Arb(t.positionView, viewN, scaled);
+      // NORMAL_EDGE_FADE (swimShader.ts): fade the map detail towards the geometric normal at grazing,
+      // where a silhouette pixel covers a long swath of the map and one minified texel's tilt would
+      // otherwise be a lone glint on the rim.
+      const nv = perturbed.dot(t.positionViewDirection).saturate();
+      return t.mix(viewN, perturbed, t.smoothstep(t.float(0), t.float(0.35), nv)).normalize();
     }
     return viewN;
   })();
@@ -372,6 +378,12 @@ function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['Phy
   }
 
   class FishLightingModel extends t.PhysicalLightingModel {
+    /** The grazing specular guard's fade factor (swimShader.ts opaque_fragment patch). */
+    private specularCover(): NodeObject {
+      const nvG = t.transformedNormalView.dot(t.positionViewDirection).saturate();
+      return t.smoothstep(t.float(0), t.float(0.15), nvG);
+    }
+
     override direct(input: LightingModelDirectInput, stack: StackNode, builder: NodeBuilder): void {
       if (tissue && sigma && wrap && thick) {
         const L = input.lightDirection as unknown as NodeObject;
@@ -394,6 +406,16 @@ function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['Phy
         d.addAssign(alb.mul(irr).mul(wrapped).mul(leu));
       }
       super.direct(input, stack, builder);
+      // Grazing specular guard: a silhouette pixel spans a long arc, so fade the main GGX lobe over the
+      // outermost sliver (body highlights and scale detail at NdotV > 0.15 are untouched).
+      (input.reflectedLight.directSpecular as unknown as NodeObject).mulAssign(this.specularCover());
+    }
+
+    override indirect(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
+      super.indirect(input, stack, builder);
+      // The same grazing fade on the IBL lobe (a scalar multiply, so it commutes with the reef light's
+      // later rlSky scaling of indirectSpecular).
+      (input.reflectedLight.indirectSpecular as unknown as NodeObject).mulAssign(this.specularCover());
     }
   }
   return new FishLightingModel();
@@ -407,6 +429,7 @@ export function makeSwimNodeMaterial(
   tissue: Tissue | null = null,
 ): InstanceType<Tsl['MeshPhysicalNodeMaterial']> {
   const t = tsl();
+  const anisotropic = (params.anisotropy as number | undefined) !== 0;
   class SwimNodeMaterial extends t.MeshPhysicalNodeMaterial {
     constructor(p: object) {
       super(p);
@@ -418,14 +441,23 @@ export function makeSwimNodeMaterial(
 
     override setupVariants(builder: NodeBuilder): void {
       super.setupVariants(builder);
-      // Specular anti-aliasing (swimShader.ts's lights_physical_fragment patch): widen the lobe by the
-      // pixel-footprint variance of the perturbed normal, so a minified normal map's glints don't crawl.
+      // Specular anti-aliasing (swimShader.ts lights_physical_fragment patch): widen the lobe by the
+      // pixel footprint's normal variance, plus a grazing variance that only grows below NdotV ~0.4,
+      // where the lobe is under-sampled and one pixel can catch the whole specular line.
       const N = t.transformedNormalView;
       const ndx = N.dFdx(), ndy = N.dFdy();
-      const nVar = t.float(0.5).mul(ndx.dot(ndx).add(ndy.dot(ndy))).mul(0.25).min(0.18);
+      const nvA = N.dot(t.positionViewDirection).saturate();
+      const graze = t.float(1).sub(nvA);
+      const nVar = ndx.dot(ndx).add(ndy.dot(ndy))
+        .add(t.float(0.2).mul(graze).mul(graze).mul(graze).mul(graze))
+        .min(0.3);
       const r = t.roughness.toVar('specAaRoughness');
-      const a2 = r.mul(r);
-      t.roughness.assign(t.sqrt(t.sqrt(a2.mul(a2).add(nVar))).min(1));
+      t.roughness.assign(t.sqrt(r.mul(r).add(nVar)).min(1));
+      if (anisotropic) {
+        // The anisotropy lobe was computed above from the unwidened roughness; rebuild it (GLSL's
+        // USE_ANISOTROPY branch of the same patch).
+        t.alphaT.assign(t.mix(t.pow(t.roughness, 2), t.float(1), t.pow(t.anisotropy, 2)));
+      }
     }
   }
 

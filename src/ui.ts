@@ -1,9 +1,11 @@
-// Overlay: click to feed or inspect a fish's brain, optional name tags, help, idle cursor hiding.
+// Overlay: click to feed or inspect a fish's brain, optional name tags, help, idle cursor hiding, and the
+// tank switcher (reef / moon jellies; T or the buttons bottom right reload the page as the other tank).
 // Feeding is injected (onFeed), so the page decides what a feed request does (main publishes it on the
 // tank's event bus).
 import * as THREE from 'three';
 import { MODES, type Drives, type Personality, type Mode } from './brain.js';
 import { requireElement } from './util.js';
+import { inspectHtml, type Inspectable } from './inspect.js';
 import type { Fish } from './fish.js';
 
 const DRIVE_LABELS: Readonly<Record<keyof Drives, string>> = {
@@ -35,10 +37,25 @@ interface RendererSurface { readonly domElement: HTMLCanvasElement }
 
 export interface UIOptions {
   readonly world: UIWorld;
+  /** Other animated creatures (critters, jellies) that can be clicked and inspected. */
+  readonly inspectables: readonly Inspectable[];
   readonly camera: THREE.Camera;
   readonly renderer: RendererSurface;
   /** Food requested at x (world units). */
   readonly onFeed: (x: number) => void;
+  /** The tank on show, and whether to offer switching to the other one (not during checks). */
+  readonly scenery: TankKind;
+  readonly switcher: boolean;
+}
+
+/** The tanks the switcher offers. */
+export type TankKind = 'reef' | 'jelly';
+
+/** Reloads the page as the given tank, keeping the rest of the URL. */
+function switchTank(to: TankKind): void {
+  const url = new URL(location.href);
+  if (to === 'reef') url.searchParams.delete('scenery'); else url.searchParams.set('scenery', to);
+  location.assign(url.href);
 }
 
 const typedEntries = <K extends string, V>(o: Readonly<Record<K, V>>): [K, V][] => Object.entries(o) as [K, V][];
@@ -48,7 +65,7 @@ function bar(label: string, v: number, cls = ''): string {
 }
 
 export class UI {
-  private selected: Fish | null = null;
+  private selected: Fish | Inspectable | null = null;
   private showTags = false;
   private clockTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly ray = new THREE.Raycaster();
@@ -60,12 +77,18 @@ export class UI {
   private readonly clock = requireElement('clock', HTMLDivElement);
   private readonly tagOf = new Map<Fish, HTMLDivElement>();
   private readonly world: UIWorld;
+  private readonly inspectables: readonly Inspectable[];
   private readonly camera: THREE.Camera;
   private readonly renderer: RendererSurface;
   private readonly onFeed: (x: number) => void;
+  private readonly scenery: TankKind;
+  private readonly switcher: boolean;
 
-  constructor({ world, camera, renderer, onFeed }: UIOptions) {
+  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher }: UIOptions) {
+    this.scenery = scenery;
+    this.switcher = switcher;
     this.world = world;
+    this.inspectables = inspectables;
     this.camera = camera;
     this.renderer = renderer;
     this.onFeed = onFeed;
@@ -79,6 +102,20 @@ export class UI {
     renderer.domElement.addEventListener('pointerdown', (e) => this.click(e));
     window.addEventListener('keydown', (e) => this.key(e));
     this.hideIdleCursor();
+    if (switcher) this.showSwitcher();
+  }
+
+  private showSwitcher(): void {
+    const box = requireElement('tanks', HTMLDivElement);
+    for (const b of box.querySelectorAll<HTMLButtonElement>('button[data-scenery]')) {
+      const to = b.dataset['scenery'] === 'jelly' ? 'jelly' : 'reef';
+      b.setAttribute('aria-pressed', String(to === this.scenery));
+      b.addEventListener('click', () => { if (to !== this.scenery) switchTank(to); });
+    }
+    box.classList.add('show');
+    // Shown while the hint is, before the idle cursor hides it, so a visitor sees it's there.
+    document.body.classList.add('fresh');
+    setTimeout(() => document.body.classList.remove('fresh'), HINT_FADE_MS);
   }
 
   private key(e: KeyboardEvent): void {
@@ -90,6 +127,7 @@ export class UI {
     if (k === 'h' || k === '?') this.help.classList.toggle('show');
     if (k === 'f') this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD);
     if (k === 'escape') this.select(null);
+    if (k === 't' && this.switcher) switchTank(this.scenery === 'jelly' ? 'reef' : 'jelly');
     if (k === 'tab') {
       e.preventDefault();
       this.cycle();
@@ -127,11 +165,16 @@ export class UI {
 
   private click(e: PointerEvent): void {
     this.ray.setFromCamera(this.ndc(e), this.camera);
-    // Pick the fish closest to the click ray.
-    let best: Fish | null = null, bestD = Infinity;
+    // Pick the creature closest to the click ray, relative to its own pick radius, so a small fish
+    // directly under the pointer beats a big critter's sphere beside it.
+    let best: Fish | Inspectable | null = null, bestD = 1;
     for (const f of this.world.fish) {
-      const d = this.ray.ray.distanceToPoint(f.pos);
-      if (d < f.size * PICK_RADIUS && d < bestD) { bestD = d; best = f; }
+      const d = this.ray.ray.distanceToPoint(f.pos) / (f.size * PICK_RADIUS);
+      if (d < bestD) { bestD = d; best = f; }
+    }
+    for (const c of this.inspectables) {
+      const d = this.ray.ray.distanceToPoint(c.pos) / c.pickRadius;
+      if (d < bestD) { bestD = d; best = c; }
     }
     if (best) {
       this.select(best);
@@ -145,11 +188,11 @@ export class UI {
 
   private cycle(): void {
     const fish = this.world.fish;
-    const i = this.selected ? fish.indexOf(this.selected) : -1;
+    const i = this.selected && 'brain' in this.selected ? fish.indexOf(this.selected) : -1;
     this.select(fish[(i + 1) % fish.length] ?? null);
   }
 
-  select(f: Fish | null): void {
+  select(f: Fish | Inspectable | null): void {
     this.selected = f;
     this.panel.classList.toggle('show', !!f);
   }
@@ -188,7 +231,8 @@ export class UI {
   }
 
   update(): void {
-    if (this.selected) this.panel.innerHTML = this.panelHtml(this.selected);
+    const selected = this.selected;
+    if (selected) this.panel.innerHTML = 'brain' in selected ? this.panelHtml(selected) : inspectHtml(selected.inspect());
     if (this.showTags) this.updateTags();
   }
 }

@@ -6,7 +6,7 @@ import { gillOf, mouthOf } from './profile.js';
 import { IN_WATER_IOR, swimUniforms, type SwimUniforms, type Tissue } from './swimShader.js';
 import { swimMaterialFor } from './swimNodes.js';
 import { fishRender } from './renderMode.js';
-import { speciesAssets, type SpeciesCanvases } from './assets.js';
+import { speciesAssets, type SpeciesCanvases, type VariantMaps } from './assets.js';
 import { buildCustomModel, customModelFor, type NormalisedModel } from './customModels.js';
 import { useLods, type LodWeights } from '../lod.js';
 
@@ -83,6 +83,8 @@ export interface BuildFishOptions {
   model?: NormalisedModel | null;
   /** Ignore models.json for this species. */
   procedural?: boolean;
+  /** Look variant 0..VARIANT_COUNT-1 (0: the catalogued reference look). */
+  variant?: number;
 }
 
 /** The eye material's gaze: the iris and pupil slide across the cap (uGaze set per fish in fish.ts). */
@@ -104,7 +106,7 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   if (opts.model) return buildCustomModel(sp, opts.model);
   const customModel = opts.procedural ? undefined : customModelFor(sp.id);
   if (customModel) return buildCustomModel(sp, customModel);
-  const a = speciesAssets(sp);
+  const a = speciesAssets(sp, opts.variant ?? 0);
   const hinge = new THREE.Vector2(9, 9);
   const uniforms: SwimUniforms = swimUniforms({
     uFinH: { value: a.prof.H }, uXPed: { value: a.prof.xPed },
@@ -140,12 +142,14 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     iridescenceThicknessRange: sp.irid?.range ?? (sp.iridescent ? [310, 370] : [200, 620]),
   };
   const bodyMat = swimMat(bodyParams, uniforms, bodyTissue);
+  bodyMat.userData['fishPart'] = 'body';   // applyVariantMaps swaps this material's albedo
   const alphaTest = fishRender.finDepth ? FIN_DEPTH_ALPHA_TEST : FIN_ALPHA_TEST;
   // Raised rays (normalMap), rays glossier than the membrane (roughnessMap G x 1) and thicker (thickMap R).
   const finMat = swimMat({
     map: a.finTex, normalMap: a.finNormalTex, roughnessMap: a.finDataTex, transparent: true, side: THREE.DoubleSide,
     depthWrite: fishRender.finDepth, roughness: 1, alphaTest, ior: IN_WATER_IOR,
   }, uniforms, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, thickMap: a.finDataTex, erect });
+  finMat.userData['fishPart'] = 'fin';   // applyVariantMaps swaps this material's colour sheet
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport, and each bends along its rays (its own uPBend, so a
   // material each side; both share one program). Fans also ripple (uPWave).
@@ -154,9 +158,13 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 },
     uPBend: { value: new THREE.Vector3(0, 0, p ? p.len : 1) }, uPWave: { value: new THREE.Vector2() },
   });
-  const pectMatFor = (u: SwimUniforms): THREE.Material => swimMat({
-    map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest, ior: IN_WATER_IOR,
-  }, u, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, pect: true });
+  const pectMatFor = (u: SwimUniforms): THREE.Material => {
+    const m = swimMat({
+      map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest, ior: IN_WATER_IOR,
+    }, u, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, pect: true });
+    m.userData['fishPart'] = 'pect';   // applyVariantMaps swaps this material's colour sheet
+    return m;
+  };
 
   const pects: PectoralPivot[] = [];
   const group = new FishModel({ uniforms, pects, fan: p?.kind === 'fan', custom: false });
@@ -205,4 +213,39 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   return group;
 }
 
-export function speciesCanvases(sp: Species): SpeciesCanvases { return speciesAssets(sp).canvases; }
+export function speciesCanvases(sp: Species): SpeciesCanvases { return speciesAssets(sp, 0).canvases; }
+
+/** Swaps the colour maps (body albedo, fin sheet, pectoral sheet) of a built fish to a variant's. */
+export function applyVariantMaps(model: FishModel, maps: VariantMaps): void {
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const mat = mesh.material as THREE.MeshPhysicalMaterial | undefined;
+    if (!mat) return;
+    const part = mat.userData['fishPart'];
+    if (part === 'body') {
+      mat.map = maps.skinTex;
+      if (mat.sheen) mat.sheenColor.copy(maps.skinAvg).multiplyScalar(0.6);
+    } else if (part === 'fin') {
+      mat.map = maps.finTex;
+    } else if (part === 'pect') {
+      mat.map = maps.pectTex;
+    } else return;
+    mat.needsUpdate = true;
+  });
+}
+
+/** Swaps one colour map, so a variant's textures reach the GPU a map per frame rather than all at once. */
+export function applyVariantPart(model: FishModel, part: 'body' | 'fin' | 'pect', maps: VariantMaps): void {
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const mat = mesh.material as THREE.MeshPhysicalMaterial | undefined;
+    if (!mat || mat.userData['fishPart'] !== part) return;
+    if (part === 'body') {
+      mat.map = maps.skinTex;
+      if (mat.sheen) mat.sheenColor.copy(maps.skinAvg).multiplyScalar(0.6);
+    } else {
+      mat.map = part === 'fin' ? maps.finTex : maps.pectTex;
+    }
+    mat.needsUpdate = true;
+  });
+}

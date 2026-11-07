@@ -131,7 +131,9 @@ export class ReefBuilder {
     const fanWorms = this.addFanWorms(rockField);
     const shoalCoral = this.shoalCoral(shelters);
     const hf = this.hf;
-    const anemones: Anemone[] = [{ pos: new THREE.Vector3(this.anemoneSpot.x, this.anemoneSpot.y + 0.35, this.anemoneSpot.z), radius: 0.75 }];
+    // Radius is the crown's reach (tentacles on the rim lean out past it), so the clownfish's hosting
+    // orbit matches the anemone's actual size (anemone.ts TENTACLE_SPREAD).
+    const anemones: Anemone[] = [{ pos: new THREE.Vector3(this.anemoneSpot.x, this.anemoneSpot.y + 0.35, this.anemoneSpot.z), radius: 0.65 }];
     setFishPushReactors(this.reactors);
     return {
       group: this.group,

@@ -13,6 +13,7 @@ import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, type ShaderHook, type NodeHook } from './shared.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
+import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
 import type { Critter, CritterCave, CritterFood, CritterSpecies, CritterWorld, JoinRule, OctopusDen } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
@@ -47,6 +48,13 @@ const OBSTACLE_SAC_RADIUS = 1.1;   // the sac's bumpy skin, up to 9% proud
 const SIPHON_BALL_RADIUS = 0.08;
 const WEB_CLEARANCE = 0.02;
 
+const MODE_NOTES: Readonly<Record<OctopusMode, string>> = {
+  den: 'In its den, arms curled close',
+  forage: 'Foraging, arms stepping over the reef',
+  pounce: 'Pouncing on food',
+  jet: 'Startled: jetting away',
+};
+
 const SHADE_FRAG = `#include <map_fragment>
         diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`;
 const BODY_VERT_HEAD = 'uniform float uBreath;\nattribute float aWeight;\nvarying vec3 vTriP, vTriN;\n';
@@ -75,6 +83,8 @@ export class Octopus implements Critter {
   readonly radius: number;
   /** Mantle scale. */
   readonly M: number;
+  /** Click-proxy radius for the inspection overlay (the arms sprawl beyond it). */
+  readonly pickRadius: number;
   readonly model = new THREE.Group();
   readonly sac = new THREE.Object3D();
   readonly disc = new THREE.Object3D();
@@ -93,6 +103,8 @@ export class Octopus implements Critter {
   mode: OctopusMode = 'den';
   modeT: number;
   target: THREE.Vector3;
+  /** Speed over the ground from the last step (units/s). */
+  speed = 0;
   /** Jet strength left, 1 at the start of a jet. */
   jet = 0;
   private readonly rng: Rng;
@@ -113,6 +125,7 @@ export class Octopus implements Critter {
   constructor(sp: CritterSpecies, rng: Rng, den: OctopusDen) {
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
     const M = this.M = range(rng, 0.85, 1.05);
+    this.pickRadius = 1.5 * M;
     const hook: ShaderHook = (shader) => {
       Object.assign(shader.uniforms, this.u);
       shader.fragmentShader = 'uniform float uShade;\n' + shader.fragmentShader.replace('#include <map_fragment>', SHADE_FRAG);
@@ -291,6 +304,27 @@ export class Octopus implements Critter {
     return web;
   }
 
+  /** The click panel: its real state machine, target, speed, den and startle responses. */
+  inspect(): InspectPanel {
+    return {
+      title: this.sp.name,
+      sci: this.sp.sci,
+      note: MODE_NOTES[this.mode],
+      rows: [
+        { heading: 'State' },
+        { label: 'Mode', value: modeLabel(this.mode) },
+        { label: 'Time left', value: fmtSeconds(this.modeT) },
+        { label: 'Speed', value: fmtSpeed(this.speed) },
+        { label: 'Target', value: `${fmtMetres(this.pos.distanceTo(this.target))} away` },
+        { heading: 'Home & responses' },
+        { label: 'Den', value: this.cave ? 'a cave' : 'a low crevice' },
+        { label: 'Jet', bar: this.jet, cls: 'energy' },
+        { label: 'Startle', value: this.calm > 0 ? `recovering · ${fmtSeconds(this.calm)}` : 'ready' },
+      ],
+      fact: this.sp.fact,
+    };
+  }
+
   update(dt: number, world: CritterWorld): void {
     this.t += dt; this.modeT -= dt;
     this.calm -= dt;
@@ -304,6 +338,7 @@ export class Octopus implements Critter {
     const ceil = this.settleOnFloor(dt, world);
     // Up a ledge or out of a jet onto the floor at its own pace (it hauls itself up), never in a jump.
     limitStep(this.prevPos, this.pos, reach, OCTOPUS_HAUL, dt);
+    this.speed = dt > 0 ? this.pos.distanceTo(this.prevPos) / dt : 0;
     this.colourAndBreathe(dt);
     this.model.position.copy(this.pos);
     this.model.rotation.set(0, -this.yaw, 0);

@@ -6,10 +6,12 @@
 // the bake's options, and a fingerprint of the sources that make the reef and the bake, injected by
 // the build) and loads <base>reeflight-<hash>.bin if it exists. The file holds the two texture arrays
 // exactly as the GPU had them (half floats, gzipped), so a cached start renders the same as a baked
-// one. After a real bake on the local dev server, the result is saved for next time (git-ignored; the
-// screen bake depends on the window's shape, so each shape gets its own file).
+// one. After a real bake the result is saved for next time: into the repository on the local dev
+// server (git-ignored), into the visitor's own browser on a public deploy (core/cacheStore.ts). The
+// screen bake depends on the window's shape, so each shape gets its own file.
 import * as THREE from 'three';
 import { isRecord } from '../core/dom.js';
+import { canSaveCache, fetchCached, saveCached } from '../core/cacheStore.js';
 import { isInstancedMesh, isLine, isMesh, isPoints, materialsOf } from '../water/objectGuards.js';
 import { bakeReefLightPackedAsync, type BakeResult, type PackedBake } from './bake.js';
 import { Hasher, TextureHasher } from './hash.js';
@@ -18,7 +20,6 @@ import type { ReefLightCacheOptions, ReefLightInfo, ReefLightOptions, ReefLightT
 
 const RL_CACHE_VERSION = 1;
 const DEFAULT_CACHE_BASE = './models/cache/';
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const RGBA = 4;
 const HEADER_LENGTH_BYTES = 4;
 const HEADER_ALIGN = 8;
@@ -206,7 +207,7 @@ async function saveReefLight(renderer: THREE.WebGLRenderer, bake: PackedBake, pa
   const len = new Uint32Array([json.length + pad]);
   const body = new Blob([len, json, new Uint8Array(pad).fill(SPACE), grid, scr]).stream().pipeThrough(new CompressionStream('gzip'));
   const blob = await new Response(body).blob();
-  await fetch(`/__save?path=${path}`, { method: 'POST', body: blob });
+  await saveCached(path, blob);
   console.info(`Reef light cached: ${path} (${(blob.size / BYTES_PER_MB).toFixed(1)} MB)`);
 }
 
@@ -245,12 +246,12 @@ export const pendingReefLightSave = (): Promise<void> => pendingSave.promise;
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** The URL-derived defaults (?rlcache=0 always bakes; saving only on the local dev server). */
+/** The URL-derived defaults (?rlcache=0 always bakes; saved wherever core/cacheStore can keep it). */
 function cachePolicy(opts: ReefLightCacheOptions): { base: string; alwaysBake: boolean; save: boolean } {
   return {
     base: opts.base ?? DEFAULT_CACHE_BASE,
     alwaysBake: opts.alwaysBake ?? new URLSearchParams(location.search).get('rlcache') === '0',
-    save: opts.save ?? LOCAL_HOSTS.includes(location.hostname),
+    save: opts.save ?? canSaveCache(),
   };
 }
 
@@ -269,7 +270,7 @@ async function bakeReefLightCachedPacked(
   const tKey = performance.now() - t0;
   if (key) {
     try {
-      const r = await fetch(`${policy.base}reeflight-${key}.bin`, { cache: 'no-cache' });
+      const r = await fetchCached(`${policy.base}reeflight-${key}.bin`, { cache: 'no-cache' });
       if (r.ok) {
         const info = await loadReefLight(reef, r, key);
         if (info) { console.info(`Reef light from cache (key ${Math.round(tKey)} ms, total ${Math.round(performance.now() - t0)} ms)`); return { info, packed: null }; }

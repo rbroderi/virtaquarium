@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { mulberry32, makeCanvas, context2d } from '../util.js';
 import { organicPass } from '../core/organic.js';
+import { VARIANT_SEED_STRIDE } from './variant.js';
 import type { Pectoral, Species } from '../species/types.js';
 import type { P2, P3, Profile } from './profile.js';
 import type { TubeSpec } from './fins.js';
@@ -146,7 +147,7 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   }
   if (p.spots) {
     g.fillStyle = p.spots;
-    const rng = mulberry32(sp.id.length * 17 + 3);
+    const rng = mulberry32(sp.id.length * 17 + 3 + (sp.variant ?? 0) * VARIANT_SEED_STRIDE);
     const sr = ((p.spotR ?? 0.006) / p.len) * W;
     for (let i = 0; i < (p.spotN ?? 60); i++) {
       const a = a0r + span * rng(), r = W * (0.15 + 0.75 * rng());
@@ -162,7 +163,7 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   g.restore();
   // Bands, spots and margin wander a little and the colour is patchy (core/organic.ts); small, so the
   // painted outline stays on the fin's shape.
-  organicPass(g, W, H, mulberry32(sp.id.length * PECT_ORGANIC_SEED.perIdChar + PECT_ORGANIC_SEED.offset), PECT_ORGANIC);
+  organicPass(g, W, H, mulberry32(sp.id.length * PECT_ORGANIC_SEED.perIdChar + PECT_ORGANIC_SEED.offset + (sp.variant ?? 0) * VARIANT_SEED_STRIDE), PECT_ORGANIC);
   return c;
 }
 

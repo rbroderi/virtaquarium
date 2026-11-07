@@ -4,7 +4,9 @@
 // baked assets from there). POST /__save writes only into the allowed output directories: a path
 // starting roku/ or out/ is relative to the repository, anything else to web/ (the pages save under
 // their own URL path, e.g. models/skins/...). POST /__done reports a headless run's result to the
-// caller (bake / check). Secrets (*.key) and dotfiles are never served.
+// caller (bake / check). Secrets (*.key) and dotfiles are never served. With --public (a deployed
+// site) the server is read-only and serves only what the tank page loads (PUBLIC_PATHS); visitors' generated
+// caches are kept in their own browsers instead (src/core/cacheStore.ts).
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +19,7 @@ const DEFAULT_PORT = 8080;
 
 const SAVE_RETRIES = 20;
 const SAVE_RETRY_MS = 250;
-const HTTP_OK = 200, HTTP_FORBIDDEN = 403, HTTP_NOT_FOUND = 404, HTTP_ERROR = 500;
+const HTTP_OK = 200, HTTP_FOUND = 302, HTTP_NOT_MODIFIED = 304, HTTP_FORBIDDEN = 403, HTTP_NOT_FOUND = 404, HTTP_ERROR = 500;
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -53,6 +55,49 @@ function resolveStatic(urlPath: string): string | null {
   const { root, file } = resolvePath(urlPath.replace(/^\/+/, ''));
   if ((file !== root && !isInside(file, root)) || isSecret(file, root)) return null;
   return fs.existsSync(file) && fs.statSync(file).isDirectory() ? path.join(file, 'index.html') : file;
+}
+
+// ---- Public deploy allowlist ----
+// The repository keeps every original (reference photos, Tripo previews, the lab's comparison fish,
+// the lab/bake/Roku pages); a public deploy serves only what the tank page itself loads, so none of
+// the rest can be fetched. Retired scenery models (scenery.json "retired") are left out too.
+const PUBLIC_PATHS: readonly RegExp[] = [
+  /^$/, /^index\.html$/,
+  /^build\//,                                   // the bundle, its chunks and source-hash.json
+  /^models\/[^/]+\.json$/,                      // models.json, scenery.json
+  /^models\/critters\/[^/]+\.glb$/,             // soft-body meshes
+  /^models\/(skins|cache)\//,                   // generated caches (absent on a deploy unless baked in)
+];
+
+/**
+ * The only page a public deploy shows is the tank: the reef, or the moon jelly tank (?scenery=jelly).
+ * Any other query (checks, tank documents, debug flags) is dropped by redirecting to the clean URL.
+ */
+function publicPageQuery(q: URLSearchParams): string {
+  return q.get('scenery') === 'jelly' ? '?scenery=jelly' : '';
+}
+
+let retiredScenery: ReadonlySet<string> | null = null;
+function retired(): ReadonlySet<string> {
+  if (retiredScenery) return retiredScenery;
+  const out = new Set<string>();
+  try {
+    const manifest: unknown = JSON.parse(fs.readFileSync(path.join(WEB_ROOT, 'models', 'scenery.json'), 'utf8'));
+    if (manifest && typeof manifest === 'object') {
+      for (const cfg of Object.values(manifest as Record<string, unknown>)) {
+        const c = cfg as { file?: unknown; retired?: unknown } | null;
+        if (c && typeof c.file === 'string' && c.retired) out.add(c.file);
+      }
+    }
+  } catch { /* no manifest: nothing retired */ }
+  retiredScenery = out;
+  return out;
+}
+
+function isPublic(rel: string): boolean {
+  if (PUBLIC_PATHS.some((re) => re.test(rel))) return true;
+  const m = /^models\/(scenery\/[^/]+\.glb)$/.exec(rel);
+  return m !== null && !retired().has(m[1] ?? '');
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -133,38 +178,70 @@ async function handleShot(res: http.ServerResponse, onShot?: () => Promise<Buffe
   }
 }
 
-function handleStatic(url: URL, res: http.ServerResponse): void {
-  const file = resolveStatic(decodeURIComponent(url.pathname));
+function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerResponse, publicMode: boolean): void {
+  let urlPath: string;
+  try { urlPath = decodeURIComponent(url.pathname); } catch { res.writeHead(HTTP_NOT_FOUND).end(); return; }
+  const rel = urlPath.replace(/^\/+/, '');
+  if (publicMode && (rel === '' || rel === 'index.html')) {
+    const clean = publicPageQuery(url.searchParams);
+    if (clean !== url.search) {
+      res.writeHead(HTTP_FOUND, { Location: '/' + clean }).end();
+      return;
+    }
+  }
+  const file = publicMode && !isPublic(rel) ? null : resolveStatic(urlPath);
   if (!file) {
     res.writeHead(HTTP_FORBIDDEN).end();
     return;
   }
-  fs.readFile(file, (err, data) => {
-    if (err) {
+  fs.stat(file, (statErr, st) => {
+    if (statErr || !st.isFile()) {
       res.writeHead(HTTP_NOT_FOUND).end('not found');
       return;
     }
-    // js-profiling: lets a page sample itself (main ?profile=1, the JS Self-Profiling API).
-    res.writeHead(HTTP_OK, {
+    // no-cache still lets the browser keep its copy: it revalidates by date and gets a bodiless 304
+    // while the file is unchanged, so a return visit doesn't download the ~100 MB of models again.
+    const modified = new Date(Math.floor(st.mtimeMs / 1000) * 1000);
+    const since = Date.parse(req.headers['if-modified-since'] ?? '');
+    const headers = {
       'Content-Type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
       'Cache-Control': 'no-cache',
+      'Last-Modified': modified.toUTCString(),
+      // js-profiling: lets a page sample itself (main ?profile=1, the JS Self-Profiling API).
       'Document-Policy': 'js-profiling',
+    };
+    if (!Number.isNaN(since) && modified.getTime() <= since) {
+      res.writeHead(HTTP_NOT_MODIFIED, headers).end();
+      return;
+    }
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(HTTP_NOT_FOUND).end('not found');
+        return;
+      }
+      res.writeHead(HTTP_OK, headers);
+      res.end(data);
     });
-    res.end(data);
   });
 }
 
-export function startServer(
-  port: number = DEFAULT_PORT,
-  onEvent: ServerEventListener = () => {},
-  onShot?: () => Promise<Buffer | null>,
-): Promise<http.Server> {
+export interface ServerOptions {
+  /** Read-only, for a public deploy: no POST /__save or /__done, and only PUBLIC_PATHS are served. */
+  readonly publicMode?: boolean;
+  /** POST /__shot: a CDP screenshot backend for the WebGPU look check (tools/headless.ts). */
+  readonly onShot?: (() => Promise<Buffer | null>) | undefined;
+}
+
+export function startServer(port: number = DEFAULT_PORT, onEvent: ServerEventListener = () => {}, opts: ServerOptions = {}): Promise<http.Server> {
+  const publicMode = opts.publicMode ?? false;
+  const onShot = opts.onShot;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (req.method === 'POST' && url.pathname === '/__save') void handleSave(url, req, res, onEvent);
+    if (req.method === 'POST' && publicMode) res.writeHead(HTTP_FORBIDDEN).end();
+    else if (req.method === 'POST' && url.pathname === '/__save') void handleSave(url, req, res, onEvent);
     else if (req.method === 'POST' && url.pathname === '/__done') void handleDone(req, res, onEvent);
     else if (req.method === 'POST' && url.pathname === '/__shot') void handleShot(res, onShot);
-    else handleStatic(url, res);
+    else handleStatic(url, req, res, publicMode);
   });
   return new Promise((resolve) => server.listen(port, () => resolve(server)));
 }
@@ -178,6 +255,10 @@ export const pageUrl = (server: http.Server, page: string, query: URLSearchParam
 
 const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const port = Number(process.env['PORT'] ?? process.argv[2] ?? DEFAULT_PORT);
-  void startServer(port).then((s) => console.log(`Virtual aquarium: http://localhost:${serverPort(s)}/`));
+  // bun tools/serve.ts [port] [--public]; a PORT in the environment (Railway sets one) wins.
+  const args = process.argv.slice(2);
+  const port = Number(process.env['PORT'] ?? args.find((a) => /^\d+$/.test(a)) ?? DEFAULT_PORT);
+  const publicMode = args.includes('--public');
+  void startServer(port, () => {}, { publicMode }).then((s) =>
+    console.log(`Virtual aquarium${publicMode ? ' (public, read-only)' : ''}: http://localhost:${serverPort(s)}/`));
 }

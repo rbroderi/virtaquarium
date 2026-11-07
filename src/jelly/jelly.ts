@@ -9,6 +9,7 @@ import { makeGpuJellyMaterials } from './webgpu.js';
 import { gpuActive, tsl } from '../webgpu/tsl.js';
 import type { JellyBounds, JellySpecies, JellyWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
+import { fmtMetres, fmtSeconds, fmtSpeed, type Inspectable, type InspectPanel } from '../inspect.js';
 
 /** How fast a jelly may be eased back inside the tank beyond its own drift (units/s). */
 const JELLY_CRAWL = 0.05;
@@ -46,9 +47,11 @@ const PULSE_HZ_SCALE = 0.9;
 /** Pulse rate spread between individuals (Hz at the reference radius, before PULSE_HZ_SCALE). */
 const PULSE_HZ_RANGE: readonly [number, number] = [0.7, 1.1];
 
-export class Jelly {
+export class Jelly implements Inspectable {
   readonly sp: JellySpecies;
   readonly R: number;
+  /** Click-proxy radius for the inspection overlay. */
+  readonly pickRadius: number;
   readonly model = new THREE.Group();
   readonly inner = new THREE.Group();
   readonly pos: THREE.Vector3;
@@ -72,6 +75,7 @@ export class Jelly {
     this.sp = sp;
     this.rng = rng;
     this.R = range(rng, sp.size[0], sp.size[1]);
+    this.pickRadius = 1.3 * this.R;
     const g = sharedJellyGeometry();
     this.u = {
       uPulse: { value: 0 }, uTrail: { value: new THREE.Vector3() }, uR: { value: this.R }, uTime: { value: 0 }, uSeed: { value: rng() * SEED_RANGE }, uLight: { value: 1 },
@@ -106,6 +110,32 @@ export class Jelly {
     this.axis = new THREE.Vector3(range(rng, -0.4, 0.4), 1, range(rng, -0.4, 0.4)).normalize();
     this.hz = range(rng, PULSE_HZ_RANGE[0], PULSE_HZ_RANGE[1]) * (PULSE_HZ_SCALE / Math.sqrt(this.R / PULSE_HZ_REFERENCE_RADIUS));   // bigger bells pulse slower
     this.phase = rng();
+  }
+
+  /** The click panel: its real pulse, drift, favoured level and home column. */
+  inspect(): InspectPanel {
+    const dy = this.prefY - this.pos.y;
+    const note = Math.abs(dy) > 0.5
+      ? (dy > 0 ? 'Pulsing to climb towards its favoured level' : 'Sinking back towards its favoured level')
+      : 'Holding its level on the current';
+    return {
+      title: this.sp.name,
+      sci: this.sp.sci,
+      note,
+      rows: [
+        { heading: 'State' },
+        { label: 'Bell', bar: Jelly.contraction(this.phase), cls: 'energy' },
+        { label: 'Pulse rate', value: `${this.hz.toFixed(2)} Hz` },
+        { label: 'Drift', value: fmtSpeed(this.vel.length()) },
+        { label: 'Height', value: fmtMetres(this.pos.y) },
+        { heading: 'Home' },
+        { label: 'Favoured height', value: fmtMetres(this.prefY) },
+        { label: 'Home column', value: `x = ${this.prefX.toFixed(1)}` },
+        { label: 'Next wander', value: fmtSeconds(this.wanderT) },
+        { label: 'Bell width', value: `${Math.round(2 * this.R * 12.5)} cm` },
+      ],
+      fact: this.sp.fact,
+    };
   }
 
   /**

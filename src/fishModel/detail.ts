@@ -27,8 +27,26 @@ const TILE = 256;
 /** Scale counts from this up are minute (velvet). */
 const VELVET_SCALES = 100;
 const DETAIL_STRENGTH: Readonly<Record<DetailKind, number>> = { velvet: 1.0, mucus: 0.6, ctenoid: 0.22, cycloid: 0.25 };   // (ctenoid at 0.35 chalked white skin)
+// Organic imperfection in the tiling lattice: rows drift sideways, each scale turns and elongates a
+// little, relief varies per scale, and the height field is softened before the slope is taken, so the
+// lattice reads as grown scales rather than ruled circles.
+/** Rows drift by up to this fraction of a scale's width. */
+const ROW_DRIFT = 0.18;
+/** Each scale turns by up to +- this many radians. */
+const SCALE_ORIENT = 0.5;
+/** Each scale elongates by up to +- this much (1 = circular). */
+const SCALE_ASPECT = 0.14;
+/** Relief varies by +- this fraction per scale. */
+const RELIEF_VARY = 0.3;
+/** 3 x 3 box-blur passes over the height field before the normal slope is taken. */
+const SOFTEN_PASSES = 2;
+/** Hash keys for the per-scale orientation, aspect and relief (31-33 jitter the position and size). */
+const HASH_ORIENT = 34;
+const HASH_ASPECT = 35;
+const HASH_RELIEF = 36;
+const HASH_ROW_DRIFT = 41;
 
-interface LatticeHit { hn: number; bt: number; bd: number; da: number; db: number }
+interface LatticeHit { hn: number; bt: number; bd: number; da: number; db: number; re: number; rel: number }
 
 const detailTiles = new Map<DetailKind, THREE.CanvasTexture>();
 
@@ -46,20 +64,34 @@ function detailTile(kind: DetailKind): THREE.CanvasTexture {
     };
   };
   // An imbricated lattice of nc columns x 2nc rows (row spacing half a scale) wrapping on the tile, as on
-  // the body: returns { hn (height of the exposed field), bt, bd, da, db } at (x, y).
-  const lattice = (nc: number) => (x: number, y: number): LatticeHit => {
-    const a = x * nc, b = y * nc * 2, jr = Math.round(b);
-    let best = Infinity, out: LatticeHit | null = null;
-    for (let rb = jr - 2; rb <= jr + 2; rb++) {
-      const off = (rb & 1) * 0.5, ir = Math.round(a - off), wr = ((rb % (2 * nc)) + 2 * nc) % (2 * nc);
-      for (let ri = ir - 1; ri <= ir + 1; ri++) {
-        const wi = ((ri % nc) + nc) % nc;
-        const ca = ri + off + (cellHash(wi, wr, 31) - 0.5) * 0.16, cb = rb + (cellHash(wi, wr, 32) - 0.5) * 0.16;
-        const rr = 0.75 * (1 + (cellHash(wi, wr, 33) - 0.5) * 0.16), da = a - ca, db = (b - cb) * 0.5, d2 = da * da + db * db;
-        if (d2 < rr * rr && ca < best) { best = ca; const bd = Math.sqrt(d2) / rr, bt = da / rr; out = { hn: 0.5 + 0.5 * bt + 0.25 * (1 - bd * bd), bt, bd, da, db }; }
+  // the body: returns { hn (height of the exposed field), bt, bd, da, db, re (elliptical radius), rel }.
+  const lattice = (nc: number) => {
+    const rowDrift = Float32Array.from({ length: 2 * nc }, (_, r) => (cellHash(r, 0, HASH_ROW_DRIFT) - 0.5) * ROW_DRIFT);
+    return (x: number, y: number): LatticeHit => {
+      const a = x * nc, b = y * nc * 2, jr = Math.round(b);
+      let best = Infinity, out: LatticeHit | null = null;
+      for (let rb = jr - 2; rb <= jr + 2; rb++) {
+        const wr = ((rb % (2 * nc)) + 2 * nc) % (2 * nc);
+        const off = (rb & 1) * 0.5 + (rowDrift[wr] ?? 0), ir = Math.round(a - off);
+        for (let ri = ir - 1; ri <= ir + 1; ri++) {
+          const wi = ((ri % nc) + nc) % nc;
+          const ca = ri + off + (cellHash(wi, wr, 31) - 0.5) * 0.16, cb = rb + (cellHash(wi, wr, 32) - 0.5) * 0.16;
+          const rr = 0.75 * (1 + (cellHash(wi, wr, 33) - 0.5) * 0.16);
+          const ang = (cellHash(wi, wr, HASH_ORIENT) - 0.5) * 2 * SCALE_ORIENT;
+          const asp = 1 + (cellHash(wi, wr, HASH_ASPECT) - 0.5) * SCALE_ASPECT;
+          const rel = 1 + (cellHash(wi, wr, HASH_RELIEF) - 0.5) * RELIEF_VARY;
+          const dx = a - ca, dy = (b - cb) * 0.5, co = Math.cos(ang), si = Math.sin(ang);
+          const da = dx * co - dy * si, db = dx * si + dy * co;   // rotated, un-scaled local frame
+          const d2 = (da / asp) * (da / asp) + db * db;
+          if (d2 < rr * rr && ca < best) {
+            best = ca;
+            const bd = Math.sqrt(d2) / rr, bt = da / rr;
+            out = { hn: (0.5 + 0.5 * bt + 0.25 * (1 - bd * bd)) * rel, bt, bd, da, db, re: Math.hypot(da / asp, db), rel };
+          }
+        }
       }
-    }
-    return out || { hn: 0, bt: 0, bd: 1, da: 0, db: 0 };
+      return out || { hn: 0, bt: 0, bd: 1, da: 0, db: 0, re: 1, rel: 1 };
+    };
   };
   let amp: number;   // relief in texels at height 1
   if (kind === 'velvet') {
@@ -82,14 +114,27 @@ function detailTile(kind: DetailKind): THREE.CanvasTexture {
     // field of fine spinule points over the exposed rear.
     const L = lattice(2), spin = noise(64);
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-      const c = L(x / S, y / S), r = Math.hypot(c.da, c.db);
-      let v = 0.35 * Math.sin(r * Math.PI * 2 * 14 / 0.75) * (1 - c.bd * 0.5);
-      if (kind === 'ctenoid' && c.bt > 0.1) v += 0.8 * smooth01((c.bt - 0.1) / 0.4) * (spin(x / S, y / S) - 0.5);
+      const c = L(x / S, y / S), r = c.re;
+      let v = c.rel * 0.35 * Math.sin(r * Math.PI * 2 * 14 / 0.75) * (1 - c.bd * 0.5);
+      if (kind === 'ctenoid' && c.bt > 0.1) v += c.rel * 0.8 * smooth01((c.bt - 0.1) / 0.4) * (spin(x / S, y / S) - 0.5);
       h[y * S + x] = v;
     }
     amp = 1.2;
   }
-  const img = new ImageData(S, S), d = img.data, H = (x: number, y: number): number => h[((y + S) % S) * S + ((x + S) % S)] ?? 0;
+  // Soften the height field before the slope is taken, so scale and circuli edges read as overlapping
+  // tissue rather than ruled boundaries.
+  let blurred: Float32Array = h;
+  for (let pass = 0; pass < SOFTEN_PASSES; pass++) {
+    const next = new Float32Array(S * S);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+        sum += blurred[(((y + dy + S) % S) * S + ((x + dx + S) % S))] ?? 0;
+      next[y * S + x] = sum / 9;
+    }
+    blurred = next;
+  }
+  const img = new ImageData(S, S), d = img.data, H = (x: number, y: number): number => blurred[((y + S) % S) * S + ((x + S) % S)] ?? 0;
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const nx = -(H(x + 1, y) - H(x - 1, y)) * 0.5 * amp, ny = (H(x, y + 1) - H(x, y - 1)) * 0.5 * amp;
     const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1), o = (y * S + x) * 4;

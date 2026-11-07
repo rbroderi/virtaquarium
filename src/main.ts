@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } from './reef.js';
 import { World, type TankBounds } from './world.js';
-import { loadCustomModels, loadSkinCache, fishRender } from './fishModel.js';
+import { loadCustomModels, loadSkinCache, fishRender, startIdleVariantPainting, pendingSkinSave } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { makeGpuSurface } from './water/webgpuSurface.js';
 import { bakeReefLightCached, bakeReefLightCachedGpu, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
   const bus = new EventBus<TankEvents>();
   bus.on('feed', ({ x }) => world.dropFood(x));
-  const ui = new UI({ world, camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }) });
+  const ui = new UI({ world, inspectables: [...critters, ...jellies], camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null });
   trackViewer(stage.canvas, stage.camera, world, bounds);
 
   const lighting = new LightingController({ stage, surface, reef, toneGain: options.tone.gain });
@@ -284,6 +284,7 @@ function startAnimation(loop: TankLoop, stage: Stage, timer: StartupTimer, optio
     if (!first) return;
     first = false;
     reportFirstFrame(stage, timer, options, profiler, programsBefore);
+    startIdleVariantPainting();   // variant 1-3 textures, painted one per idle slice after the first frame
   };
   tick();
 }
@@ -307,7 +308,7 @@ function reportFirstFrame(stage: Stage, timer: StartupTimer, options: AppOptions
   debugHooks.startupTimes = times;
   const total = timer.totalMs();
   console.info(`Startup ${total} ms:`, JSON.stringify(times));
-  void Promise.all([profiler ? profileReport(profiler) : null, pendingReefLightSave()]).then(([profile]) => {
+  void Promise.all([profiler ? profileReport(profiler) : null, pendingReefLightSave(), pendingSkinSave()]).then(([profile]) => {
     if (profile) debugHooks.startupProfile = profile;
     if (options.check !== 'startup') return;
     const body = JSON.stringify({

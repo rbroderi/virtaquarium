@@ -3,7 +3,8 @@
 import { clamp, lerp, mulberry32, makeCanvas, rgba, context2d } from '../util.js';
 import type { BlotchesOp, PatternOp, Species, SpotsOp } from '../species/types.js';
 import { cellHash, gillOf, gillU, mouthOf, naresOf, smooth01, type Profile } from './profile.js';
-import { organicPass, roundCorners } from '../core/organic.js';
+import { organicPass, roundCorners, wobble } from '../core/organic.js';
+import { VARIANT_SEED_STRIDE } from './variant.js';
 
 /** Skin texture size (texels); the scale maps are half this. */
 export const SKIN_TEX_W = 2048, SKIN_TEX_H = 1024;
@@ -14,6 +15,16 @@ const DEFAULT_SCALE_COUNT = 50;
 const DEFAULT_HEAD_SCALES = 0.55;
 const SPECKLE_DENSITY = 0.0012;
 const MOTTLE_SPOTS = 70;
+// Organic imperfection beyond the scale lattice's own jitter: the lateral line's pore row wanders, each
+// scale's relief varies, and the height field is softened before the normal slope is taken.
+/** The lateral line row drifts by up to this much of the body's half-depth, in ~this many swings. */
+const LATERAL_LINE_WANDER = 0.05;
+const LATERAL_LINE_WANDER_CYCLES = 2.5;
+const LATERAL_LINE_SEED = { perIdChar: 274177, offset: 19 } as const;
+/** Each scale's relief in the normal map varies by +- this fraction. */
+const SCALE_RELIEF_VARY = 0.35;
+/** 3 x 3 binomial passes over the height field before the normal map is taken. */
+const HEIGHT_SOFTEN_PASSES = 1;
 
 /** The four maps the skin painter makes. */
 export interface SkinMaps {
@@ -166,8 +177,8 @@ function paintPatternOp(P: Painter, p: PatternOp): void {
 /** One cell of a scale lattice's lazily filled jitter grid. */
 interface Lattice { r0: number; b0: number; nb: number; ca: Float32Array; cb: Float32Array; rr: Float32Array; id: Int32Array }
 
-/** Per scale (compact id): tilt, reflector strength and film thickness, brightness and tint, colour sums. */
-interface ScaleCells { tx: number[]; ty: number[]; irS: number[]; irT: number[]; val: number[]; t0: number[]; t1: number[]; t2: number[]; sum: number[] }
+/** Per scale (compact id): tilt, reflector strength and film thickness, brightness, tint, colour sums, relief. */
+interface ScaleCells { tx: number[]; ty: number[]; irS: number[]; irT: number[]; val: number[]; t0: number[]; t1: number[]; t2: number[]; sum: number[]; rel: number[] }
 
 // ---- Organic imperfection (core/organic.ts) ----
 // The skin's pattern layer is resampled through a smooth random warp, then its colour is mottled.
@@ -186,7 +197,7 @@ export function organicSkin(g: CanvasRenderingContext2D, sp: Species, prof: Prof
   const len = sp.body.len, Hh = 2 * prof.H;   // texture spans len along u and about 2 H across v
   const pxU = TW / len, pxV = TH / Hh;        // texels per unit length
   const oct = ([cell, amp]: readonly [number, number]) => [len / cell, Hh / cell, amp * o.warp * pxU, amp * o.warp * pxV] as const;
-  organicPass(g, TW, TH, mulberry32(sp.id.length * ORGANIC_SKIN_SEED.perIdChar + ORGANIC_SKIN_SEED.offset), {
+  organicPass(g, TW, TH, mulberry32(sp.id.length * ORGANIC_SKIN_SEED.perIdChar + ORGANIC_SKIN_SEED.offset + (sp.variant ?? 0) * VARIANT_SEED_STRIDE), {
     warp: o.warp ? SKIN_WARP_OCTAVES.map(oct) : [],
     mottle: o.mottle ? { cellsX: len / SKIN_MOTTLE.cell, cellsY: Hh / SKIN_MOTTLE.cell, value: SKIN_MOTTLE.value * o.mottle, chroma: SKIN_MOTTLE.chroma * o.mottle } : null,
   });
@@ -197,7 +208,7 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
   const c = makeCanvas(TW, TH), g = context2d(c, { willReadFrequently: true });
   const U = (u: number): number => u * TW, V = (v: number): number => ((v + 1) / 2) * TH;
   const len = sp.body.len;
-  const rng = mulberry32(sp.id.length * 7919 + 13);
+  const rng = mulberry32(sp.id.length * 7919 + 13 + (sp.variant ?? 0) * VARIANT_SEED_STRIDE);
   const painter: Painter = { g, U, V, len, prof };
 
   for (const p of sp.pattern) {
@@ -273,11 +284,13 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
   const rBare = !scaled ? 0.3 : 0.28, rMinute = 0.5;
   // Lateral line: the row of pored scales arching along the upper flank (each has a pore over the canal,
   // which runs under the scale as a slightly paler tube). Only fish with a gill cover have it laid out.
+  // The row's arch wanders a little, so the line is irregular rather than a plotted curve.
   const hasLL = !!gillOf(sp), llJ = new Int32Array(SW).fill(-1);
+  const llWob = hasLL ? wobble(mulberry32(sp.id.length * LATERAL_LINE_SEED.perIdChar + LATERAL_LINE_SEED.offset), LATERAL_LINE_WANDER_CYCLES) : null;
   for (let i = 0; hasLL && i < SW; i++) {
     const u = (i + 0.5) / SW;
     if (u < g0 + 0.01 || u > 0.95) continue;
-    const t = (u - g0) / (0.95 - g0), vll = -0.5 + 0.38 * t * t;
+    const t = (u - g0) / (0.95 - g0), vll = -0.5 + 0.38 * t * t + LATERAL_LINE_WANDER * (llWob ? llWob(t) : 0);
     llJ[i] = clamp(Math.round(((vll + 1) / 2) * SH - 0.5), 0, SH - 1);
   }
   const img = g.getImageData(0, 0, TW, TH), d = img.data;
@@ -290,7 +303,7 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
     return { r0, b0, nb, ca: new Float32Array(nr * nb).fill(NaN), cb: new Float32Array(nr * nb), rr: new Float32Array(nr * nb), id: new Int32Array(nr * nb).fill(-1) };
   };
   const L = [lattice(1), lattice(headK)] as const;
-  const C: ScaleCells = { tx: [], ty: [], irS: [], irT: [], val: [], t0: [], t1: [], t2: [], sum: [] };
+  const C: ScaleCells = { tx: [], ty: [], irS: [], irT: [], val: [], t0: [], t1: [], t2: [], sum: [], rel: [] };
   const sd = shadeImg.data, id = iridImg.data, cd = crImg.data;
   for (let j = 0; j < SH; j++) {
     const v = ((j + 0.5) / SH) * 2 - 1;
@@ -339,6 +352,7 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
         C.tx.push((H(4) + H(5) + H(6) - 1.5) * 0.07); C.ty.push((H(7) + H(8) + H(9) - 1.5) * 0.07);
         C.irS.push(0.55 + 0.65 * H(10)); C.irT.push(H(11));
         C.val.push(H(12) - 0.5); C.t0.push(H(13) - 0.5); C.t1.push(H(14) - 0.5); C.t2.push(H(15) - 0.5);
+        C.rel.push(1 + SCALE_RELIEF_VARY * (H(16) - 0.5));
         C.sum.push(0, 0, 0, 0);
       }
       cellOf[p] = cell; maskOf[p] = mask;
@@ -346,7 +360,7 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
       C.sum[cs] = at(C.sum, cs) + at(d, pa); C.sum[cs + 1] = at(C.sum, cs + 1) + at(d, pa + 1);
       C.sum[cs + 2] = at(C.sum, cs + 2) + at(d, pa + 2); C.sum[cs + 3] = at(C.sum, cs + 3) + 1;
       const ss = at(sCol, i) * k, hn = 0.5 + 0.5 * bt + 0.25 * (1 - bd * bd);
-      height[p] = (hn * 0.08 + at(C.tx, cell) * bda + at(C.ty, cell) * bdb) * ss * mask;
+      height[p] = (hn * 0.08 * at(C.rel, cell) + at(C.tx, cell) * bda + at(C.ty, cell) * bdb) * ss * mask;
       // Pigment pocket along each scale's free margin; slightly paler centres.
       const pocket = smooth01((bd - 0.72) / 0.28) * (bt > 0 ? 1 : 0.3);
       let sh = 1 - mask * (0.2 * pocket - 0.04 * (1 - bd));
@@ -504,6 +518,19 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
   applyShade(g, sg);
   const irid = makeCanvas(SW, SH); context2d(irid).putImageData(iridImg, 0, 0);
 
+  // Soften the height field before taking the slope (a 3 x 3 binomial), so the scale and pore edges read
+  // as overlapping tissue rather than ruled boundaries.
+  let soft = height, tmp = new Float32Array(N);
+  for (let pass = 0; pass < HEIGHT_SOFTEN_PASSES; pass++) {
+    for (let j = 0; j < SH; j++) for (let i = 0; i < SW; i++) {
+      const up = Math.max(0, j - 1) * SW, dn = Math.min(SH - 1, j + 1) * SW, lf = Math.max(0, i - 1), rt = Math.min(SW - 1, i + 1), p = j * SW + i;
+      tmp[p] = (at(soft, p) * 4 + (at(soft, j * SW + lf) + at(soft, j * SW + rt) + at(soft, up + i) + at(soft, dn + i)) * 2
+        + at(soft, up + lf) + at(soft, up + rt) + at(soft, dn + lf) + at(soft, dn + rt)) / 16;
+    }
+    [soft, tmp] = [tmp, soft];
+  }
+  const heightS = soft;
+
   // Tangent-space normal map from the height field (OpenGL convention; canvas rows run down = -v).
   // Across the body the rows' spacing is their arc length (Yarc), as the scales were laid out.
   const normalImg = new ImageData(SW, SH), nd = normalImg.data;
@@ -511,8 +538,8 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
   for (let j = 0; j < SH; j++) {
     for (let i = 0; i < SW; i++) {
       const j0 = Math.max(0, j - 1) * SW + i, j1 = Math.min(SH - 1, j + 1) * SW + i;
-      const hx = (at(height, j * SW + Math.min(SW - 1, i + 1)) - at(height, j * SW + Math.max(0, i - 1))) / (2 * du);
-      const hy = (at(height, j1) - at(height, j0)) / Math.max(1e-6, at(Yarc, j1) - at(Yarc, j0));
+      const hx = (at(heightS, j * SW + Math.min(SW - 1, i + 1)) - at(heightS, j * SW + Math.max(0, i - 1))) / (2 * du);
+      const hy = (at(heightS, j1) - at(heightS, j0)) / Math.max(1e-6, at(Yarc, j1) - at(Yarc, j0));
       const nx = -hx, ny = hy, inv = 1 / Math.sqrt(nx * nx + ny * ny + 1), k = (j * SW + i) * 4;
       nd[k] = (nx * inv * 0.5 + 0.5) * 255;
       nd[k + 1] = (ny * inv * 0.5 + 0.5) * 255;

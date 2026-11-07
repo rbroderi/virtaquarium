@@ -339,18 +339,45 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
           transformed.z = swH + swZ * swC;
         }`);
     // Specular anti-aliasing for the shading normal (scale-lattice normal map, ray relief): three's own
-    // widening reads only the geometric normal, so a minified normal map's glints crawl as isolated
-    // bright pixels. Widen the lobe by the pixel-footprint variance of the perturbed normal (Tokuyoshi &
-    // Kaplanyan 2019: alpha'^2 = alpha^2 + variance, variance capped), which is zero where the normal is smooth.
+    // widening reads only the geometric normal, so a minified normal map's glints boil as isolated bright
+    // pixels. Widen the lobe by the pixel footprint's normal variance (Toksvig; Filament's kernel),
+    // capped, so the glint is spread over what the pixel actually covers. The anisotropy lobe is
+    // computed just above, from the unwidened roughness, so it is rebuilt here too.
+    //
+    // At grazing incidence the footprint term alone is not enough: the pixel covers a long arc of the
+    // body, so the mirror direction sweeps far more than a lobe width and one pixel can catch the whole
+    // specular line (the "fireflies" on a fish's back rim, linear radiance ~4 against ~0.02 round it).
+    // Add a grazing variance that only grows below NdotV ~0.4, i.e. where the lobe is under-sampled;
+    // a body highlight at NdotV > 0.6 is untouched.
     shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
       { vec3 ndx = dFdx( normal ), ndy = dFdy( normal );
-        float nVar = min( 0.5 * ( dot( ndx, ndx ) + dot( ndy, ndy ) ) * 0.25, 0.18 );
-        float a2 = material.roughness * material.roughness;
-        material.roughness = min( sqrt( sqrt( a2 * a2 + nVar ) ), 1.0 ); }`);
-    // HDR guard: a thin-film or grazing specular can overflow the half-float scene target (Inf / NaN, or
-    // 1e4+) in a single pixel, which MSAA resolve, motion blur and the depth-of-field gather then smear
-    // into a sparkle. Real fish radiance stays below ~10, so clamp well above that and zero NaNs.
+        float nVar = dot( ndx, ndx ) + dot( ndy, ndy );
+        float nvA = saturate( dot( normal, normalize( vViewPosition ) ) );
+        float graze = 1.0 - nvA;
+        nVar += 0.20 * graze * graze * graze * graze;
+        nVar = min( nVar, 0.30 );
+        material.roughness = min( sqrt( material.roughness * material.roughness + nVar ), 1.0 );
+        #ifdef USE_ANISOTROPY
+          material.alphaT = mix( pow2( material.roughness ), 1.0, pow2( material.anisotropy ) );
+        #endif
+      }`);
+    // Fade the normal-map detail towards the geometric normal at grazing angles: a silhouette pixel
+    // covers a long swath of the map, and one minified texel's tilt is otherwise a lone glint on the rim.
+    const NORMAL_EDGE_FADE = `
+        { float nv = saturate( dot( normal, normalize( vViewPosition ) ) );
+          normal = normalize( mix( nonPerturbedNormal, normal, smoothstep( 0.0, 0.35, nv ) ) ); }`;
+    if (!tissue?.detail) {
+      shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>${NORMAL_EDGE_FADE}`);
+    }
+    // Grazing specular guard. A silhouette pixel spans a long arc of the body, so the mirror direction
+    // sweeps far past one specular lobe and a single pixel can catch a whole thin anisotropic highlight
+    // (linear radiance ~4 against ~0.02 around it: the white specks on a fish's back rim). Sub-pixel
+    // fish coverage also tends to zero there, so fade the specular over the outermost sliver only:
+    // body highlights and scale detail at NdotV > 0.15 are untouched.
     shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      { float nvG = saturate( dot( normal, normalize( vViewPosition ) ) );
+        float covG = smoothstep( 0.0, 0.15, nvG );
+        outgoingLight -= ( reflectedLight.directSpecular + reflectedLight.indirectSpecular ) * ( 1.0 - covG ); }
       if (any(isnan(outgoingLight)) || any(isinf(outgoingLight))) outgoingLight = vec3(0.0);
       outgoingLight = clamp(outgoingLight, vec3(0.0), vec3(${HDR_CLAMP}));
       #include <opaque_fragment>`);
@@ -395,7 +422,7 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
           normal = normalize( tbn * mapN );
         #else
           #include <normal_fragment_maps>
-        #endif`);
+        #endif${NORMAL_EDGE_FADE}`);
     }
     if (tissue?.night) {
       // Night (and stress) colours: chromatophores contract or expand over minutes (Hobson 1972: at dusk

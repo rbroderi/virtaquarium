@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
 import type { NodeBuilder, WebGPURenderer } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
-import { causticUniforms, CAUSTIC_RES, GREEN_IOR, refractDir, SEAWATER_IOR } from './caustics.js';
+import { causticUniforms, CAUSTIC_RES, CAUSTIC_GAIN, CAUSTIC_LOW_LOD, GREEN_IOR, refractDir, SEAWATER_IOR } from './caustics.js';
 import { SURFACE_Y } from './medium.js';
 import { waveUniforms, WAVE_COUNT, WAVE_TILE } from './waves.js';
 
@@ -78,19 +78,22 @@ function causticAtNode(t: Tsl, s: GpuCausticState, lodBias = 0): (p: NodeObject)
   const blur = s.uCauBlur;
   const f = t.Fn(([p]: [NodeObject]) => {
     // Same lookup as caustics.ts CAUSTIC_LOOKUP_GLSL: walk the flat-water refracted ray back to the
-    // surface, and blur by the light source's angular size in proportion to depth (via the mip chain).
+    // surface, blur by the light source's angular size in proportion to depth (via the mip chain), then
+    // divide by the pattern's own 1-unit blur (high-pass) and re-apply the fixed gain.
     const D = t.max(t.float(0), t.float(SURFACE_Y).sub(p.y));
     const uv = p.xz.sub(r0.xz.mul(D.div(r0.y.negate()))).div(tile);
     const lod = t.log2(t.max(t.float(1), D.mul(blur).div(tile).mul(t.float(CAUSTIC_RES)))).add(t.float(lodBias));
-    const a = t.texture(texA, uv, lod).xyz;
-    const b = t.texture(texB, uv, lod).xyz;
-    const c = t.texture(texC, uv, lod).xyz;
+    const detail = (tex: THREE.Texture): NodeObject =>
+      t.texture(tex, uv, lod).xyz.div(t.texture(tex, uv, t.float(CAUSTIC_LOW_LOD)).xyz.max(t.vec3(0.06)));
+    const a = detail(texA);
+    const b = detail(texB);
+    const c = detail(texC);
     const k = t.select(
       D.lessThan(depth.y),
       t.mix(a, b, t.clamp(D.sub(depth.x).div(depth.y.sub(depth.x)), t.float(0), t.float(1))),
       t.mix(b, c, t.clamp(D.sub(depth.y).div(depth.z.sub(depth.y)), t.float(0), t.float(1))),
     );
-    return t.mix(t.vec3(1), k, t.clamp(D.div(depth.x), t.float(0), t.float(1)));
+    return t.mix(t.vec3(1), k, t.clamp(D.div(depth.x), t.float(0), t.float(1))).mul(t.float(CAUSTIC_GAIN));
   });
   return (p) => f(p);
 }
@@ -151,18 +154,15 @@ export class WebGpuCaustics {
   constructor(private readonly renderer: WebGPURenderer) {
     const t = tsl();
     this.depth = t.uniform(0);
-    // One target per simulated depth layer (caustics.ts causticUniforms.uCauDepth). These are the
-    // properties the WebGL path's caustic field is ACTUALLY sampled with, not the ones caustics.ts asks
-    // for: three r170's WebGLArrayRenderTarget ignores every texture option it is given and replaces
-    // the texture with a default DataArrayTexture (RGBA8, nearest, clamp-to-edge, no mips), so the WebGL
-    // caustic factor is a clipped, unblurred 8-bit field (mean ~0.68, everything above 1 saturated).
-    // The lookup below divides both frames' sunlight by that factor, so sampling the intended HDR
-    // half-float mip chain here left WebGPU ~0.05 luminance brighter than WebGL. Matching the reference
-    // is the point of the two backends; keep these options in step with what caustics.ts really gets.
+    // One target per simulated depth layer (caustics.ts causticUniforms.uCauDepth), each with the same
+    // properties the WebGL path's caustic field is now really sampled with (caustics.ts re-applies them
+    // after three r170's WebGLArrayRenderTarget dropped them): half-float, linear, repeat-wrapped and
+    // mipped. The high-pass + gain in causticAtNode below divide the pattern by its own 1-unit blur, so
+    // the HDR field and its mip chain must match the WebGL reference exactly.
     this.targets = Array.from({ length: DEPTH_LAYERS }, () => new THREE.RenderTarget(CAUSTIC_RES, CAUSTIC_RES, {
-      type: THREE.UnsignedByteType, depthBuffer: false, generateMipmaps: false,
-      wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping,
-      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+      type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true,
+      wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
     }));
 
     this.buildSim(t);

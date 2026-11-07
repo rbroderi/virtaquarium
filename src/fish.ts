@@ -20,7 +20,7 @@
 // The fish also drifts with the water: position += (velocity relative to water + flow) * dt.
 import * as THREE from 'three';
 import { Brain } from './brain.js';
-import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, FAN_POSE, type FishModel } from './fishModel.js';
+import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, FAN_POSE, pickVariant, variantTweak, requestVariant, type FishModel } from './fishModel.js';
 import { limitStep, STEP_CRAWL_BL, STEP_SLACK } from './world/stepLimit.js';
 import { clamp, lerp, range, wrapAngle, type Rng } from './util.js';
 import type { Species } from './species.js';
@@ -100,6 +100,8 @@ export class Fish implements SpineBody {
   readonly sp: Species;
   readonly name: string;
   readonly size: number;
+  /** Look variant 0..VARIANT_COUNT-1, picked from the seed stream. */
+  readonly variant: number;
   /** The body's axis and section for collision (fish/bodyShape.ts). */
   readonly body: BodyDims;
   readonly model: FishModel;
@@ -155,8 +157,12 @@ export class Fish implements SpineBody {
   constructor(sp: Species, name: string, rng: Rng) {
     this.sp = sp;
     this.name = name;
-    this.size = sp.size * range(rng, SIZE_SPREAD[0], SIZE_SPREAD[1]);
-    this.model = buildFishModel(sp);
+    this.variant = pickVariant(rng);
+    this.size = sp.size * range(rng, SIZE_SPREAD[0], SIZE_SPREAD[1]) * variantTweak(sp, this.variant).size;
+    // Every fish starts on the species' variant-0 textures (shared and cached, so startup stays fast);
+    // variant 1-3 colour maps are painted in idle time and swapped in (variantLoader).
+    this.model = buildFishModel(sp, { variant: 0 });
+    if (this.variant !== 0) requestVariant(sp, this.variant, this.model);
     this.model.scale.setScalar(this.size);
     this.body = bodyDims(this);
     // Receive too, so fins shade the flank (and other fish) as they do in photos.

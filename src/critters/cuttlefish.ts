@@ -13,6 +13,7 @@ import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, type ShaderHook, type NodeHook, type SpringState } from './shared.js';
 import type { Node, ShaderNodeObject } from 'three/webgpu';
 import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
+import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
 import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
 export type CuttlefishMode = 'hover' | 'cruise' | 'rest' | 'hunt' | 'jet';
@@ -39,6 +40,14 @@ const HUNT_SECONDS = 20;
 const JET_AWAY_DISTANCE = 3;
 const JET_SPEED = 2.2;
 
+const MODE_NOTES: Readonly<Record<CuttlefishMode, string>> = {
+  hover: 'Hovering on its fins',
+  cruise: 'Cruising over the reef',
+  rest: 'Resting on the sand, mottled',
+  hunt: 'Hunting: dark passing clouds sweep its back',
+  jet: 'Startled: jetting away, pale as a ghost',
+};
+
 const MANTLE_VERT_HEAD = 'uniform vec3 uSqueeze;\nattribute float aWeight;\nvarying float vMantle;\n';
 const MANTLE_VERT_BEGIN = `#include <begin_vertex>
         transformed *= mix(vec3(1.0), uSqueeze, aWeight);
@@ -62,6 +71,8 @@ export class Cuttlefish implements Critter {
   readonly radius: number;
   /** Mantle length (units). */
   readonly ML: number;
+  /** Click-proxy radius for the inspection overlay. */
+  readonly pickRadius: number;
   readonly model = new THREE.Group();
   readonly mantle: THREE.Mesh;
   readonly crown = new THREE.Group();
@@ -92,6 +103,7 @@ export class Cuttlefish implements Critter {
   constructor(sp: CritterSpecies, rng: Rng, world: CritterWorld) {
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
     const ML = this.ML = range(rng, 1.0, 1.3);
+    this.pickRadius = 0.75 * ML;
     this.u = { uTime: { value: 0 }, uCloud: { value: 0 }, uMottle: { value: 0 }, uPale: { value: 0 }, uSqueeze: { value: new THREE.Vector3(1, 1, 1) }, uExt: { value: 1 } };
     const skinTex = cuttleSkin(rng);
     skinTex.wrapS = THREE.RepeatWrapping;   // the seam's own vertices run on past u = 1
@@ -297,6 +309,27 @@ export class Cuttlefish implements Critter {
 
   forceStrike(seconds: number): void {
     this.strike = seconds;
+  }
+
+  /** The click panel: its real state machine, target, speed and startle responses. */
+  inspect(): InspectPanel {
+    return {
+      title: this.sp.name,
+      sci: this.sp.sci,
+      note: MODE_NOTES[this.mode],
+      rows: [
+        { heading: 'State' },
+        { label: 'Mode', value: modeLabel(this.mode) },
+        { label: 'Time left', value: fmtSeconds(this.modeT) },
+        { label: 'Speed', value: fmtSpeed(this.body.speed) },
+        { label: 'Target', value: `${fmtMetres(this.pos.distanceTo(this.target))} away` },
+        { heading: 'Responses' },
+        { label: 'Jet', bar: this.jet, cls: 'energy' },
+        { label: 'Tentacles', value: this.strike > 0 ? 'striking' : 'in' },
+        { label: 'Startle', value: this.calm > 0 ? `recovering · ${fmtSeconds(this.calm)}` : 'ready' },
+      ],
+      fact: this.sp.fact,
+    };
   }
 
   update(dt: number, world: CritterWorld): void {

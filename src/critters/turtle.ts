@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { range, clamp, lerp, type Rng } from '../util.js';
 import { skin, randomTarget, Swimmer } from './shared.js';
 import { carapaceTex, scaleTex, paddle } from './turtleParts.js';
+import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
 import type { Critter, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
 export type TurtleMode = 'cruise' | 'rest' | 'graze' | 'breathe';
@@ -21,6 +22,13 @@ const SURFACE_MARGIN = 0.4;
 const SPOT_TRIES = 30;
 const SAND_HEIGHT = 0.25;     // rest where the reef is lower than this ...
 const ROCK_HEIGHT = 0.8;      // ... graze where it is higher than this
+
+const MODE_NOTES: Readonly<Record<TurtleMode, string>> = {
+  cruise: 'Cruising, flying with its long front flippers',
+  rest: 'Resting on the sand',
+  graze: 'Grazing on the rock',
+  breathe: 'Coming up to the surface for air',
+};
 
 /** A shell half: a half-ellipsoid with a slightly pointed tail end and a broader front. */
 const taperAt = (x: number): number => (x < 0 ? 1 - 0.12 * x * x : 1);
@@ -57,6 +65,8 @@ export class Turtle implements Critter {
   readonly radius: number;
   /** Carapace length (units). */
   readonly L: number;
+  /** Click-proxy radius for the inspection overlay. */
+  readonly pickRadius: number;
   readonly model = new THREE.Group();
   readonly head = new THREE.Group();
   readonly buildMs = 0;
@@ -78,6 +88,7 @@ export class Turtle implements Critter {
   constructor(sp: CritterSpecies, rng: Rng, world: CritterWorld) {
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
     const L = this.L = range(rng, 1.8, 2.1);
+    this.pickRadius = 0.8 * L;
     const shell = new THREE.Mesh(carapaceGeometry(L), skin({ map: carapaceTex(rng), roughness: 0.42, metalness: 0 }, 'turtle-shell'));
     shell.castShadow = true;
     const plast = new THREE.Mesh(plastronGeometry(L), skin({ color: 0xe8d8a8, roughness: 0.6 }, 'turtle-plastron'));
@@ -153,6 +164,26 @@ export class Turtle implements Critter {
       this.model.add(front, rear);
       this.flip.push({ front, rear, s });
     }
+  }
+
+  /** The click panel: its real state machine, target, speed and breathing clock. */
+  inspect(): InspectPanel {
+    return {
+      title: this.sp.name,
+      sci: this.sp.sci,
+      note: MODE_NOTES[this.mode],
+      rows: [
+        { heading: 'State' },
+        { label: 'Mode', value: modeLabel(this.mode) },
+        { label: 'Time left', value: fmtSeconds(this.modeT) },
+        { label: 'Speed', value: fmtSpeed(this.body.speed) },
+        { label: 'Target', value: `${fmtMetres(this.pos.distanceTo(this.target))} away` },
+        { heading: 'Body' },
+        { label: 'Height', value: fmtMetres(this.pos.y) },
+        { label: 'Next breath', value: this.mode === 'breathe' ? 'at the surface' : fmtSeconds(this.breath) },
+      ],
+      fact: this.sp.fact,
+    };
   }
 
   update(dt: number, world: CritterWorld): void {

@@ -100,32 +100,37 @@ vec3 fishPushWorld(vec3 wp, float h) {
 
 /**
  * The block that runs after the sway has bent the vertex: it takes the bent vertex's world position,
- * folds the world-space push back into model space, and bends rather than stretches: the tip angle is
- * capped and each vertex keeps its distance from the base, so the stalk leans over and the base stays
- * planted and thick.
+ * bends in world space (where the push lives) rather than stretches: the tip angle is capped and each
+ * vertex keeps its world distance from the base, so the stalk leans over and the base stays planted
+ * and thick.
  */
 export const FISH_PUSH_APPLY = /* glsl */`
+      mat3 fpM = mat3(modelMatrix);
       #ifdef USE_INSTANCING
+      fpM = fpM * mat3(instanceMatrix);
       vec4 fpWp = modelMatrix * (instanceMatrix * vec4(transformed, 1.0));
-      mat4 fpM = instanceMatrix;
       #else
       vec4 fpWp = modelMatrix * vec4(transformed, 1.0);
-      mat4 fpM = modelMatrix;
       #endif
       vec3 fpPush = fishPushWorld(fpWp.xyz, h);
       {
-        mat3 fpM3 = mat3(fpM);
-        vec3 fpS = max(vec3(length(fpM3[0].xyz), length(fpM3[1].xyz), length(fpM3[2].xyz)), vec3(1e-3));
+        vec3 fpS = max(vec3(length(fpM[0].xyz), length(fpM[1].xyz), length(fpM[2].xyz)), vec3(1e-3));
         float fpMag = length(fpPush);
         if (fpMag > 1e-5) {
           float fpCap = fpS.y * ${f(BEND_CHORD)};
           if (fpMag > fpCap) fpPush *= fpCap / fpMag;
-          mat3 fpRot = mat3(fpM3[0].xyz / fpS.x, fpM3[1].xyz / fpS.y, fpM3[2].xyz / fpS.z);
-          vec3 fpLocal = (fpPush * fpRot) / fpS;
-          float fpR = length(transformed);
-          vec3 fpBent = transformed + fpLocal;
+          mat3 fpRot = mat3(fpM[0].xyz / fpS.x, fpM[1].xyz / fpS.y, fpM[2].xyz / fpS.z);
+          // Bend in world space, keeping each vertex its distance from the plant's base. Renormalising
+          // in model space let a blade's width (its instance x is scaled ~30x smaller than its length)
+          // and the shader's sideways wave stand in for the blade's length: a push could then carry a
+          // tip several blade-lengths into the air instead of leaning it over. The world push is capped
+          // at BEND_CHORD of the plant's height, so the tip leans at most MAX_BEND.
+          vec3 fpOff = fpM * transformed;   // world offset from the instance's base
+          float fpR = length(fpOff);
+          vec3 fpBent = fpOff + fpPush;
           float fpRL = length(fpBent);
-          if (fpRL > 1e-5) transformed = fpBent * (fpR / fpRL);
+          if (fpRL > 1e-5) fpOff = fpBent * (fpR / fpRL);
+          transformed = (fpOff * fpRot) / fpS;   // back to the model's own space
         }
       }
 `;
@@ -237,9 +242,9 @@ export function fishPushNodes(): FishPushNodes {
 
 /**
  * TSL port of FISH_PUSH_APPLY: takes the swayed local position and its height (0 base .. 1 tip),
- * folds the world-space fish push back into the instance's local space, caps the tip angle so a fish
- * cannot splay a blade flat, and keeps each vertex's distance from the base (bend, not stretch).
- * inst0..inst3 are the instance matrix's four columns (the WebGL shader reads instanceMatrix).
+ * bends it in world space (where the push lives) rather than stretching, then folds it back into the
+ * model's own space. inst0..inst3 are the instance matrix's four columns (the WebGL shader reads
+ * instanceMatrix); pass identity columns for a non-instanced mesh.
  */
 export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>, inst0: ShaderNodeObject<Node>, inst1: ShaderNodeObject<Node>, inst2: ShaderNodeObject<Node>, inst3: ShaderNodeObject<Node>): Node {
   const t = tsl();
@@ -268,18 +273,22 @@ export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node
       push.xz.addAssign(dir.mul(active.mul(sOn).mul(gOn).mul(g).mul(s).mul(hh).mul(t.float(PUSH_MAX))));
     });
 
-    // Fold the world-space push back through the instance matrix's rotation and scale (FISH_PUSH_APPLY).
-    const c0 = inst0.xyz, c1 = inst1.xyz, c2 = inst2.xyz;
-    const fs = t.vec3(t.length(c0), t.length(c1), t.length(c2));
+    // Bend in world space, keeping each vertex its distance from the plant's base (FISH_PUSH_APPLY):
+    // fpM is the full model*instance rotation-scale, so its column scales are the plant's world size and
+    // the renormalisation cannot mistake a blade's width for its length.
+    const fpM = t.mat3(t.modelWorldMatrix).mul(t.mat3(inst0.xyz, inst1.xyz, inst2.xyz));
+    const fpC0 = t.element(fpM, 0), fpC1 = t.element(fpM, 1), fpC2 = t.element(fpM, 2);
+    const fs = t.vec3(t.length(fpC0), t.length(fpC1), t.length(fpC2)).max(t.vec3(1e-3));
     const mag = t.length(push);
-    const scale = t.min(t.float(1), fs.y.mul(t.float(BEND_CHORD)).div(t.max(mag, t.float(1e-5))));
-    const capped = push.mul(scale);
-    const rot = t.mat3(c0.div(fs.x), c1.div(fs.y), c2.div(fs.z));
-    const fpLocal = t.transpose(rot).mul(capped).div(fs);
-    const rLocal = t.length(local);
-    const bent = local.add(fpLocal);
-    const rBent = t.length(bent);
-    return t.select(rBent.greaterThan(t.float(1e-5)), bent.mul(rLocal.div(t.max(rBent, t.float(1e-5)))), local);
+    const capped = push.mul(t.min(t.float(1), fs.y.mul(t.float(BEND_CHORD)).div(t.max(mag, t.float(1e-5)))));
+    const rot = t.mat3(fpC0.div(fs.x), fpC1.div(fs.y), fpC2.div(fs.z));
+    const fpOff = fpM.mul(local).toVar();   // world offset from the instance's base
+    const r = t.length(fpOff);
+    const bent = fpOff.add(capped);
+    const rl = t.length(bent);
+    const off = t.select(rl.greaterThan(t.float(1e-5)), bent.mul(r.div(t.max(rl, t.float(1e-5)))), fpOff);
+    const outLocal = t.transpose(rot).mul(off).div(fs);
+    return t.select(mag.greaterThan(t.float(1e-5)), outLocal, local);
   })();
 }
 
@@ -298,4 +307,12 @@ export function addSwayInstanceAttrs(inst: THREE.InstancedMesh): void {
   g.setAttribute('aInst1', new THREE.InstancedBufferAttribute(cols[1] as Float32Array, 4));
   g.setAttribute('aInst2', new THREE.InstancedBufferAttribute(cols[2] as Float32Array, 4));
   g.setAttribute('aInst3', new THREE.InstancedBufferAttribute(cols[3] as Float32Array, 4));
+}
+
+/** A storage-buffer node over an InstancedMesh's instance matrix (the same buffer InstanceNode reads),
+ *  indexed by the built-in instance index. A material used by exactly one mesh can read its instance
+ *  matrix this way without spending four vertex-buffer slots on aInst0..aInst3. */
+export function instanceMatrixNode(inst: THREE.InstancedMesh): ShaderNodeObject<Node> {
+  const t = tsl();
+  return t.buffer(inst.instanceMatrix.array as Float32Array, 'mat4', inst.count).element(t.instanceIndex);
 }

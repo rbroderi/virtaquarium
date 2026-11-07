@@ -337,6 +337,8 @@ export interface SpeciesDefinition {
   speckle?: number;
   /** Organic imperfection scales (fishModel organicSkin and fin paint), default 1 each. */
   organic?: Organic;
+  /** Look variant 0..VARIANT_COUNT-1 set on a variant clone; the catalogue leaves it unset (variant 0). */
+  variant?: number;
   brain: BrainTraits;
 }
 

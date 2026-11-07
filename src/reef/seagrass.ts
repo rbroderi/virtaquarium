@@ -149,7 +149,7 @@ function grassPositionNode(): Node {
   const t = tsl();
   const time = waterTimeNode();
   return t.Fn(() => {
-    const p = t.positionLocal.toVar();
+    const p = t.positionGeometry.toVar();   // the authored strap (x/y in 0..1): shape before the instance matrix
     const ic = t.attribute('aTint', 'vec3');
     const s1 = t.fract(t.sin(t.dot(ic, t.vec3(12.9898, 78.233, 37.719))).mul(43758.5453));
     const s2 = t.fract(s1.mul(91.7).add(0.37));
@@ -187,7 +187,9 @@ function grassPositionNode(): Node {
     const ph = aInst3.x.mul(1.7).add(aInst3.z.mul(2.3));
     const zSway = t.cos(time.mul(t.float(0.56)).add(ph.mul(1.3))).mul(t.float(0.16)).mul(h).mul(h);
     const out = q.add(t.vec3(0, 0, zSway)).toVar();
-    return fishPushBend(out, t.clamp(h, t.float(0), t.float(1)), aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3);
+    const bent = fishPushBend(out, t.clamp(h, t.float(0), t.float(1)), aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3);
+    // fishPushBend returns the bent blade in its own space; WebGPU folds the instance matrix in here.
+    return t.mat4(aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3).mul(t.vec4(bent, 1)).xyz;
   })();
 }
 
