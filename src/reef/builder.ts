@@ -534,14 +534,15 @@ export class ReefBuilder {
   private addCrystal(): void {
     const crng = mulberry32(this.seed + STREAM.crystal);
     const model = this.scenery.props['crystal_rock'];
-    const faceWidth = 1.15 + (crng() - 0.5) * 0.1;   // drawn before the model check, as the other steps do
+    const faceWidth = 1.1 + (crng() - 0.5) * 0.08;   // drawn before the model check, as the other steps do
     if (!model) return;
     const info = readCrystalFace(model);
     if (!info) return;
     const m = model.clone();
     m.scale.setScalar(faceWidth / info.extentU);
-    // A small sign on the open sand between the starfish and the anemone, clear of both.
-    const x = 1.95, z = 1.5;
+    // A small sign on the open sand, left of centre: clear of the starfish (front-right) and the
+    // anemone's tentacles (far right), and inside the always-visible band of the camera pan.
+    const x = -1.6, z = 1.5;
     const ground = this.restingHeight(x, z, 0.2 * faceWidth);
     m.position.set(x, 0, z);
     orientCrystal(m, info, this.view);

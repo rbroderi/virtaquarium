@@ -6,7 +6,7 @@
 // unit-tested).
 import { context2d } from '../util.js';
 
-export const DEFAULT_CRYSTAL_TEXT = ['Your message here'] as const;
+export const DEFAULT_CRYSTAL_TEXT = ['Red Sea Coral Pro salt'] as const;
 export const DEFAULT_LABEL = '';
 
 const CLEAR = 'rgb(255,16,0)';

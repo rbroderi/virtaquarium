@@ -196,6 +196,7 @@ export class UI {
     // directly under the pointer beats a big critter's sphere beside it.
     let best: Fish | Inspectable | null = null, bestD = 1;
     for (const f of this.world.fish) {
+      if (!f.model.visible) continue;
       const d = this.ray.ray.distanceToPoint(f.pos) / (f.size * PICK_RADIUS);
       if (d < bestD) { bestD = d; best = f; }
     }
