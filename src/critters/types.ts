@@ -3,6 +3,7 @@
 // and fish.ts satisfy these structurally; nothing here imports them.
 import type * as THREE from 'three';
 import type { Rng } from '../util.js';
+import type { Inspectable } from '../inspect.js';
 
 export type CritterKind = 'cuttlefish' | 'octopus' | 'turtle';
 
@@ -86,7 +87,7 @@ export interface CritterWorld {
 export type JoinRule = readonly [string, string];
 
 /** What every critter offers the tank and the shape check. */
-export interface Critter {
+export interface Critter extends Inspectable {
   readonly kind: CritterKind;
   readonly sp: CritterSpecies;
   readonly radius: number;

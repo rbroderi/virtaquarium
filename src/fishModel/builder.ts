@@ -4,7 +4,7 @@ import { clamp } from '../util.js';
 import type { Species } from '../species/types.js';
 import { gillOf, mouthOf } from './profile.js';
 import { IN_WATER_IOR, makeSwimMaterial, swimUniforms, type SwimUniforms, type Tissue } from './swimShader.js';
-import { speciesAssets, type SpeciesAssets, type SpeciesCanvases } from './assets.js';
+import { speciesAssets, type SpeciesCanvases, type VariantMaps } from './assets.js';
 import { buildCustomModel, customModelFor, type NormalisedModel } from './customModels.js';
 import { useLods, type LodWeights } from '../lod.js';
 
@@ -209,20 +209,36 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
 export function speciesCanvases(sp: Species): SpeciesCanvases { return speciesAssets(sp, 0).canvases; }
 
 /** Swaps the colour maps (body albedo, fin sheet, pectoral sheet) of a built fish to a variant's. */
-export function applyVariantMaps(model: FishModel, a: SpeciesAssets): void {
+export function applyVariantMaps(model: FishModel, maps: VariantMaps): void {
   model.traverse((o) => {
     const mesh = o as THREE.Mesh;
     const mat = mesh.material as THREE.MeshPhysicalMaterial | undefined;
     if (!mat) return;
     const part = mat.userData['fishPart'];
     if (part === 'body') {
-      mat.map = a.skinTex;
-      if (mat.sheen) mat.sheenColor.copy(a.skinAvg).multiplyScalar(0.6);
+      mat.map = maps.skinTex;
+      if (mat.sheen) mat.sheenColor.copy(maps.skinAvg).multiplyScalar(0.6);
     } else if (part === 'fin') {
-      mat.map = a.finTex;
+      mat.map = maps.finTex;
     } else if (part === 'pect') {
-      mat.map = a.pectTex;
+      mat.map = maps.pectTex;
     } else return;
+    mat.needsUpdate = true;
+  });
+}
+
+/** Swaps one colour map, so a variant's textures reach the GPU a map per frame rather than all at once. */
+export function applyVariantPart(model: FishModel, part: 'body' | 'fin' | 'pect', maps: VariantMaps): void {
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const mat = mesh.material as THREE.MeshPhysicalMaterial | undefined;
+    if (!mat || mat.userData['fishPart'] !== part) return;
+    if (part === 'body') {
+      mat.map = maps.skinTex;
+      if (mat.sheen) mat.sheenColor.copy(maps.skinAvg).multiplyScalar(0.6);
+    } else {
+      mat.map = part === 'fin' ? maps.finTex : maps.pectTex;
+    }
     mat.needsUpdate = true;
   });
 }

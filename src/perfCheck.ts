@@ -7,6 +7,7 @@
 //   res        full and half the pixels (fill-rate and post-processing share)
 // and the triangles drawn per frame in each case.
 import { setLodEnabled } from './lod.js';
+import { pendingSkinSave, pendingVariantCount, startIdleVariantPainting } from './fishModel.js';
 import type { AquariumHandle } from './app/handle.js';
 
 const WARM_UP_FRAMES = 30;
@@ -20,6 +21,7 @@ interface Comparison { msOn: number; msOff: number; ratio: number; trisOn: numbe
 const median = (a: readonly number[]): number => a.slice().sort((x, y) => x - y)[a.length >> 1] ?? 0;
 
 export async function main(aq: AquariumHandle): Promise<void> {
+  if (new URLSearchParams(location.search).get('hitch') === '1') return hitch(aq);
   const { renderer, reef, present, step } = aq;
   const gl = renderer.getContext();
   aq.fitCanvas();
@@ -70,4 +72,75 @@ function gpuName(gl: WebGLRenderingContext | WebGL2RenderingContext): string {
   if (!ext) return '?';
   const name: unknown = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
   return typeof name === 'string' ? name : '?';
+}
+
+/** ?hitch=1: run the live loop with deferred variant painting and report the worst frame / long task. */
+async function hitch(aq: AquariumHandle): Promise<void> {
+  const q = new URLSearchParams(location.search);
+  const maxSeconds = Number(q.get('seconds') || 45);
+  const { step, present, fitCanvas } = aq;
+  fitCanvas();
+
+  // Warm up past shader compilation before observing: the first present() compiles every program
+  // (several seconds headless), which is startup, not the variant painting being measured here.
+  const WARM_UP = 15, SETTLE = 45;
+  for (let i = 0; i < WARM_UP; i++) { step(STEP); present(); }
+  const paintStart = performance.now();
+
+  const longTasks: { start: number; dur: number }[] = [];
+  if (typeof PerformanceObserver === 'function') {
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) longTasks.push({ start: e.startTime, dur: e.duration });
+      }).observe({ entryTypes: ['longtask'] });
+    } catch { /* longtask unavailable */ }
+  }
+
+  if (q.get('novariants') !== '1') startIdleVariantPainting();   // ?novariants=1: the baseline to compare
+
+  const gaps: number[] = [];
+  let last = performance.now();
+  let hadPending = false;
+  let idleFrames = 0;
+  let maxStep = 0, maxPresent = 0;
+
+  await new Promise<void>((resolve) => {
+    const tick = (): void => {
+      const now = performance.now();
+      gaps.push(now - last);
+      last = now;
+      const t0 = performance.now();
+      step(STEP);
+      const t1 = performance.now();
+      present();
+      const t2 = performance.now();
+      maxStep = Math.max(maxStep, t1 - t0);
+      maxPresent = Math.max(maxPresent, t2 - t1);
+      if (pendingVariantCount() > 0) { hadPending = true; idleFrames = 0; }
+      else if (hadPending) idleFrames++;
+      if (hadPending && idleFrames >= SETTLE) { resolve(); return; }
+      if (now - paintStart > maxSeconds * 1000) { resolve(); return; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const loopEnd = performance.now();
+
+  await pendingSkinSave().catch(() => undefined);   // a cold run must finish writing its variant skins
+
+  const maxGap = gaps.reduce((a, b) => Math.max(a, b), 0);
+  const duringLoop = longTasks.filter((t) => t.start < loopEnd).map((t) => Math.round(t.dur));
+  const report = {
+    seconds: Math.round((performance.now() - paintStart) / 100) / 10,
+    frames: gaps.length,
+    worstFrameMs: +maxGap.toFixed(1),
+    worstLongTaskMs: duringLoop.length ? +Math.max(...duringLoop).toFixed(1) : 0,
+    maxStepMs: +maxStep.toFixed(1),
+    maxPresentMs: +maxPresent.toFixed(1),
+    longTasks: duringLoop.length,
+    longTasksOver50: duringLoop.filter((d) => d > 50).length,
+    pending: pendingVariantCount(),
+  };
+  console.info('perf hitch', JSON.stringify(report));
+  await fetch('/__done', { method: 'POST', body: JSON.stringify(report, null, 1) }).catch(() => undefined);
 }

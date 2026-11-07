@@ -11,7 +11,10 @@ import * as esbuild from 'esbuild';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'src');
 const OUT_DIR = path.join(ROOT, 'web', 'build');
-const ENTRY_POINTS = ['main', 'lab', 'bake', 'roku'].map((name) => path.join(SRC, `${name}.ts`));
+const ENTRY_POINTS = [
+  ...['main', 'lab', 'bake', 'roku'].map((name) => path.join(SRC, `${name}.ts`)),
+  path.join(SRC, 'fishModel/variantPainter.worker.ts'),
+];
 
 /** Source paths (relative to src/, files or directories) whose code shapes the baked reef light. */
 const REEF_LIGHT_SOURCES = [

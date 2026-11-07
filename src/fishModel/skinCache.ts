@@ -16,8 +16,8 @@ export const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'
 export type SkinMapName = (typeof SKIN_MAPS)[number];
 export type SkinImages = Record<SkinMapName, TexImage>;
 
-/** A cache hit: the key it was saved under and its decoded maps. */
-export interface SkinCacheHit { key: string; img: SkinImages }
+/** A cache hit: the key it was saved under, its decoded maps, and (variants) the skin's mean colour. */
+export interface SkinCacheHit { key: string; img: SkinImages; avg?: readonly [number, number, number] }
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const IMAGE_TIMEOUT_MS = 20000;
@@ -62,12 +62,18 @@ export function skinKey(sp: Species): string {
 /** Saved skins by species id, and where live-painted skins are written back to (null: not local). */
 class SkinCache {
   private readonly hits = new Map<string, SkinCacheHit>();
+  private base: string | null = null;
   private saveBase: string | null = null;
   /** Chain of saves in flight (headless checks wait for it so nothing is dropped on exit). */
   private current: Promise<void> = Promise.resolve();
 
-  get(id: string): SkinCacheHit | undefined {
-    return this.hits.get(id);
+  /** Variants are stored apart from the variant-0 files under their own ids. */
+  private static hitId(id: string, variant: number): string {
+    return variant <= 0 ? id : `${id}:v${variant}`;
+  }
+
+  get(id: string, variant = 0): SkinCacheHit | undefined {
+    return this.hits.get(SkinCache.hitId(id, variant));
   }
 
   /** Resolves when every skin save issued so far has finished (at once when none). */
@@ -77,6 +83,7 @@ class SkinCache {
 
   async load(species: readonly Species[], base: string): Promise<void> {
     const local = LOCAL_HOSTS.includes(location.hostname);
+    this.base = base;
     this.saveBase = local ? new URL(base, location.href).pathname.replace(/^\//, '') : null;
     const bitmaps = useBitmaps();
     let hits = 0;
@@ -107,6 +114,45 @@ class SkinCache {
       .then(() => post(`${sp.id}.json`, JSON.stringify({ key })))   // last, so a half-written set never matches
       .then(() => undefined);
     this.current = this.current.then(() => done);
+  }
+
+  /** Fetches and decodes a variant's saved skin albedo, if present (its other maps are variant 0's). */
+  async loadVariant(sp: Species, variant: number): Promise<SkinCacheHit | undefined> {
+    const base = this.base;
+    if (!base || variant <= 0) return undefined;
+    const id = SkinCache.hitId(sp.id, variant);
+    const cached = this.hits.get(id);
+    if (cached) return cached;
+    const key = skinKey(sp);
+    try {
+      const r = await fetch(`${base}${sp.id}-v${variant}.json`, { cache: 'no-cache' });
+      if (!r.ok) return undefined;
+      const meta: unknown = await r.json();
+      if (!isRecord(meta) || meta['key'] !== key) return undefined;
+      const bitmaps = useBitmaps();
+      const skin = bitmaps
+        ? await loadBitmap(`${base}${sp.id}-v${variant}-skin.png?${key}`)
+        : await loadImage(`${base}${sp.id}-v${variant}-skin.png?${key}`);
+      const avg = Array.isArray(meta['avg']) && meta['avg'].length === 3 && meta['avg'].every((v) => typeof v === 'number')
+        ? (meta['avg'] as [number, number, number])
+        : undefined;
+      const hit: SkinCacheHit = { key, img: { skin } as SkinImages, ...(avg ? { avg } : {}) };
+      this.hits.set(id, hit);
+      return hit;
+    } catch { return undefined; }
+  }
+
+  /** Saves a variant's painted skin albedo (its relief maps are shared with variant 0). */
+  saveVariant(sp: Species, variant: number, key: string, skinPng: Blob | null, avg: readonly [number, number, number] | undefined): void {
+    const base = this.saveBase;
+    if (!base || variant <= 0 || !skinPng) return;
+    const post = (path: string, body: BodyInit | null): Promise<unknown> =>
+      fetch(`/__save?path=${base}${path}`, { method: 'POST', body }).catch(() => undefined);
+    const done = (async () => {
+      await post(`${sp.id}-v${variant}-skin.png`, skinPng);
+      await post(`${sp.id}-v${variant}.json`, JSON.stringify(avg ? { key, avg } : { key }));   // last, so a half-written set never matches
+    })();
+    this.current = this.current.then(() => done).then(() => undefined);
   }
 }
 

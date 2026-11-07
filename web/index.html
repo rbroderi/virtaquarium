@@ -29,6 +29,7 @@
   #brain .thought { font-size: 15px; color: #ffe7a8; }
   #brain .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
   #brain .row span { width: 110px; flex: none; color: #cfe6f2; }
+  #brain .row .val { flex: 1; width: auto; text-align: right; color: #eaf6ff; font-variant-numeric: tabular-nums; }
   #brain .bar { flex: 1; height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
   #brain .bar i { display: block; height: 100%; background: #5cc8ff; }
   #brain .bar.hunger i { background: #ff9a4a; } #brain .bar.energy i { background: #7ee08a; } #brain .bar.fear i { background: #ff5a6a; }
@@ -59,10 +60,10 @@
     <div class="label">Starting</div>
   </div>
 </div>
-<div id="hint">Click to feed · click a fish to see its brain · H for help</div>
+<div id="hint">Click to feed · click a fish or critter to inspect it · H for help</div>
 <div id="clock"></div>
 <div id="help">
-  <div><kbd>click</kbd>drop food (or select a fish)</div>
+  <div><kbd>click</kbd>drop food (or select a fish or critter)</div>
   <div><kbd>Tab</kbd>inspect next fish's brain</div>
   <div><kbd>B</kbd>show every fish's current thought</div>
   <div><kbd>F</kbd>feed</div>
@@ -70,7 +71,7 @@
   <div><kbd>&lt;</kbd><kbd>&gt;</kbd>slow down / speed up the day-night clock</div>
   <div><kbd>R</kbd>back to the real-time clock</div>
   <div><kbd>Space</kbd>pause</div>
-  <div><kbd>Esc</kbd>close brain panel</div>
+  <div><kbd>Esc</kbd>close the inspect panel</div>
   <div><kbd>F11</kbd>full screen</div>
 </div>
 <script type="module" src="./build/main.js"></script>

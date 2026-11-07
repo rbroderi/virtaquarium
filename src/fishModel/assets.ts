@@ -14,6 +14,7 @@ import { bodyGeometry } from './bodyGeometry.js';
 import { detailFor, type SkinDetail } from './detail.js';
 import { skinCache, skinKey } from './skinCache.js';
 import { variantSpecies } from './variant.js';
+import { paintVariantMaps } from './variantPaint.js';
 
 /** The painted canvases a species' textures were made from (the Roku bake and lab read them). */
 export interface SpeciesCanvases { skin: TexImage; fins: HTMLCanvasElement; pect: HTMLCanvasElement }
@@ -125,4 +126,53 @@ export function speciesAssets(sp: Species, variant = 0): SpeciesAssets {
   };
   cache.set(cacheKey, assets);
   return assets;
+}
+
+/** A variant's colour maps, ready to swap onto fish built from variant 0. */
+export interface VariantMaps {
+  readonly skinTex: THREE.Texture;
+  readonly finTex: THREE.Texture;
+  readonly pectTex: THREE.Texture;
+  readonly skinAvg: THREE.Color;
+}
+
+/**
+ * A variant's colour maps, ready to swap onto fish built from variant 0. The body albedo comes from the
+ * variant's saved skin cache when present (decoded off the main thread); otherwise it is painted, along
+ * with the fin and pectoral sheets, in a worker so the main thread never runs a long paint. Every bitmap
+ * arrives flipped to WebGL's origin, so it uploads with the same flipY=false as the cached maps.
+ */
+export async function variantColourMaps(sp: Species, variant: number): Promise<VariantMaps> {
+  const vsp = variantSpecies(sp, variant);
+  const key = skinKey(vsp);
+  const hit = await skinCache.loadVariant(vsp, variant);
+  let skinMap: TexImage;
+  let fins: ImageBitmap;
+  let pect: ImageBitmap;
+  let avg: readonly [number, number, number] | undefined;
+  if (hit) {
+    skinMap = hit.img.skin;
+    avg = hit.avg;
+    const painted = await paintVariantMaps(vsp, false);   // fins and pectorals aren't cached
+    fins = painted.fins;
+    pect = painted.pect;
+  } else {
+    const painted = await paintVariantMaps(vsp, true);
+    if (!painted.skin) throw new Error(`${sp.id} variant ${variant}: no skin painted`);
+    skinMap = painted.skin;
+    fins = painted.fins;
+    pect = painted.pect;
+    avg = painted.skinAvg;
+    skinCache.saveVariant(sp, variant, key, painted.skinPng ?? null, painted.skinAvg);
+  }
+  return {
+    skinTex: texture(skinMap),
+    finTex: texture(fins),
+    pectTex: texture(pect),
+    // The mean colour is computed in the worker (cold) or read from the cache meta (warm); the fallback
+    // covers pre-avg variant cache files written before this change.
+    skinAvg: avg
+      ? new THREE.Color().setRGB(avg[0], avg[1], avg[2], THREE.SRGBColorSpace)
+      : meanColour(skinMap),
+  };
 }

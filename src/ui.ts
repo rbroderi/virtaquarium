@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { MODES, type Drives, type Personality, type Mode } from './brain.js';
 import { requireElement } from './util.js';
+import { inspectHtml, type Inspectable } from './inspect.js';
 import type { Fish } from './fish.js';
 
 const DRIVE_LABELS: Readonly<Record<keyof Drives, string>> = {
@@ -32,6 +33,8 @@ export interface UIWorld {
 
 export interface UIOptions {
   readonly world: UIWorld;
+  /** Other animated creatures (critters, jellies) that can be clicked and inspected. */
+  readonly inspectables: readonly Inspectable[];
   readonly camera: THREE.Camera;
   readonly renderer: THREE.WebGLRenderer;
   /** Food requested at x (world units). */
@@ -45,7 +48,7 @@ function bar(label: string, v: number, cls = ''): string {
 }
 
 export class UI {
-  private selected: Fish | null = null;
+  private selected: Fish | Inspectable | null = null;
   private showTags = false;
   private clockTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly ray = new THREE.Raycaster();
@@ -57,12 +60,14 @@ export class UI {
   private readonly clock = requireElement('clock', HTMLDivElement);
   private readonly tagOf = new Map<Fish, HTMLDivElement>();
   private readonly world: UIWorld;
+  private readonly inspectables: readonly Inspectable[];
   private readonly camera: THREE.Camera;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly onFeed: (x: number) => void;
 
-  constructor({ world, camera, renderer, onFeed }: UIOptions) {
+  constructor({ world, inspectables, camera, renderer, onFeed }: UIOptions) {
     this.world = world;
+    this.inspectables = inspectables;
     this.camera = camera;
     this.renderer = renderer;
     this.onFeed = onFeed;
@@ -124,11 +129,16 @@ export class UI {
 
   private click(e: PointerEvent): void {
     this.ray.setFromCamera(this.ndc(e), this.camera);
-    // Pick the fish closest to the click ray.
-    let best: Fish | null = null, bestD = Infinity;
+    // Pick the creature closest to the click ray, relative to its own pick radius, so a small fish
+    // directly under the pointer beats a big critter's sphere beside it.
+    let best: Fish | Inspectable | null = null, bestD = 1;
     for (const f of this.world.fish) {
-      const d = this.ray.ray.distanceToPoint(f.pos);
-      if (d < f.size * PICK_RADIUS && d < bestD) { bestD = d; best = f; }
+      const d = this.ray.ray.distanceToPoint(f.pos) / (f.size * PICK_RADIUS);
+      if (d < bestD) { bestD = d; best = f; }
+    }
+    for (const c of this.inspectables) {
+      const d = this.ray.ray.distanceToPoint(c.pos) / c.pickRadius;
+      if (d < bestD) { bestD = d; best = c; }
     }
     if (best) {
       this.select(best);
@@ -142,11 +152,11 @@ export class UI {
 
   private cycle(): void {
     const fish = this.world.fish;
-    const i = this.selected ? fish.indexOf(this.selected) : -1;
+    const i = this.selected && 'brain' in this.selected ? fish.indexOf(this.selected) : -1;
     this.select(fish[(i + 1) % fish.length] ?? null);
   }
 
-  select(f: Fish | null): void {
+  select(f: Fish | Inspectable | null): void {
     this.selected = f;
     this.panel.classList.toggle('show', !!f);
   }
@@ -185,7 +195,8 @@ export class UI {
   }
 
   update(): void {
-    if (this.selected) this.panel.innerHTML = this.panelHtml(this.selected);
+    const selected = this.selected;
+    if (selected) this.panel.innerHTML = 'brain' in selected ? this.panelHtml(selected) : inspectHtml(selected.inspect());
     if (this.showTags) this.updateTags();
   }
 }

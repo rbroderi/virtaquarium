@@ -25,7 +25,7 @@ opens the browser for you.
 
 | Input | Action |
 |---|---|
-| click | drop food (or select a fish) |
+| click | drop food (or select a fish or critter) |
 | Tab | inspect the next fish's brain |
 | B | show every fish's current thought |
 | F | feed |
@@ -144,7 +144,7 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   iridescent ring, and species details such as the tangs' scalpels and the lionfish's tentacles.
 - **Not fish**: the cuttlefish, octopus and turtle have their own models and behaviour. The cuttlefish and
   octopus bodies are distance fields meshed into one surface each (`bun run softbodies`), so their parts
-  grow out of each other without seams.
+  grow out of each other without seams. Click any of them, or a moon jelly, to see what it is doing.
 
 ### The reef
 

@@ -136,7 +136,7 @@ async function variants(aq: AquariumHandle, species: string): Promise<void> {
   const canvas = aq.renderer.domElement;
   for (let t = 0; t < VARIANT_SETTLE_S; t += DT) aq.step(DT);
   const paintStart = performance.now();
-  paintPendingVariants();   // a check steps the tank itself, so paint and swap any variant still pending
+  await paintPendingVariants();   // a check steps the tank itself, so paint and swap any variant still pending
   const swapMs = Math.round(performance.now() - paintStart);
   aq.present();
   const strip = variantStrip(aq, species, canvas);
