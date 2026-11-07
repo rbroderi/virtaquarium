@@ -110,6 +110,29 @@ async function handleDone(req: http.IncomingMessage, res: http.ServerResponse, o
   onEvent({ type: 'done', body });
 }
 
+/** POST /__shot: the page asks the headless tool for a CDP screenshot of the current frame (the WebGPU
+ *  canvas cannot be read back). Responds with the PNG bytes, or an error when no capture backend is
+ *  attached (the page opened by hand, a WebGL-only run). */
+async function handleShot(res: http.ServerResponse, onShot?: () => Promise<Buffer | null>): Promise<void> {
+  if (!onShot) {
+    res.writeHead(HTTP_ERROR).end('no screenshot backend');
+    return;
+  }
+  try {
+    const png = await onShot();
+    if (!png) {
+      res.writeHead(HTTP_ERROR).end('screenshot failed');
+      return;
+    }
+    res.writeHead(HTTP_OK, { 'Content-Type': 'image/png', 'Content-Length': png.length });
+    res.end(png);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`shot: ${message}`);
+    res.writeHead(HTTP_ERROR).end(message);
+  }
+}
+
 function handleStatic(url: URL, res: http.ServerResponse): void {
   const file = resolveStatic(decodeURIComponent(url.pathname));
   if (!file) {
@@ -131,11 +154,16 @@ function handleStatic(url: URL, res: http.ServerResponse): void {
   });
 }
 
-export function startServer(port: number = DEFAULT_PORT, onEvent: ServerEventListener = () => {}): Promise<http.Server> {
+export function startServer(
+  port: number = DEFAULT_PORT,
+  onEvent: ServerEventListener = () => {},
+  onShot?: () => Promise<Buffer | null>,
+): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (req.method === 'POST' && url.pathname === '/__save') void handleSave(url, req, res, onEvent);
     else if (req.method === 'POST' && url.pathname === '/__done') void handleDone(req, res, onEvent);
+    else if (req.method === 'POST' && url.pathname === '/__shot') void handleShot(res, onShot);
     else handleStatic(url, res);
   });
   return new Promise((resolve) => server.listen(port, () => resolve(server)));

@@ -26,9 +26,38 @@ const STATS_DIGITS = 3;
 
 interface FrameStats { t: number; lum: number; sat: number }
 
+/** True when the renderer is three's WebGPURenderer (its presented canvas cannot be read back). */
+function isWebGpu(aq: AquariumHandle): boolean {
+  return (aq.renderer as THREE.WebGLRenderer & { isWebGPURenderer?: boolean }).isWebGPURenderer === true;
+}
+
+/** The current frame as a 2D-readable canvas. WebGL: the live canvas. WebGPU: a CDP screenshot from the
+ *  headless tool (the presented WebGPU canvas is opaque to toBlob/getImageData), drawn at the canvas's
+ *  own size so close-ups and stats line up exactly as on the WebGL path. */
+async function frameCanvas(aq: AquariumHandle): Promise<HTMLCanvasElement> {
+  const canvas = aq.renderer.domElement;
+  if (!isWebGpu(aq)) return canvas;
+  const res = await fetch('/__shot', { method: 'POST' });
+  if (!res.ok) throw new Error(`screenshot failed: ${res.status}`);
+  const bitmap = await createImageBitmap(await res.blob());
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  context2d(out).drawImage(bitmap, 0, 0, out.width, out.height);
+  bitmap.close();
+  return out;
+}
+
 export async function main(aq: AquariumHandle): Promise<void> {
-  const { world, renderer } = aq;
+  const { world } = aq;
   const q = new URLSearchParams(location.search);
+  // The CDP screenshot is of the whole page; the WebGL path reads the canvas only. Hide the overlays so
+  // both capture the canvas alone (the glass vignette and the fading hint would otherwise darken/smear
+  // the WebGPU frame).
+  for (const id of ['glass', 'hint']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
   const at = (q.get('at') || '5,30').split(',').map(Number).sort((a, b) => a - b);
   const close = (q.get('close') || 'station').split(',').filter(Boolean);
   const tag = q.get('tag') || 'tank';
@@ -40,18 +69,19 @@ export async function main(aq: AquariumHandle): Promise<void> {
   }
   aq.fitCanvas();
   if (q.get('series')) return series(aq, Number(q.get('series')), Number(q.get('dt') || DT));
-  const canvas = renderer.domElement, files: string[] = [], stats: FrameStats[] = [];
+  const files: string[] = [], stats: FrameStats[] = [];
   let t = 0;
   for (const target of at) {
     for (; t < target - 1e-6; t += DT) aq.step(DT);
     await aq.present();
     await settle();   // WebGPU presents on the compositor after the render promise resolves
+    const shot = await frameCanvas(aq);
     const name = `look-${tag}-${target}s`;
-    files.push(await saveFile(`${CHECK_OUT_DIR}${name}.png`, await canvasToBlob(canvas)));
-    stats.push({ t: target, ...measure(canvas) });
+    files.push(await saveFile(`${CHECK_OUT_DIR}${name}.png`, await canvasToBlob(shot)));
+    stats.push({ t: target, ...measure(shot) });
     for (const what of close) {
-      const shot = closeUp(aq, what, canvas);
-      if (shot) files.push(await saveFile(`${CHECK_OUT_DIR}${name}-${what}.png`, await canvasToBlob(shot)));
+      const crop = closeUp(aq, what, shot);
+      if (crop) files.push(await saveFile(`${CHECK_OUT_DIR}${name}-${what}.png`, await canvasToBlob(crop)));
     }
   }
   const station = world.station && { client: world.station.client?.sp.id || null, cleaner: world.station.cleaner?.brain.thought };
