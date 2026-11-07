@@ -18,3 +18,8 @@ export function tsl(): Tsl {
   if (!tslRef.tsl) throw new Error('three/webgpu has not been loaded (WebGPU path not initialised)');
   return tslRef.tsl;
 }
+
+/** True once the WebGPU bundle has been loaded (the WebGPU renderer path is active). */
+export function gpuActive(): boolean {
+  return tslRef.tsl !== null;
+}

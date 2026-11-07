@@ -67,6 +67,10 @@ export async function main(aq: AquariumHandle): Promise<void> {
     const hour = Number(q.get('hour'));
     if (Number.isFinite(hour)) aq.daylight.jumpTo(hour);   // e.g. 19: golden dusk with the real sun colour
   }
+  const hide = (q.get('hide') ?? '').split(',').filter(Boolean);
+  if (hide.includes('snow')) aq.snow.points.visible = false;
+  if (hide.includes('fish')) for (const f of world.fish) f.model.visible = false;
+  if (hide.length) aq.scene.traverse((o) => { if (hide.includes(o.name)) o.visible = false; });
   aq.fitCanvas();
   if (q.get('series')) return series(aq, Number(q.get('series')), Number(q.get('dt') || DT));
   const files: string[] = [], stats: FrameStats[] = [];
