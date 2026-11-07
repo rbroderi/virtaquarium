@@ -208,7 +208,8 @@ bun run tripo rock_b coral_fan  # regenerate just these
 Put the API key in `tripo3d.ai.key` in the project root or set `TRIPO_API_KEY`; the file is git-ignored and
 never served. Each model costs API credits. New models are shrunk for real-time use
 (`bun run optimize-scenery`) and get a parallax height map in their normal map's alpha
-(`bun run heightmaps`).
+(`bun run heightmaps`). Textures are packed as AVIF (`EXT_texture_avif`, decoded by the GLTFLoader
+with no extra setup), which cuts the download without visible loss.
 
 ## Roku
 
