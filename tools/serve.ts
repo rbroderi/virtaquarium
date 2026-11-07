@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
+import zlib from 'node:zlib';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_ROOT = path.join(REPO_ROOT, 'web');
@@ -24,7 +25,7 @@ const HTTP_OK = 200, HTTP_FOUND = 302, HTTP_NOT_MODIFIED = 304, HTTP_FORBIDDEN =
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.map': 'application/json', '.json': 'application/json', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream',
+  '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif','.svg': 'image/svg+xml', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream',
 };
 
 /** Top-level directories of the repository served (and saved into) as themselves, not under web/. */
@@ -96,6 +97,7 @@ function retired(): ReadonlySet<string> {
 }
 
 function isPublic(rel: string): boolean {
+  if (rel.endsWith('.map')) return false;       // source maps stay local
   if (PUBLIC_PATHS.some((re) => re.test(rel))) return true;
   const m = /^models\/(scenery\/[^/]+\.glb)$/.exec(rel);
   return m !== null && !retired().has(m[1] ?? '');
@@ -204,9 +206,11 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
     // while the file is unchanged, so a return visit doesn't download the ~100 MB of models again.
     const modified = new Date(Math.floor(st.mtimeMs / 1000) * 1000);
     const since = Date.parse(req.headers['if-modified-since'] ?? '');
-    const headers = {
+    const headers: Record<string, string> = {
       'Content-Type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
       'Cache-Control': 'no-cache',
+      // The body may be brotli/gzip-encoded by what the client accepts (sendBody).
+      'Vary': 'Accept-Encoding',
       'Last-Modified': modified.toUTCString(),
       // js-profiling: lets a page sample itself (main ?profile=1, the JS Self-Profiling API).
       'Document-Policy': 'js-profiling',
@@ -220,10 +224,88 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
         res.writeHead(HTTP_NOT_FOUND).end('not found');
         return;
       }
-      res.writeHead(HTTP_OK, headers);
-      res.end(data);
+      sendBody(file, st.mtimeMs, data, req, res, headers);
     });
   });
+}
+
+/** Already-compressed formats: brotli or gzip would only spend time on them. */
+const PRECOMPRESSED = new Set(['.png', '.jpg', '.jpeg', '.webp', '.avif']);
+const MIN_COMPRESS_BYTES = 1024;
+/** Brotli 11 takes seconds per megabyte; quality 5 is ~50x faster and within ~10% of it, so only small
+ *  files get 11. The first request for a file waits for its compression, later ones hit the cache. */
+const BROTLI_MAX = 11, BROTLI_FAST = 5, BROTLI_MAX_BYTES = 64 * 1024;
+/** A compressed copy must be at least this much smaller to be worth sending. */
+const MIN_SAVING = 0.95;
+const COMPRESS_CACHE_MAX_BYTES = 256 * 1024 * 1024;
+
+type Encoding = 'br' | 'gzip';
+interface Compressed { readonly mtimeMs: number; readonly body: Buffer | null }
+/** Compressed copies by encoding and path, kept while the file's mtime is unchanged (LRU by insertion). */
+const compressCache = new Map<string, Compressed>();
+let compressCacheBytes = 0;
+
+function pickEncoding(req: http.IncomingMessage): Encoding | null {
+  const accept = String(req.headers['accept-encoding'] ?? '');
+  if (/\bbr\b/.test(accept)) return 'br';
+  if (/\bgzip\b/.test(accept)) return 'gzip';
+  return null;
+}
+
+function compress(data: Buffer, enc: Encoding): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const done = (err: Error | null, out: Buffer): void => (err ? reject(err) : resolve(out));
+    if (enc === 'gzip') zlib.gzip(data, { level: zlib.constants.Z_BEST_COMPRESSION }, done);
+    else {
+      zlib.brotliCompress(data, {
+        params: {
+          [zlib.constants.BROTLI_PARAM_QUALITY]: data.length > BROTLI_MAX_BYTES ? BROTLI_FAST : BROTLI_MAX,
+          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: data.length,
+        },
+      }, done);
+    }
+  });
+}
+
+async function compressedBody(file: string, mtimeMs: number, data: Buffer, enc: Encoding): Promise<Buffer | null> {
+  const key = `${enc}:${file}`;
+  const hit = compressCache.get(key);
+  if (hit && hit.mtimeMs === mtimeMs) {
+    compressCache.delete(key);   // refresh its place in the LRU order
+    compressCache.set(key, hit);
+    return hit.body;
+  }
+  const out = await compress(data, enc);
+  const body = out.length < data.length * MIN_SAVING ? out : null;
+  if (hit) compressCacheBytes -= hit.body?.length ?? 0;
+  compressCache.delete(key);
+  compressCache.set(key, { mtimeMs, body });
+  compressCacheBytes += body?.length ?? 0;
+  for (const [k, v] of compressCache) {
+    if (compressCacheBytes <= COMPRESS_CACHE_MAX_BYTES) break;
+    compressCache.delete(k);
+    compressCacheBytes -= v.body?.length ?? 0;
+  }
+  return body;
+}
+
+/** Sends a file, brotli- or gzip-encoded when the client accepts it and it actually shrinks. */
+function sendBody(file: string, mtimeMs: number, data: Buffer, req: http.IncomingMessage, res: http.ServerResponse,
+  headers: Record<string, string>): void {
+  const enc = data.length >= MIN_COMPRESS_BYTES && !PRECOMPRESSED.has(path.extname(file).toLowerCase()) ? pickEncoding(req) : null;
+  const plain = (): void => {
+    res.writeHead(HTTP_OK, { ...headers, 'Content-Length': String(data.length) });
+    res.end(data);
+  };
+  if (!enc) {
+    plain();
+    return;
+  }
+  compressedBody(file, mtimeMs, data, enc).then((body) => {
+    if (!body) return plain();
+    res.writeHead(HTTP_OK, { ...headers, 'Content-Encoding': enc, 'Content-Length': String(body.length) });
+    res.end(body);
+  }, () => plain());
 }
 
 export interface ServerOptions {

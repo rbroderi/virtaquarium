@@ -50,11 +50,24 @@ function writeFingerprint(): void {
   fs.writeFileSync(path.join(OUT_DIR, 'source-hash.json'), JSON.stringify({ reefLight: reefLightFingerprint() }) + '\n');
 }
 
+/** Deletes chunks (and their maps) left in web/build/ by earlier builds, so it holds only this build's output. */
+function removeStaleOutputs(metafile: esbuild.Metafile | undefined): void {
+  if (!metafile) return;
+  const keep = new Set(Object.keys(metafile.outputs).map((f) => path.resolve(ROOT, f)));
+  keep.add(path.join(OUT_DIR, 'source-hash.json'));
+  for (const name of fs.readdirSync(OUT_DIR)) {
+    const file = path.join(OUT_DIR, name);
+    if (!keep.has(file) && /\.(js|css|map)$/.test(name) && fs.statSync(file).isFile()) fs.rmSync(file);
+  }
+}
+
 const fingerprintPlugin: esbuild.Plugin = {
   name: 'reef-light-fingerprint',
   setup(build) {
     build.onEnd((result) => {
-      if (result.errors.length === 0) writeFingerprint();
+      if (result.errors.length > 0) return;
+      writeFingerprint();
+      removeStaleOutputs(result.metafile);
     });
   },
 };
@@ -67,6 +80,7 @@ const options: esbuild.BuildOptions = {
   format: 'esm',
   target: 'es2022',         // top-level await in the entry modules
   sourcemap: true,
+  metafile: true,           // lists this build's outputs for removeStaleOutputs
   logLevel: 'info',
   plugins: [fingerprintPlugin],
 };
