@@ -2,7 +2,10 @@
 // anemone patches, written once a frame from world.fish, and a vertex-shader bend that parts each
 // blade/tentacle from nearby bodies and wakes behind them. The sway (materials.ts addSway) already
 // bends with the water; this adds a horizontal push on top, so the two compose in the vertex shader.
+import * as THREE from 'three';
 import { clamp } from '../util.js';
+import { tsl } from '../webgpu/tsl.js';
+import type { Node, ShaderNodeObject, UniformArrayNode, UniformNode } from 'three/webgpu';
 
 /** How many fish the shader considers at once (the uniform array size). */
 export const MAX_FISH = 16;
@@ -195,4 +198,121 @@ export function updateFishPush(world: FishPushWorld, camera: FishPushCamera, dt:
   // Zero the unused slots so a shorter frame's fish don't linger.
   pos.fill(0, n * 4);
   vel.fill(0, n * 4);
+}
+
+// --- WebGPU (TSL) counterparts ---
+
+interface FishPushNodes {
+  readonly uFishPos: ShaderNodeObject<UniformArrayNode>;
+  readonly uFishVel: ShaderNodeObject<UniformArrayNode>;
+  readonly uFishCount: ShaderNodeObject<UniformNode<number>>;
+}
+
+let fishPushNodesCache: FishPushNodes | null = null;
+
+/** vec4 views over the shared Float32Array uniforms (updateFishPush mutates them in place). */
+function vec4UniformArray(entry: { value: Float32Array }): { readonly x: number; readonly y: number; readonly z: number; readonly w: number }[] {
+  const count = entry.value.length / 4;
+  return Array.from({ length: count }, (_, i) => ({
+    get x(): number { return entry.value[i * 4] ?? 0; },
+    get y(): number { return entry.value[i * 4 + 1] ?? 0; },
+    get z(): number { return entry.value[i * 4 + 2] ?? 0; },
+    get w(): number { return entry.value[i * 4 + 3] ?? 0; },
+  }));
+}
+
+/** The shared fish-push uniform nodes (created once, on the WebGPU path only). */
+export function fishPushNodes(): FishPushNodes {
+  if (fishPushNodesCache) return fishPushNodesCache;
+  const t = tsl();
+  const count = t.uniform(fishUniforms.uFishCount.value);
+  Object.defineProperty(fishUniforms.uFishCount, 'value', {
+    get: (): number => count.value,
+    set: (v: number): void => { count.value = v; },
+    configurable: true,
+    enumerable: true,
+  });
+  fishPushNodesCache = {
+    uFishPos: t.uniformArray(vec4UniformArray(fishUniforms.uFishPos) as unknown as THREE.Vector4[], 'vec4'),
+    uFishVel: t.uniformArray(vec4UniformArray(fishUniforms.uFishVel) as unknown as THREE.Vector4[], 'vec4'),
+    uFishCount: count,
+  };
+  return fishPushNodesCache;
+}
+
+/**
+ * TSL port of FISH_PUSH_APPLY: takes the swayed local position and its height (0 base .. 1 tip),
+ * bends it in world space (where the push lives) rather than stretching, then folds it back into the
+ * model's own space. inst0..inst3 are the instance matrix's four columns (the WebGL shader reads
+ * instanceMatrix); pass identity columns for a non-instanced mesh.
+ */
+export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>, inst0: ShaderNodeObject<Node>, inst1: ShaderNodeObject<Node>, inst2: ShaderNodeObject<Node>, inst3: ShaderNodeObject<Node>): Node {
+  const t = tsl();
+  const { uFishPos, uFishVel, uFishCount } = fishPushNodes();
+  return t.Fn(() => {
+    const local = p.toVar();
+    const hh = h.mul(h);
+    const instM = t.mat4(inst0, inst1, inst2, inst3);
+    const wp = t.modelWorldMatrix.mul(instM.mul(t.vec4(local, 1))).xyz;
+
+    // fishPushWorld (FISH_PUSH_HEADER): the loop's break/continue are folded into gates so the TSL
+    // Loop needs no control flow.
+    const push = t.vec3(0).toVar();
+    t.Loop({ start: t.int(0), end: t.int(MAX_FISH), type: 'int', condition: '<' }, ({ i }: { i: ShaderNodeObject<Node> }) => {
+      const fp = uFishPos.element(i);
+      const fv = uFishVel.element(i);
+      const s = fv.w;
+      const active = t.select(t.float(i).lessThan(uFishCount), t.float(1), t.float(0));
+      const sOn = t.select(s.greaterThanEqual(t.float(STRENGTH_CUTOFF)), t.float(1), t.float(0));
+      const d = wp.sub(fp.xyz.sub(fv.xyz.mul(t.float(WAKE_LAG))));
+      const r = t.length(d);
+      const g = t.float(1).sub(t.smoothstep(t.float(0), t.max(fp.w, t.float(1e-4)), r));
+      const gOn = t.select(g.greaterThanEqual(t.float(0.001)), t.float(1), t.float(0));
+      const dl = t.length(d.xz);
+      const dir = t.select(t.greaterThan(dl, t.float(0.001)), d.xz.div(t.max(dl, t.float(0.001))), t.vec2(1, 0));
+      push.xz.addAssign(dir.mul(active.mul(sOn).mul(gOn).mul(g).mul(s).mul(hh).mul(t.float(PUSH_MAX))));
+    });
+
+    // Bend in world space, keeping each vertex its distance from the plant's base (FISH_PUSH_APPLY):
+    // fpM is the full model*instance rotation-scale, so its column scales are the plant's world size and
+    // the renormalisation cannot mistake a blade's width for its length.
+    const fpM = t.mat3(t.modelWorldMatrix).mul(t.mat3(inst0.xyz, inst1.xyz, inst2.xyz));
+    const fpC0 = t.element(fpM, 0), fpC1 = t.element(fpM, 1), fpC2 = t.element(fpM, 2);
+    const fs = t.vec3(t.length(fpC0), t.length(fpC1), t.length(fpC2)).max(t.vec3(1e-3));
+    const mag = t.length(push);
+    const capped = push.mul(t.min(t.float(1), fs.y.mul(t.float(BEND_CHORD)).div(t.max(mag, t.float(1e-5)))));
+    const rot = t.mat3(fpC0.div(fs.x), fpC1.div(fs.y), fpC2.div(fs.z));
+    const fpOff = fpM.mul(local).toVar();   // world offset from the instance's base
+    const r = t.length(fpOff);
+    const bent = fpOff.add(capped);
+    const rl = t.length(bent);
+    const off = t.select(rl.greaterThan(t.float(1e-5)), bent.mul(r.div(t.max(rl, t.float(1e-5)))), fpOff);
+    const outLocal = t.transpose(rot).mul(off).div(fs);
+    return t.select(mag.greaterThan(t.float(1e-5)), outLocal, local);
+  })();
+}
+
+/** Adds the instance matrix's four columns as per-instance vec4 attributes (aInst0..aInst3) for the
+ *  TSL sway/fish push to read. Call after every setMatrixAt. */
+export function addSwayInstanceAttrs(inst: THREE.InstancedMesh): void {
+  const g = inst.geometry;
+  const n = inst.count;
+  const src = inst.instanceMatrix.array as Float32Array;
+  const cols = [new Float32Array(n * 4), new Float32Array(n * 4), new Float32Array(n * 4), new Float32Array(n * 4)];
+  for (let i = 0; i < n; i++) {
+    const o = i * 16;
+    for (let c = 0; c < 4; c++) (cols[c] as Float32Array).set(src.subarray(o + c * 4, o + c * 4 + 4), i * 4);
+  }
+  g.setAttribute('aInst0', new THREE.InstancedBufferAttribute(cols[0] as Float32Array, 4));
+  g.setAttribute('aInst1', new THREE.InstancedBufferAttribute(cols[1] as Float32Array, 4));
+  g.setAttribute('aInst2', new THREE.InstancedBufferAttribute(cols[2] as Float32Array, 4));
+  g.setAttribute('aInst3', new THREE.InstancedBufferAttribute(cols[3] as Float32Array, 4));
+}
+
+/** A storage-buffer node over an InstancedMesh's instance matrix (the same buffer InstanceNode reads),
+ *  indexed by the built-in instance index. A material used by exactly one mesh can read its instance
+ *  matrix this way without spending four vertex-buffer slots on aInst0..aInst3. */
+export function instanceMatrixNode(inst: THREE.InstancedMesh): ShaderNodeObject<Node> {
+  const t = tsl();
+  return t.buffer(inst.instanceMatrix.array as Float32Array, 'mat4', inst.count).element(t.instanceIndex);
 }

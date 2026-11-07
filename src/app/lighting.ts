@@ -3,7 +3,7 @@
 // of day: warm and low at the golden hours, white-blue overhead at noon, cool moonlight at night.
 import * as THREE from 'three';
 import { lerp } from '../core/math.js';
-import { INSCATTER_DAY, setSunDirection, waterUniforms, type WaterSurface } from '../water.js';
+import { INSCATTER_DAY, setSunDirection, waterUniforms, type SurfaceUniforms } from '../water.js';
 import { reefLightUniforms } from '../reefLight.js';
 import { LIGHTS, SUN_NOON } from '../rig.js';
 import type { TankScene } from '../reef/types.js';
@@ -37,7 +37,8 @@ const SUN_LOW = { x: 14, y: 11, z: 5 } as const;
 
 export interface LightingTargets {
   readonly stage: Stage;
-  readonly surface: WaterSurface;
+  /** The water surface; null under WebGPU before the surface port, or in the jelly tank. */
+  readonly surface: { readonly surfaceUniforms: SurfaceUniforms } | null;
   readonly reef: TankScene;
   /** Exposure gain of the tone curve in use. */
   readonly toneGain: number;
@@ -90,10 +91,12 @@ export class LightingController {
     this.fogTint.copy(INSCATTER_DAY);
     if (level > 0) this.fogTint.lerp(SUN_HORIZON, (1 - sun.warmth) * FOG_WARMTH);
     stage.fog.color.copy(this.fogTint).multiplyScalar(NIGHT_FOG + (1 - NIGHT_FOG) * level);
-    stage.backdrop.backdropUniforms.uBase.value.copy(stage.fog.color);
+    if (stage.backdrop) stage.backdrop.backdropUniforms.uBase.value.copy(stage.fog.color);
     stage.renderer.toneMappingExposure = DAY_EXPOSURE * toneGain * (NIGHT_EXPOSURE + (1 - NIGHT_EXPOSURE) * level);
-    surface.surfaceUniforms.uLight.value = level;
-    surface.surfaceUniforms.uBase.value.copy(stage.fog.color);
+    if (surface) {
+      surface.surfaceUniforms.uLight.value = level;
+      surface.surfaceUniforms.uBase.value.copy(stage.fog.color);
+    }
     const panel = reef.backdrop?.material.uniforms['uLight'];
     if (panel) panel.value = PANEL_NIGHT + (1 - PANEL_NIGHT) * level;
   }

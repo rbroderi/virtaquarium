@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js';
 import { OCTO_SAC } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
-import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, type ShaderHook } from './shared.js';
+import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, type ShaderHook, type NodeHook } from './shared.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
@@ -130,9 +130,10 @@ export class Octopus implements Critter {
       Object.assign(shader.uniforms, this.u);
       shader.fragmentShader = 'uniform float uShade;\n' + shader.fragmentShader.replace('#include <map_fragment>', SHADE_FRAG);
     };
+    const shadeHook = this.shadeNodeHook();
     const tex = octoSkin(mulberry32(SKIN_SEED)), armTex = octoSkin(mulberry32(SKIN_SEED), ARM_WHITE_SPOTS), bump = octoBump(rng);   // the same skin; the arms add bold white spots
-    const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook, { ...CEPH_SSS, thin: 'attr' });
-    const bodyMat = skin({ map: tex, roughness: 0.55 }, 'octo-body', this.bodyHook(), CEPH_SSS);
+    const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook, { ...CEPH_SSS, thin: 'attr' }, shadeHook);
+    const bodyMat = skin({ map: tex, roughness: 0.55 }, 'octo-body', this.bodyHook(), CEPH_SSS, this.bodyNodeHook(tex));
     // Mantle sac, head, eye turrets, oral disc with the arm roots, and siphon: one mesh (built for
     // M = 1, softBodies.ts), so the arms grow out of the body rather than meeting it at seams.
     const body = new THREE.Mesh(softBodyGeometry('octopus-body'), bodyMat);
@@ -144,11 +145,11 @@ export class Octopus implements Critter {
     const eyeParts = this.addEyes(M);
     this.siphonBalls = this.addSiphonBalls(M);
     const t0 = performance.now();
-    this.suckers = this.addSuckers(hook);
+    this.suckers = this.addSuckers(hook, shadeHook);
     this.addArms(M, mat, rng);
     this.buildMs = performance.now() - t0;
     this.addDiscStandIn(M);
-    this.web = this.addWeb(tex, bump, hook);
+    this.web = this.addWeb(tex, bump, hook, shadeHook);
     // The obstacles are spheres in their own frames (the sac's stretched): the turrets (stand-ins),
     // the eyes, and the siphon's tube, in two balls along it.
     this.obstacles = [{ object: this.sac, radius: OBSTACLE_SAC_RADIUS }, ...eyeParts, ...this.siphonBalls.map((o) => ({ object: o, radius: SIPHON_BALL_RADIUS * M }))];
@@ -172,6 +173,37 @@ export class Octopus implements Critter {
       Object.assign(shader.uniforms, this.u);
       shader.vertexShader = BODY_VERT_HEAD + shader.vertexShader.replace('#include <begin_vertex>', BODY_VERT_BEGIN);
       shader.fragmentShader = BODY_FRAG_HEAD + shader.fragmentShader.replace('#include <map_fragment>', BODY_FRAG_MAP);
+    };
+  }
+
+  /** TSL form of the shade hook (SHADE_FRAG): tint the mapped albedo towards the resting shade. */
+  private shadeNodeHook(): NodeHook {
+    return (t) => {
+      const uShade = scalarNode(t, this.u.uShade);
+      const colorNode = t.Fn(() =>
+        t.materialColor.rgb.mul(t.mix(t.vec3(1), t.vec3(0.62, 0.55, 0.5), uShade)))();
+      return { colorNode };
+    };
+  }
+
+  /** TSL form of bodyHook(): the sac breath (position) and the triplanar skin + shade (colour). */
+  private bodyNodeHook(tex: THREE.Texture): NodeHook {
+    return (t) => {
+      const uBreath = scalarNode(t, this.u.uBreath);
+      const uShade = scalarNode(t, this.u.uShade);
+      const aWeight = t.attribute('aWeight', 'float');
+      const centre = t.vec3(-0.48, 0.3, 0);
+      const positionNode = t.Fn(() => centre.add(t.positionLocal.sub(centre).mul(t.float(1).add(uBreath.mul(aWeight)))))();
+      const colorNode = t.Fn(() => {
+        const bw0 = t.normalLocal.normalize().abs().pow(4);
+        const bw = bw0.div(bw0.x.add(bw0.y).add(bw0.z));
+        const tp = t.positionGeometry.mul(0.45);
+        const tri = t.texture(tex, tp.zy).mul(bw.x)
+          .add(t.texture(tex, tp.xz.add(0.37)).mul(bw.y))
+          .add(t.texture(tex, tp.xy.add(0.71)).mul(bw.z));
+        return tri.mul(t.mix(t.vec3(1), t.vec3(0.62, 0.55, 0.5), uShade));
+      })();
+      return { positionNode, colorNode };
     };
   }
 
@@ -213,8 +245,8 @@ export class Octopus implements Critter {
     return [-1, 1].map((s) => { const o = new THREE.Object3D(); o.position.copy(siphPos).addScaledVector(sax, s * 0.055 * M); this.model.add(o); return o; });
   }
 
-  private addSuckers(hook: ShaderHook): THREE.InstancedMesh {
-    const suckers = new THREE.InstancedMesh(suckerGeometry(), skin({ color: 0xf0d6c8, roughness: 0.4 }, 'octo-sucker', hook, { ...CEPH_SSS, thin: 0.6 }), ARM_COUNT * SUCKERS_PER_ARM);
+  private addSuckers(hook: ShaderHook, nodeHook: NodeHook): THREE.InstancedMesh {
+    const suckers = new THREE.InstancedMesh(suckerGeometry(), skin({ color: 0xf0d6c8, roughness: 0.4 }, 'octo-sucker', hook, { ...CEPH_SSS, thin: 0.6 }, nodeHook), ARM_COUNT * SUCKERS_PER_ARM);
     suckers.name = 'suckers';
     suckers.frustumCulled = false;
     // (critterCheck.ts sees only the base cup, at the model's origin inside the body: a sheet, joined)
@@ -254,7 +286,7 @@ export class Octopus implements Critter {
    * quarter, rebuilt with the arms each frame. It is what makes the arms rise into the body as one
    * skirt instead of leaving it as separate legs.
    */
-  private addWeb(tex: THREE.Texture, bump: THREE.Texture, hook: ShaderHook): THREE.Mesh {
+  private addWeb(tex: THREE.Texture, bump: THREE.Texture, hook: ShaderHook, nodeHook: NodeHook): THREE.Mesh {
     const K = WEB_ROWS, cols = WEB_COLUMNS, rows = K + 1, per = rows * cols, g = new THREE.BufferGeometry(), idx: number[] = [], uv: number[] = [];
     for (let a = 0; a < ARM_COUNT; a++) for (let k = 0; k < rows; k++) for (let c = 0; c < cols; c++) {
       uv.push(0.3 + (a + c / 2) / ARM_COUNT * 0.7, k / K * 0.5);
@@ -264,7 +296,7 @@ export class Octopus implements Critter {
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), NEVER_CULL_RADIUS);
-    const web = new THREE.Mesh(g, skin({ map: tex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, side: THREE.DoubleSide }, 'octo-web', hook, { ...CEPH_SSS, thin: 0.8 }));
+    const web = new THREE.Mesh(g, skin({ map: tex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, side: THREE.DoubleSide }, 'octo-web', hook, { ...CEPH_SSS, thin: 0.8 }, nodeHook));
     web.frustumCulled = false;
     web.castShadow = true;
     web.name = 'web';

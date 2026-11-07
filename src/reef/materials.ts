@@ -2,12 +2,21 @@
 // plants with the water.
 import * as THREE from 'three';
 import { addCaustics, waterUniforms } from '../water.js';
-import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishUniforms } from './fishPush.js';
+import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishPushBend, fishUniforms } from './fishPush.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { installReefLight } from '../reefLight/webgpu.js';
+import { waterTimeNode } from '../webgpu/timeUniform.js';
+import type { Node, ShaderNodeObject } from 'three/webgpu';
 
 const GLSL_DIGITS = 4;
 
-/** A caustic-lit MeshStandardMaterial (water.ts addCaustics). */
-export function stdMat(params: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
+/** A caustic-lit MeshStandardMaterial (water.ts addCaustics); under WebGPU the caustic GLSL is dead,
+ *  so the same parameters become a plain MeshStandardNodeMaterial. */
+export function stdMat(params: THREE.MeshStandardMaterialParameters): THREE.Material {
+  if (gpuActive()) {
+    const t = tsl();
+    return installReefLight(new t.MeshStandardNodeMaterial(params));
+  }
   return addCaustics(new THREE.MeshStandardMaterial(params));
 }
 
@@ -22,15 +31,62 @@ export interface SwayOptions {
   readonly hTop?: number;
   /** Also part from nearby fish (a fixed-size uniform array updated once a frame). */
   readonly fishPush?: boolean;
+  /** The mesh is an InstancedMesh carrying the aInst0..aInst3 instance-matrix attributes (WebGPU). */
+  readonly instanced?: boolean;
+  /** A storage-buffer node over the instance matrix (WebGPU), for a material used by one instanced mesh;
+   *  reading this instead of aInst0..aInst3 keeps the draw under the vertex-buffer limit. */
+  readonly instanceMatrixNode?: ShaderNodeObject<Node> | undefined;
   /** GLSL declarations prepended to the vertex shader, for the attributes the deform reads. */
   readonly prelude?: string;
   /** GLSL run inside the bend block after the sway (h is in scope), e.g. a per-instance curl. */
   readonly deform?: string;
   /** Distinguishes program cache entries that share a key but not a deform. */
   readonly variant?: string;
+  /** TSL counterpart of `deform`, run after the sway bend on the WebGPU path: (swayedLocal, h) => position. */
+  readonly deformNode?: (p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>) => ShaderNodeObject<Node>;
 }
 
 const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
+
+/** TSL port of the sway's begin_vertex patch: the same h^2 bend from the piece's model-space position.
+ *  The bend runs in the blade/tentacle's own space (the authored position, not the instance-transformed
+ *  one), exactly like the GLSL, and the renderer's InstanceNode prepass applies the instance matrix to
+ *  the result afterwards, so the position node returns model-space and never applies the matrix itself. */
+function swayNode(options: { ax: number; az: number; hz: number; hTop: number; fishPush: boolean; instanced: boolean; instanceMatrixNode: ShaderNodeObject<Node> | undefined; deformNode: ((p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>) => ShaderNodeObject<Node>) | undefined }): Node {
+  const t = tsl();
+  const { ax, az, hz, hTop, fishPush, instanced, instanceMatrixNode, deformNode } = options;
+  const time = waterTimeNode();
+  return t.Fn(() => {
+    const p = t.positionGeometry.toVar();   // the authored position: h is the model's own height
+    const h = t.clamp(p.y.div(t.float(hTop)), t.float(0), t.float(1));
+    // The instance matrix's four columns: a storage-buffer node when the caller supplied one (a single
+    // mesh per material), else the aInst0..aInst3 per-instance attributes.
+    const i0 = instanceMatrixNode ? (t.element(instanceMatrixNode, 0) as ShaderNodeObject<Node>)
+      : t.attribute('aInst0', 'vec4');
+    const i1 = instanceMatrixNode ? (t.element(instanceMatrixNode, 1) as ShaderNodeObject<Node>)
+      : t.attribute('aInst1', 'vec4');
+    const i2 = instanceMatrixNode ? (t.element(instanceMatrixNode, 2) as ShaderNodeObject<Node>)
+      : t.attribute('aInst2', 'vec4');
+    const i3 = instanceMatrixNode ? (t.element(instanceMatrixNode, 3) as ShaderNodeObject<Node>)
+      : t.attribute('aInst3', 'vec4');
+    const ph = instanced
+      ? i3.x.mul(t.float(1.7)).add(i3.z.mul(t.float(2.3)))
+      : t.modelPosition.x.mul(t.float(1.7)).add(t.modelPosition.z.mul(t.float(2.3)));
+    const s = t.sin(time.mul(t.float(hz)).add(ph))
+      .add(t.float(0.35).mul(t.sin(time.mul(t.float(hz * 2.3)).add(ph.mul(t.float(1.9))))));
+    const out = p.toVar();
+    out.x.addAssign(s.mul(t.float(ax)).mul(h).mul(h));
+    out.z.addAssign(t.cos(time.mul(t.float(hz * 0.8)).add(ph.mul(t.float(1.3)))).mul(t.float(az)).mul(h).mul(h));
+    if (deformNode) out.assign(deformNode(out, h));
+    if (fishPush) {
+      const bent = instanced
+        ? fishPushBend(out, h, i0, i1, i2, i3)
+        : fishPushBend(out, h, t.vec4(1, 0, 0, 0), t.vec4(0, 1, 0, 0), t.vec4(0, 0, 1, 0), t.vec4(0, 0, 0, 1));
+      return bent;
+    }
+    return out;
+  })();
+}
 
 /**
  * Soft tissue and plants sway with the water. h = height up the model (0 at the base, 1 at the top,
@@ -42,6 +98,13 @@ export function addSway<M extends THREE.Material>(mat: M, key: string, options: 
   const ax = options.ax ?? SWAY_DEFAULTS.ax, az = options.az ?? SWAY_DEFAULTS.az;
   const hz = options.hz ?? SWAY_DEFAULTS.hz, hTop = options.hTop ?? SWAY_DEFAULTS.hTop;
   const fishPush = options.fishPush ?? false;
+  const instanced = options.instanced ?? false;
+  if (gpuActive()) {
+    // WebGPURenderer never runs onBeforeCompile, so the GLSL below is dead; the same bend goes through
+    // a positionNode instead (the instance matrix arrives as a storage buffer or per-instance attributes).
+    (mat as unknown as { positionNode: Node | null }).positionNode = swayNode({ ax, az, hz, hTop, fishPush, instanced, instanceMatrixNode: options.instanceMatrixNode, deformNode: options.deformNode });
+    return mat;
+  }
   const prelude = options.prelude ?? '', deform = options.deform ?? '';
   const prev = mat.onBeforeCompile.bind(mat);
   const f = (x: number): string => x.toFixed(GLSL_DIGITS);

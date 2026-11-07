@@ -15,10 +15,14 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCaustics, waterUniforms } from './water.js';
 import { addTranslucency } from './softSkin.js';
+import { installReefLight } from './reefLight/webgpu.js';
 import { makeCanvas, context2d, type Rng } from './util.js';
 import { organicPass, type OrganicOptions } from './core/organic.js';
 import type { SolidField } from './rockField.js';
 import { markNoHeight } from './reef/flags.js';
+import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
+import { waterTimeNode } from './webgpu/timeUniform.js';
+import type { Node, ShaderNodeObject, UniformArrayNode, UniformNode } from 'three/webgpu';
 
 /** Worms (the uRetract uniform array's size). */
 const MAX_WORMS = 24;
@@ -225,8 +229,9 @@ export class FanWorms {
       const palette = PALETTES[pi];
       if (!ws.length || !palette) return;
       const n = ws.length * RADIOLES, geo = ribbon();
-      const aWorm = new Float32Array(n), aLen = new Float32Array(n);
-      const mesh = new THREE.InstancedMesh(geo, this.crownMaterial(radioleTexture(rng, palette)), n);
+      const aWorm = new Float32Array(n), aLen = new Float32Array(n), aPhase = new Float32Array(n);
+      const tex = radioleTexture(rng, palette);
+      const mesh = new THREE.InstancedMesh(geo, gpuActive() ? this.crownNodeMaterial(tex) : this.crownMaterial(tex), n);
       const half = RADIOLES / 2;
       let k = 0;
       for (const w of ws) {
@@ -239,10 +244,12 @@ export class FanWorms {
           mesh.setMatrixAt(k, m);
           aWorm[k] = w.i;
           aLen[k] = 0.3 * (0.85 + 0.3 * rng()) * (1 - 0.15 * Math.abs(t - 0.5));
+          aPhase[k] = w.mouth.x;
         }
       }
       geo.setAttribute('aWorm', new THREE.InstancedBufferAttribute(aWorm, 1));
       geo.setAttribute('aLen', new THREE.InstancedBufferAttribute(aLen, 1));
+      geo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(aPhase, 1));
       mesh.instanceMatrix.needsUpdate = true;
       mesh.frustumCulled = false;
       mesh.castShadow = true;
@@ -280,6 +287,49 @@ export class FanWorms {
     };
     mat.customProgramCacheKey = () => 'fanworm';
     return mat;
+  }
+
+  /** The crown under WebGPU: the same base material plus a TSL vertex deformation (WebGPURenderer never
+   *  runs onBeforeCompile GLSL, so the radioles would otherwise stay folded flat at the tube mouth). */
+  private crownNodeMaterial(tex: THREE.Texture): InstanceType<Tsl['MeshStandardNodeMaterial']> {
+    const t = tsl();
+    const uRetract = t.uniformArray(this.uRetract.value as unknown as unknown[], 'float');
+    const mat = new t.MeshStandardNodeMaterial({
+      // See crownMaterial(): blended, not cut out, so the mip-averaged pinnule alpha stays gauzy.
+      map: tex, transparent: true, depthWrite: false, alphaTest: 0.03, side: THREE.DoubleSide, roughness: 0.6,
+    });
+    mat.positionNode = this.crownPositionNode(uRetract, waterTimeNode());
+    return installReefLight(mat) as InstanceType<Tsl['MeshStandardNodeMaterial']>;
+  }
+
+  /** TSL port of the radiole flare/curl/fold in crownMaterial()'s begin_vertex patch. */
+  private crownPositionNode(
+    uRetract: ShaderNodeObject<UniformArrayNode>,
+    uTime: ShaderNodeObject<UniformNode<number>>,
+  ): Node {
+    const t = tsl();
+    return t.Fn(() => {
+      const p = t.positionLocal.toVar();
+      const aWorm = t.attribute('aWorm', 'float');
+      const aLen = t.attribute('aLen', 'float');
+      const aPhase = t.attribute('aPhase', 'float');
+      const rr = uRetract.element(t.int(aWorm.add(t.float(0.5))));
+      const hh = p.y;
+      // Water sways the open crown gently; aPhase de-correlates worms across the tank (the GLSL reads
+      // instanceMatrix[3].x, which is not a TSL node, so the mouth x is carried on an attribute).
+      const sw = t.float(1).sub(rr).mul(t.float(0.08))
+        .mul(t.sin(uTime.mul(t.float(0.9)).add(aWorm.mul(t.float(2.1))).add(aPhase.mul(t.float(3.0)))));
+      const ang = t.mix(t.float(0.75), t.float(0.05), rr)
+        .add(t.mix(t.float(0.55), t.float(0.1), rr).mul(hh))
+        .add(sw.mul(hh));
+      const a0 = t.mix(t.float(0.75), t.float(0.05), rr).add(sw.mul(t.float(0.5)));
+      const am = a0.add(ang).mul(t.float(0.5));   // mean direction along the curl, for the arc's chord
+      const out = t.vec3(t.sin(am), t.cos(am), t.float(0)).mul(hh).mul(aLen)
+        .add(t.vec3(t.float(0), t.float(0), p.x.mul(t.mix(t.float(0.04), t.float(0.015), rr)).mul(t.float(1).sub(t.float(0.55).mul(hh)))))
+        .toVar();
+      out.y.assign(out.y.sub(rr.mul(aLen.mul(t.float(1.1)))));   // pulled into the tube
+      return out;
+    })();
   }
 
   /** True when something near this worm should make it duck. */

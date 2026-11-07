@@ -3,8 +3,9 @@
 // and present() themselves; the page drives them from requestAnimationFrame.
 import * as THREE from 'three';
 import { clamp, lerp } from '../core/math.js';
-import { waterUniforms, updateWaves, MarineSnow, Bubbles, type WaterSurface } from '../water.js';
+import { waterUniforms, updateWaves, MarineSnow, Bubbles, type SurfaceUniforms } from '../water.js';
 import { reefLightUniforms, type ScreenAO } from '../reefLight.js';
+import type { WebGpuScreenAO } from '../webgpu/screenAO.js';
 import type { World } from '../world.js';
 import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
@@ -44,11 +45,11 @@ export interface TankParts {
   readonly critters: readonly Critter[];
   readonly snow: MarineSnow;
   readonly bubbles: Bubbles | null;
-  readonly surface: WaterSurface;
+  readonly surface: { readonly surfaceUniforms: SurfaceUniforms } | null;
   readonly lighting: LightingController;
   readonly daylight: DaylightSource;
   readonly feeder: Feeder;
-  readonly ao: ScreenAO;
+  readonly ao: ScreenAO | WebGpuScreenAO | null;
   readonly isJellyTank: boolean;
   readonly drift: boolean;
   readonly motionBlur: boolean;
@@ -102,8 +103,14 @@ export class TankLoop {
     const { stage, world, jellies, critters, snow, bubbles } = this.parts;
     // Motion blur (water.ts): poses before this step are the previous ones.
     if (this.parts.motionBlur) {
-      stage.water.markPrev(world.fish.map((f) => f.model), stage.camera);
-      stage.water.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
+      if (stage.water) {
+        stage.water.markPrev(world.fish.map((f) => f.model), stage.camera);
+        stage.water.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
+      }
+      if (stage.post) {
+        stage.post.track(world.fish.map((f) => f.model), stage.camera);
+        stage.post.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
+      }
     }
     this.time += dt;
     waterUniforms.uTime.value = this.time;
@@ -114,25 +121,38 @@ export class TankLoop {
     for (const j of jellies) j.update(dt, world, jellies);
     for (const c of critters) c.update(dt, world);
     updateWaves(this.time);
-    if (!this.parts.isJellyTank) stage.caustics.update();   // no surface in view in the jelly tank
+    if (!this.parts.isJellyTank && stage.caustics) stage.caustics.update();   // no surface in view in the jelly tank
     snow.update(dt, this.time, this.flow);
     bubbles?.update(dt, this.time, this.flow, world.light);
     if (this.parts.drift) this.driftCamera();
     stage.frameView(this.time);
     this.parts.afterStep(dt);
-    if (stage.photo) this.autofocus(dt);
+    if (stage.photo ?? stage.post?.photo) this.autofocus(dt);
   }
 
-  present(): void {
+  present(): void | Promise<void> {
     const { stage, ao } = this.parts;
-    // The crystal's sub-frustum transmission background, rendered before the main pass samples it.
-    renderCrystalBgScene(stage.renderer, stage.scene, stage.camera, this.parts.world.fish.map((f) => f.model));
-    if (!stage.photo) stage.water.render(stage.scene, stage.camera, stage.sun);
-    else {
-      stage.water.render(stage.scene, stage.camera, stage.sun, stage.photo.begin());
-      stage.photo.finish(stage.water.target.depthTexture, stage.camera, this.time);
+    if (stage.gpu) {
+      if (stage.post) {
+        stage.post.setSun(stage.sun);
+        stage.post.render(stage.camera, this.time);
+        // Screen AO publishes to reefLightUniforms for the next frame (inert until the bake is on).
+        if (reefLightUniforms.uRLOn.value && ao) (ao as WebGpuScreenAO).update(stage.camera);
+        return;
+      }
+      // No post yet: draw the scene straight to the screen (async on the backend).
+      return stage.renderer.render(stage.scene, stage.camera);
     }
-    if (reefLightUniforms.uRLOn.value) ao.update(stage.water.target.depthTexture, stage.camera);   // read by the next frame
+    const water = stage.water;
+    if (!water) return;
+    // The crystal's sub-frustum transmission background, rendered before the main pass samples it (WebGL only).
+    renderCrystalBgScene(stage.renderer as THREE.WebGLRenderer, stage.scene, stage.camera, this.parts.world.fish.map((f) => f.model));
+    if (!stage.photo) water.render(stage.scene, stage.camera, stage.sun);
+    else {
+      water.render(stage.scene, stage.camera, stage.sun, stage.photo.begin());
+      stage.photo.finish(water.target.depthTexture, stage.camera, this.time);
+    }
+    if (reefLightUniforms.uRLOn.value && ao) (ao as ScreenAO).update(water.target.depthTexture, stage.camera);   // read by the next frame
   }
 
   /** Track the canvas size every frame (window moves between monitors, panes resize without events). */
@@ -172,7 +192,7 @@ export class TankLoop {
   /** Autofocus on the fish nearest the middle of the frame, as a camera's centre AF point would. */
   private autofocus(dt: number): void {
     const { stage, world } = this.parts;
-    const photo = stage.photo;
+    const photo = stage.photo ?? stage.post?.photo;
     if (!photo) return;
     let best = null, bestDist = Infinity;
     for (const f of world.fish) {

@@ -16,8 +16,9 @@ import { addSway, stdMat } from './materials.js';
 import { brainCoral, color, domeCluster, leatherPlate, rockGeometry, ruffledFan, scratch, staghorn, type DomeShape } from './geometry.js';
 import { grainTexture, poreTexture, rockDetailTexture, seaFanTexture } from './textures.js';
 import { anemone } from './anemone.js';
-import { bladeGeometry, grassMaterial, tuftedShoot } from './seagrass.js';
+import { bladeGeometry, grassInstanceAttrs, grassMaterial, tuftedShoot } from './seagrass.js';
 import { setFishPushReactors, type FishPushReactor } from './fishPush.js';
+import { gpuActive } from '../webgpu/tsl.js';
 import { swapCoral } from './scenery.js';
 import { orientCrystal, readCrystalFace, registerCrystalPiece } from './crystal.js';
 import { inNoHeightSubtree, isMesh, isSolid, markNoHeight, markSolid, naturalSize } from './flags.js';
@@ -80,7 +81,7 @@ export class ReefBuilder {
   private readonly groundRay = new THREE.Raycaster();
   private sand: THREE.Mesh | null = null;
   private pores: THREE.Texture | null = null;
-  private rockMat: THREE.MeshStandardMaterial | null = null;
+  private rockMat: THREE.Material | null = null;
   private stagMain: THREE.Object3D | null = null;
   private tableShelter: Shelter | null = null;
   private readonly anemoneSpot: THREE.Vector3;
@@ -154,7 +155,7 @@ export class ReefBuilder {
 
   // ---------- helpers ----------
 
-  private requireRockMaterial(): THREE.MeshStandardMaterial {
+  private requireRockMaterial(): THREE.Material {
     if (!this.rockMat) throw new Error('ReefBuilder: rock material not made yet');
     return this.rockMat;
   }
@@ -597,6 +598,7 @@ export class ReefBuilder {
    */
   private addSeaGrass(grng: Rng, spots: SandSpot[]): void {
     const blade = bladeGeometry(), grassMat = grassMaterial();
+    const gpu = gpuActive();
     const { m, q, s, p } = scratch;
     for (let patch = 0; patch < 3; patch++) {
       const at = this.findSpot(grng, spots, 0.3, -0.4, 1.8, 1.2);
@@ -619,16 +621,22 @@ export class ReefBuilder {
           blades.push({ x, y, z, yaw: yaw + range(grng, -0.35, 0.35), lean: 0.05 + 0.5 * lu * lu + 0.1 * lu, w: 0.028 + 0.075 * wu * wu + 0.01 * wu, L: L * (0.5 + 0.6 * ku) });
         }
       }
-      const mesh = new THREE.InstancedMesh(blade, grassMat, blades.length);
-      const e = new THREE.Euler(), tint = new THREE.Color();
+      // Under WebGPU the shared blade geometry gets a per-patch copy carrying the per-blade tint and the
+      // instance matrix columns (the GLSL shader read instanceColor / instanceMatrix, which TSL can't).
+      const geo = gpu ? blade.clone() : blade;
+      const mesh = new THREE.InstancedMesh(geo, grassMat, blades.length);
+      const e = new THREE.Euler(), tint = new THREE.Color(), tints = gpu ? new Float32Array(blades.length * 3) : null;
       blades.forEach((b, i) => {
         q.setFromEuler(e.set(b.lean, b.yaw, 0, 'YXZ'));
         m.compose(p.set(b.x, b.y, b.z), q, s.set(b.w, b.L, b.L));
         mesh.setMatrixAt(i, m);
         // Per-blade tint around white (instance colour multiplies the vertex colour): a little hue and
         // brightness variation, some blades older and browner.
-        mesh.setColorAt(i, tint.setHSL(0.2 + range(grng, -0.04, 0.05), 0.18, range(grng, 0.36, 0.5)).multiplyScalar(1.9));
+        tint.setHSL(0.2 + range(grng, -0.04, 0.05), 0.18, range(grng, 0.36, 0.5)).multiplyScalar(1.9);
+        if (gpu && tints) { tints[i * 3] = tint.r; tints[i * 3 + 1] = tint.g; tints[i * 3 + 2] = tint.b; }
+        else mesh.setColorAt(i, tint);
       });
+      if (gpu && tints) grassInstanceAttrs(mesh, tints);
       mesh.position.set(cx, 0, cz);
       mesh.castShadow = mesh.receiveShadow = true;
       markNoHeight(mesh);

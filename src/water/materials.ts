@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { CAUSTIC_LOOKUP_GLSL, causticUniforms } from './caustics.js';
 import { reefLightUniforms } from '../reefLight/uniforms.js';
 import { REEF_LIGHT_APPLY, REEF_LIGHT_EVAL, REEF_LIGHT_GLSL } from '../reefLight/glsl.js';
+import { gpuActive } from '../webgpu/tsl.js';
+import { installReefLight } from '../reefLight/webgpu.js';
 
 const LIGHTS_WITH_CAUSTICS = THREE.ShaderChunk.lights_fragment_begin.replace(
   'getDirectionalLightInfo( directionalLight, directLight );',
@@ -21,6 +23,11 @@ const WORLD_POSITION_VARYING = `#include <project_vertex>
 
 /** Adds caustics and the baked reef light to a lit material; returns the same material. */
 export function addCaustics<M extends THREE.Material>(mat: M): M {
+  if (gpuActive()) {
+    // WebGPURenderer never runs onBeforeCompile: the caustic factor is applied by the sun's light node
+    // (webgpuCaustics.ts) and the baked reef light by a node-material lighting model.
+    return installReefLight(mat);
+  }
   const previousCompile = mat.onBeforeCompile.bind(mat);
   const previousKey = mat.customProgramCacheKey.bind(mat);
   mat.onBeforeCompile = (shader, renderer) => {

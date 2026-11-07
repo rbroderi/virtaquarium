@@ -10,7 +10,8 @@ import * as THREE from 'three';
 import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js';
 import { mantleR } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
-import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, type ShaderHook, type SpringState } from './shared.js';
+import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, type ShaderHook, type NodeHook, type SpringState } from './shared.js';
+import type { Node, ShaderNodeObject } from 'three/webgpu';
 import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
 import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
@@ -106,7 +107,7 @@ export class Cuttlefish implements Critter {
     this.u = { uTime: { value: 0 }, uCloud: { value: 0 }, uMottle: { value: 0 }, uPale: { value: 0 }, uSqueeze: { value: new THREE.Vector3(1, 1, 1) }, uExt: { value: 1 } };
     const skinTex = cuttleSkin(rng);
     skinTex.wrapS = THREE.RepeatWrapping;   // the seam's own vertices run on past u = 1
-    const mantleMat = skin({ map: skinTex, roughness: 0.45, metalness: 0 }, 'cuttle-mantle', this.mantleHook(), CEPH_SSS);
+    const mantleMat = skin({ map: skinTex, roughness: 0.45, metalness: 0 }, 'cuttle-mantle', this.mantleHook(), CEPH_SSS, this.mantleNodeHook());
 
     // Mantle, head, eye bulges and the arm crown: one blended mesh (built for ML = 1).
     const body = new THREE.Mesh(softBodyGeometry('cuttlefish-body'), mantleMat);
@@ -139,6 +140,76 @@ export class Cuttlefish implements Critter {
     };
   }
 
+  /** TSL form of mantleHook(): the mantle squeeze (position) and the head/cloud/mottle/pale patch. */
+  private mantleNodeHook(): NodeHook {
+    return (t) => {
+      const uSqueeze = vec3Node(t, this.u.uSqueeze);
+      const uTime = scalarNode(t, this.u.uTime), uCloud = scalarNode(t, this.u.uCloud);
+      const uMottle = scalarNode(t, this.u.uMottle), uPale = scalarNode(t, this.u.uPale);
+      const aWeight = t.attribute('aWeight', 'float');
+      const positionNode = t.Fn(() => t.positionLocal.mul(t.mix(t.vec3(1), uSqueeze, aWeight)))();
+      const colorNode = t.Fn(() => {
+        const uv = t.uv();
+        const dors = t.smoothstep(0.35, 0, t.min(t.abs(uv.x.sub(0.75)), t.float(1).sub(t.abs(uv.x.sub(0.75)))));
+        const head = t.mix(
+          t.vec3(0.3, 0.16, 0.11).mul(t.float(1.1).sub(t.float(0.35).mul(dors))),
+          t.materialColor.rgb,
+          t.smoothstep(0.15, 0.7, aWeight),
+        );
+        const cloud = t.smoothstep(0.55, 0.95, t.sin(uv.y.mul(18).sub(uTime.mul(3)).add(t.sin(uv.x.mul(30)).mul(0.6))));
+        const mott = t.smoothstep(0.4, 0.7, t.fract(t.sin(t.dot(
+          t.floor(t.vec2(t.fract(uv.x), uv.y).mul(t.vec2(60, 40))),
+          t.vec2(12.9898, 78.233),
+        )).mul(43758.5453)));
+        const c = head.mul(t.float(1).sub(dors.mul(uCloud.mul(0.55).mul(cloud).add(uMottle.mul(0.35).mul(mott)))));
+        return t.mix(c, t.vec3(0.82, 0.78, 0.74), uPale.mul(0.6));
+      })();
+      return { positionNode, colorNode };
+    };
+  }
+
+  /** TSL form of the arm hook (CUTTLE_ARM_GLSL): the curl/kink/strike bend on the positions, and the
+   *  same frame applied to the authored arm normals. */
+  private armNodeHook(): NodeHook {
+    return (t) => {
+      type N = ShaderNodeObject<Node>;
+      const uExt = scalarNode(t, this.u.uExt);
+      const aSec = t.attribute('aSec', 'vec4');
+      const aArm = t.attribute('aArm', 'vec3');
+      const aNrm = t.attribute('aNrm', 'vec3');
+      const aVar = t.attribute('aVar', 'vec3');
+      const bend = (q: N, curl: N, straight: N): N =>
+        curl.mul(q).mul(q).add(t.float(1).sub(straight).mul(aVar.y).mul(t.sin(aVar.z.add(t.float(6).mul(q)))).mul(q));
+      // Shared setup (duplicated in the two Fns below; the loop is the only part that is not).
+      const tent = aArm.z, L = aArm.y;
+      const ext = t.float(1).add(tent.mul(uExt.sub(1)));
+      const s = aSec.x.mul(L).mul(ext);
+      const straight = tent.mul(t.clamp(ext.sub(1).div(0.4), 0, 1));
+      const curl = t.float(0.7).mul(aVar.x).mul(t.float(1).sub(straight));
+      const q = t.min(s, L).div(L);
+      const th = bend(q, curl, straight);
+      const T = t.vec3(t.cos(th), t.sin(th).negate(), 0);
+      const Nm = t.vec3(t.sin(th), t.cos(th), 0);
+      const Z = t.vec3(0, 0, 1);
+      const positionNode = t.Fn(() => {
+        const du = s.div(t.float(10));
+        const c = t.vec2(0).toVar('armC');
+        t.Loop({ start: 0, end: 10 }, ({ i }: { i: ShaderNodeObject<Node> }) => {
+          const qi = t.min(t.float(i).add(0.5).mul(du), L).div(L);
+          const thi = bend(qi, curl, straight);
+          c.addAssign(t.vec2(t.cos(thi), t.sin(thi).negate()).mul(du));
+        });
+        const rho = t.float(3.4).mul(t.mix(t.float(0.022), t.float(0.008), q));
+        return t.vec3(c, 0)
+          .add(Nm.mul(rho.mul(t.sin(aArm.x)).add(aSec.z)))
+          .add(Z.mul(rho.mul(t.cos(aArm.x)).add(aSec.w)))
+          .add(T.mul(aSec.y));
+      })();
+      const normalNode = t.Fn(() => t.transformNormalToView(T.mul(aNrm.x).add(Nm.mul(aNrm.y)).add(Z.mul(aNrm.z))).normalize())();
+      return { positionNode, normalNode };
+    };
+  }
+
   /** Eyes (in their bulges on the head). */
   private addEyes(ML: number): void {
     const eyeMat = skin({ map: wPupilEye(), roughness: 0.15 }, 'cuttle-eye');
@@ -168,7 +239,7 @@ export class Cuttlefish implements Critter {
         .replace('#include <beginnormal_vertex>', `vec3 armP, objectNormal;
           cuttleArm(armP, objectNormal);`)
         .replace('#include <begin_vertex>', 'vec3 transformed = armP;');
-    }, { ...CEPH_SSS, thin: 'attr' });
+    }, { ...CEPH_SSS, thin: 'attr' }, this.armNodeHook());
     this.crown.position.set(0.19 * ML, -0.03 * ML, 0);
     this.model.add(this.crown);
     // Each arm is a little different (length, girth, curl, kinks, tip); a stream of its own, seeded from

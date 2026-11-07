@@ -2,6 +2,8 @@
 // edges), no reef, sand or surface in view.
 import * as THREE from 'three';
 import { BACKDROP_VERT, BACKDROP_FRAG } from './shaders.js';
+import { makeGpuJellyBackdrop } from './webgpu.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
 
 const BACKDROP_RADIUS = 90;
 const BACKDROP_SEGMENTS = [48, 24] as const;
@@ -26,6 +28,19 @@ export interface JellyTank {
 }
 
 export function buildJellyTank(scene: THREE.Scene): JellyTank {
+  if (gpuActive()) {
+    const backdrop = makeGpuJellyBackdrop(tsl());
+    scene.add(backdrop);
+    return {
+      backdrop: backdrop as unknown as JellyTank['backdrop'],
+      group: new THREE.Group(),
+      heightAt: () => NO_FLOOR_Y,
+      anemones: [],
+      homes: [],
+      caves: [],
+      bubbler: null,
+    };
+  }
   const uniforms: JellyBackdropUniforms = { uBase: { value: new THREE.Color(1, 1, 1) }, uLight: { value: 1 } };
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false, uniforms,

@@ -19,6 +19,9 @@ const BROWSER_CANDIDATES = [
 const WINDOW_SIZE = '--window-size=1920,1080';
 const SOFTWARE_GL = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 const HARDWARE_GL = ['--use-angle=d3d11', '--ignore-gpu-blocklist'];
+/** WebGPU in headless Chrome: enable the (unsafe) API; --use-angle=vulkan or --enable-features=Vulkan
+ *  leaves requestAdapter empty on Windows, so keep the default Dawn backend past the blocklist. */
+const WEBGPU_GL = ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'];
 const KILL_GRACE_MS = 500;
 const PROFILE_RM_RETRIES = 5, PROFILE_RM_DELAY_MS = 200;
 const CONSOLE_LINE_LIMIT = 400;
@@ -52,6 +55,8 @@ export interface HeadlessRun {
   /** Echo the page's console lines (Chrome's --enable-logging) to stdout. */
   readonly echoConsole?: boolean;
   readonly onSaved?: (path: string) => void;
+  /** Serve POST /__shot with a CDP screenshot (the WebGPU canvas cannot be read back). */
+  readonly shots?: boolean;
 }
 
 export interface HeadlessResult {
@@ -93,6 +98,78 @@ function echoPageConsole(child: ChildProcess): void {
   });
 }
 
+// --- CDP screenshot (WebGPU capture: the presented canvas is not readable from the page) ---
+
+interface CdpPage {
+  send(method: string, params?: Record<string, unknown>): Promise<unknown>;
+}
+
+/** Waits for Chrome's chosen debugging port (written into the profile with --remote-debugging-port=0). */
+async function cdpPort(profile: string): Promise<number> {
+  const file = path.join(profile, 'DevToolsActivePort');
+  for (let i = 0; i < 100; i++) {
+    try {
+      const port = Number((await fs.promises.readFile(file, 'utf8')).split('\n')[0]);
+      if (Number.isInteger(port) && port > 0) return port;
+    } catch {
+      /* Chrome has not written it yet */
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('Chrome debugging port did not appear');
+}
+
+/** Waits for the page target's WebSocket debugger URL. */
+async function cdpPageWs(port: number): Promise<string> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/list`);
+      const list = (await res.json()) as readonly { type?: string; webSocketDebuggerUrl?: string }[];
+      const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+      if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('Chrome page target did not appear');
+}
+
+/** Connects to the page over CDP and returns a command sender (attached lazily on the first /__shot). */
+async function cdpConnect(profile: string): Promise<CdpPage> {
+  const ws = new WebSocket(await cdpPageWs(await cdpPort(profile)));
+  await new Promise<void>((resolve, reject) => {
+    ws.addEventListener('open', () => resolve());
+    ws.addEventListener('error', () => reject(new Error('CDP websocket failed')));
+  });
+  let nextId = 0;
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  ws.addEventListener('message', (ev: MessageEvent) => {
+    const text = typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer);
+    const msg = JSON.parse(text) as { id?: number; result?: unknown; error?: { message?: string } };
+    if (msg.id === undefined) return;
+    const entry = pending.get(msg.id);
+    if (!entry) return;
+    pending.delete(msg.id);
+    if (msg.error) entry.reject(new Error(msg.error.message ?? 'CDP error'));
+    else entry.resolve(msg.result);
+  });
+  const send = (method: string, params: Record<string, unknown> = {}): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const id = ++nextId;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  await send('Page.enable');
+  return { send };
+}
+
+/** Captures the current page as a PNG (the compositor's view of the presented WebGPU frame). */
+async function cdpScreenshot(page: CdpPage): Promise<Buffer | null> {
+  const result = (await page.send('Page.captureScreenshot', { format: 'png' })) as { data?: string };
+  return result.data ? Buffer.from(result.data, 'base64') : null;
+}
+
 /** Runs one page headlessly; resolves when it reports done, the browser dies, or the timeout hits. */
 export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
   const browser = findBrowser();
@@ -102,11 +179,18 @@ export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
   const finished = new Promise<HeadlessResult>((resolve) => { settle = resolve; });
 
   let done = false;
+  let cdp: Promise<CdpPage> | null = null;
+  const onShot = run.shots
+    ? async (): Promise<Buffer | null> => {
+        cdp ??= cdpConnect(profile);
+        return cdpScreenshot(await cdp);
+      }
+    : undefined;
   // CHECK_PORT pins the port (the browser's own stores, e.g. ?store=browser, are per origin); else any free one.
   const server = await startServer(Number(process.env['CHECK_PORT'] ?? 0), (event: ServerEvent) => {
     if (event.type === 'saved') run.onSaved?.(event.path);
     else finish(!event.body.startsWith('FAILED'), event.body);
-  });
+  }, { onShot });
 
   function finish(ok: boolean, body: string): void {
     if (done) return;
@@ -119,10 +203,12 @@ export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
   }
 
   const url = pageUrl(server, run.page, run.query);
+  const webgpu = run.query.get('renderer') === 'webgpu';
   console.log(`${path.basename(browser)}: ${url}`);
   child = spawn(browser, [
     '--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-    ...(run.gpu ? HARDWARE_GL : SOFTWARE_GL), WINDOW_SIZE,
+    ...(webgpu ? WEBGPU_GL : run.gpu ? HARDWARE_GL : SOFTWARE_GL), WINDOW_SIZE,
+    ...(run.shots ? ['--remote-debugging-port=0'] : []),
     ...(run.echoConsole ? ['--enable-logging=stderr', '--v=0'] : []), url,
   ], { stdio: ['ignore', 'ignore', run.echoConsole ? 'pipe' : 'ignore'] });
   if (run.echoConsole) echoPageConsole(child);

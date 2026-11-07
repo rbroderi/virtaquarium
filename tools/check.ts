@@ -27,6 +27,8 @@ for (const runSeed of (seeds ?? seed ?? DEFAULT_SEED).split(',')) {
     query,
     timeoutMs: TIMEOUT_MS,
     gpu: gpu === '1',
+    // The WebGPU canvas cannot be read back in-page, so the look check asks for a CDP screenshot.
+    shots: name === 'look' && flags['renderer'] === 'webgpu',
     ...(keep === '1' ? { keepProfile: path.resolve('out/.check-profile') } : {}),
     echoConsole: true,
     onSaved: (p) => console.log('  wrote', p),

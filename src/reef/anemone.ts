@@ -15,6 +15,9 @@ import * as THREE from 'three';
 import { Noise, TAU, clamp, mulberry32, pick, range, type Rng } from '../util.js';
 import { addTranslucency } from '../softSkin.js';
 import { addSway, stdMat } from './materials.js';
+import { instanceMatrixNode } from './fishPush.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
+import type { Node, ShaderNodeObject } from 'three/webgpu';
 import { GOLDEN_ANGLE, UP, color, lathe, scratch } from './geometry.js';
 
 /** Own seeded streams, so the reef's rng draws stay as they were before the anemone was reworked. */
@@ -118,11 +121,52 @@ const CURL_DEFORM = /* glsl */`
 `;
 const CURL_PRELUDE = 'attribute vec4 aCurl;\n';
 
+/** TSL counterpart of CURL_DEFORM (WebGPU): the static per-tentacle curl, applied after the sway. */
+function curlDeformNode(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>): ShaderNodeObject<Node> {
+  const t = tsl();
+  const aCurl = t.attribute('aCurl', 'vec4');
+  const curlH = h.mul(h).mul(t.float(0.7).add(t.float(0.3).mul(h)));
+  const wig = t.sin(h.mul(t.float(5.3)).add(aCurl.w)).mul(t.float(0.22)).mul(h).mul(h);
+  const q = p.toVar();
+  q.x.addAssign(aCurl.x.mul(curlH).sub(aCurl.y.mul(wig)).mul(aCurl.z));
+  q.z.addAssign(aCurl.y.mul(curlH).add(aCurl.x.mul(wig)).mul(aCurl.z));
+  // Not a perfect pipe: the girth swells and thins a little along the tube, out of phase per tentacle.
+  q.x.assign(q.x.mul(t.float(1).add(t.float(0.045).mul(t.sin(h.mul(t.float(21)).add(aCurl.w.mul(t.float(2.3))))))));
+  q.z.assign(q.z.mul(t.float(1).add(t.float(0.04).mul(t.sin(h.mul(t.float(17)).sub(aCurl.w.mul(t.float(1.7))))))));
+  return q;
+}
+
 /**
  * Tints the last tenth of each tentacle with the instance's violet hue, as a gradient out of the cream
  * (not a cap), and adds a faint tissue mottling along the tube, out of phase per tentacle.
  */
 function addTipTint(mat: THREE.Material): void {
+  if (gpuActive()) {
+    // The GLSL patch below is dead under WebGPURenderer; the same tint runs as a colorNode. The standard
+    // node material multiplies this node by the vertex and instance colours, so those are divided out to
+    // reproduce the GLSL mix(vertex*instance, tip, tipK) exactly (every tentacle colour is > 0).
+    const t = tsl();
+    (mat as unknown as { colorNode: Node | null }).colorNode = t.Fn(() => {
+      const vc = t.attribute('color', 'vec3');
+      const ic = t.varyingProperty('vec3', 'vInstanceColor');
+      const aTip = t.attribute('aTip', 'vec3');
+      const aCurl = t.attribute('aCurl', 'vec4');
+      const y = t.positionGeometry.y;
+      const tipK = t.smoothstep(t.float(TIP_GRADIENT_FROM), t.float(TIP_GRADIENT_TO), y);
+      const tipDeep = t.smoothstep(t.float(TIP_GRADIENT_TO), t.float(TENTACLE_HEIGHT), y);
+      const tip = aTip.mul(t.float(0.9).add(t.float(0.1).mul(tipDeep)));
+      const base = t.mix(t.vec3(1), tip.div(vc.mul(ic)), tipK);
+      const mott = t.sin(y.mul(31).add(aCurl.w.mul(4.3))).mul(0.55)
+        .add(t.sin(y.mul(11).sub(aCurl.w.mul(7.1))).mul(0.45));
+      const sR = t.sin(y.mul(9).add(aCurl.w));
+      return base.mul(t.vec3(
+        t.float(1).add(t.float(0.03).mul(sR)),
+        t.float(1),
+        t.float(1).sub(t.float(0.024).mul(sR)),
+      ).mul(t.float(1).add(mott.mul(t.float(0.075)))));
+    })();
+    return;
+  }
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   mat.onBeforeCompile = (shader, r) => {
     prev(shader, r);
@@ -157,12 +201,9 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
   const tip = new THREE.InstancedBufferAttribute(new Float32Array(TENTACLES * 3), 3);
   tg.setAttribute('aCurl', curl);
   tg.setAttribute('aTip', tip);
-  const mat = addSway(
-    addTranslucency(stdMat({ vertexColors: true, roughness: 0.46 }), { wrap: 0.85, back: 1.25, tint: [1.0, 0.68, 0.66], thin: 'attr' }),
-    'anemone', { ax: 0.05, az: 0.04, hz: 1.15, hTop: TENTACLE_HEIGHT, fishPush: true, prelude: CURL_PRELUDE, deform: CURL_DEFORM, variant: 'curl' },
-  );
-  addTipTint(mat);
-  const tent = new THREE.InstancedMesh(tg, mat, TENTACLES);
+  // The material needs the mesh's instance matrix on WebGPU (as a storage buffer, not four vertex
+  // buffers), so the mesh comes first with a placeholder material that is swapped for the real one.
+  const tent = new THREE.InstancedMesh<THREE.BufferGeometry, THREE.Material>(tg, new THREE.MeshBasicMaterial(), TENTACLES);
   const girth = mulberry32(GIRTH_SEED);    // per-tentacle thickness, off the reef's rng
   const { m, q, s, p } = scratch;
   const jitter = mulberry32(JITTER_SEED);  // placement and posture, off the reef's rng too
@@ -206,6 +247,12 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
     tent.setColorAt(i, tint.copy(pick(tips, TINTS)).lerp(WHITE, tips() * 0.5));
   }
   if (tent.instanceColor) tent.instanceColor.needsUpdate = true;
+  const mat = addSway(
+    addTranslucency(stdMat({ vertexColors: true, roughness: 0.46 }), { wrap: 0.85, back: 1.25, tint: [1.0, 0.68, 0.66], thin: 'attr' }),
+    'anemone', { ax: 0.05, az: 0.04, hz: 1.15, hTop: TENTACLE_HEIGHT, fishPush: true, instanced: true, instanceMatrixNode: gpuActive() ? instanceMatrixNode(tent) : undefined, prelude: CURL_PRELUDE, deform: CURL_DEFORM, deformNode: curlDeformNode, variant: 'curl' },
+  );
+  addTipTint(mat);
+  tent.material = mat;
   tent.castShadow = true;
   return tent;
 }

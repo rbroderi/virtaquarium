@@ -73,5 +73,7 @@ export function makeEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
   const pmrem = new THREE.PMREMGenerator(renderer);
   const target = pmrem.fromScene(scene, ENVIRONMENT_BLUR_SIGMA);
   pmrem.dispose();
+  // Diagnostic hook for the look check's envtex probe (see lookCheck.ts).
+  (target.texture as THREE.Texture & { __pmremTarget?: THREE.RenderTarget }).__pmremTarget = target;
   return target.texture;
 }
