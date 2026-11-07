@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { clamp } from '../util.js';
 import type { Species } from '../species/types.js';
 import { gillOf, mouthOf } from './profile.js';
-import { IN_WATER_IOR, makeSwimMaterial, swimUniforms, type SwimUniforms, type Tissue } from './swimShader.js';
+import { IN_WATER_IOR, swimUniforms, type SwimUniforms, type Tissue } from './swimShader.js';
+import { swimMaterialFor } from './swimNodes.js';
+import { fishRender } from './renderMode.js';
 import { speciesAssets, type SpeciesCanvases } from './assets.js';
 import { buildCustomModel, customModelFor, type NormalisedModel } from './customModels.js';
 import { useLods, type LodWeights } from '../lod.js';
@@ -74,7 +76,7 @@ export function posePectoralFan(p: PectoralPivot, ph: number, beat: number, pose
 // finDepth: fins write depth (and cut out below 15% alpha, under the faintest fringe), set before building fish. The photo camera
 // needs it so translucent fins focus with the body; otherwise fins don't write depth, which avoids
 // sorting artefacts between overlapping membranes.
-export const fishRender = { finDepth: false };
+export { fishRender } from './renderMode.js';
 
 export interface BuildFishOptions {
   /** A model from loadFishModel. */
@@ -114,7 +116,11 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   const M = mouthOf(sp);   // the lower jaw hinges at the corner of the mouth
   hinge.set(a.prof.x(M.u), a.prof.centre(M.u) - M.v * a.prof.half(M.u));
   const bodyTissue: Tissue = { kind: 'body', sizeMM: sp.size * MM_PER_UNIT, jaw: true, cover: !!gillOf(sp), night: sp.night, detail: a.detail, packed: true };
-  const bodyMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+  /** One entry point for either backend: TSL node materials under WebGPU, GLSL-patched ones under WebGL. */
+  const swimMat = (params: THREE.MeshPhysicalMaterialParameters, u: SwimUniforms, tissue: Tissue | null = null): THREE.Material => {
+    return swimMaterialFor(params, u, tissue, fishRender.gpu);
+  };
+  const bodyParams: THREE.MeshPhysicalMaterialParameters = {
     // Packed maps, each read through one sampler (the fish shader is at the GPU's 16 texture units with the
     // caustics and reef light): iridescenceMap R = strength, G = film thickness; roughnessMap G =
     // roughness (smooth exposed field, rough comb margins, velvet minute scales), R = cavity (the groove
@@ -132,13 +138,14 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     // regular stacks in a narrow band. sp.irid = { range: [nm, nm], strength } overrides.
     iridescence: sp.irid?.strength ?? (sp.iridescent ? 1.0 : 0.35), iridescenceIOR: 1.8,
     iridescenceThicknessRange: sp.irid?.range ?? (sp.iridescent ? [310, 370] : [200, 620]),
-  }), uniforms, bodyTissue);
+  };
+  const bodyMat = swimMat(bodyParams, uniforms, bodyTissue);
   const alphaTest = fishRender.finDepth ? FIN_DEPTH_ALPHA_TEST : FIN_ALPHA_TEST;
   // Raised rays (normalMap), rays glossier than the membrane (roughnessMap G x 1) and thicker (thickMap R).
-  const finMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+  const finMat = swimMat({
     map: a.finTex, normalMap: a.finNormalTex, roughnessMap: a.finDataTex, transparent: true, side: THREE.DoubleSide,
     depthWrite: fishRender.finDepth, roughness: 1, alphaTest, ior: IN_WATER_IOR,
-  }), uniforms, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, thickMap: a.finDataTex, erect });
+  }, uniforms, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, thickMap: a.finDataTex, erect });
   // Pectorals move on their own pivots, so the body wave is off for them (zero uniforms); they
   // still get the membrane light transport, and each bends along its rays (its own uPBend, so a
   // material each side; both share one program). Fans also ripple (uPWave).
@@ -147,9 +154,9 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     uAmp: { value: 0 }, uFlutter: { value: 0 }, uFinH: { value: 1 }, uXPed: { value: -9 },
     uPBend: { value: new THREE.Vector3(0, 0, p ? p.len : 1) }, uPWave: { value: new THREE.Vector2() },
   });
-  const pectMatFor = (u: SwimUniforms): THREE.MeshPhysicalMaterial => makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+  const pectMatFor = (u: SwimUniforms): THREE.Material => swimMat({
     map: a.pectTex, transparent: true, side: THREE.DoubleSide, depthWrite: fishRender.finDepth, roughness: 0.45, alphaTest, ior: IN_WATER_IOR,
-  }), u, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, pect: true });
+  }, u, { kind: 'fin', thickMM: FIN_MEMBRANE_THICKNESS * sp.size * THICKNESS_SCALE, pect: true });
 
   const pects: PectoralPivot[] = [];
   const group = new FishModel({ uniforms, pects, fan: p?.kind === 'fan', custom: false });
@@ -159,8 +166,8 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   fins.renderOrder = 1;
   group.add(fins, body);
   // Spines, free rays and tentacles: solid, glossy, banded by vertex colour; thin enough to glow when backlit.
-  const tubeMat = (u: SwimUniforms, jaw = false, extra: Partial<Tissue> = {}): THREE.MeshPhysicalMaterial =>
-    makeSwimMaterial(new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }), u, { kind: 'fin', thickMM: TUBE_THICKNESS * sp.size * THICKNESS_SCALE, jaw, ...extra });
+  const tubeMat = (u: SwimUniforms, jaw = false, extra: Partial<Tissue> = {}): THREE.Material =>
+    swimMat({ vertexColors: true, roughness: 0.38, ior: IN_WATER_IOR }, u, { kind: 'fin', thickMM: TUBE_THICKNESS * sp.size * THICKNESS_SCALE, jaw, ...extra });
   if (a.tubeGeo) group.add(new THREE.Mesh(a.tubeGeo, tubeMat(uniforms, true, { erect })));   // chin lappets ride on the lower jaw
 
   if (p && a.pectGeo) {
@@ -183,17 +190,17 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   // The spherical lens behind it (n ~1.67 at the core) bulges through the pupil and reflects ~1.2%
   // against water, 30 times the skin: that is the catchlight in every photo. A thin clearcoat (fixed
   // F0 0.04 x 0.3) gives it.
-  const eyeMat = makeSwimMaterial(new THREE.MeshPhysicalMaterial({
+  const eyeMat = swimMat({
     map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR, clearcoat: 0.3, clearcoatRoughness: 0.04,
     // The iris' reflective iridophore ring round the pupil (moves with the gaze, as the map does).
     iridescence: 0.3, iridescenceIOR: 1.8, iridescenceThicknessRange: [260, 420], iridescenceMap: a.eyeRingTex,
-  }), uniforms);
+  }, uniforms);
   // Eye movement: the eyeball turns under a nearly flush cornea, so the iris and pupil slide across the
   // cap. uGaze = (forward, up) in texture units, set per fish in fish.ts (saccades and counter-rolling).
   const gaze = { value: new THREE.Vector2() };
   uniforms.uGaze = gaze;
   a.eyeTex.wrapS = a.eyeTex.wrapT = a.eyeRingTex.wrapS = a.eyeRingTex.wrapT = THREE.ClampToEdgeWrapping;
-  addGaze(eyeMat, gaze);
+  if (!fishRender.gpu) addGaze(eyeMat as THREE.MeshPhysicalMaterial, gaze);   // gaze is a GLSL patch; not ported to TSL
   for (const geo of a.eyeGeos) group.add(new THREE.Mesh(geo, eyeMat));
   return group;
 }

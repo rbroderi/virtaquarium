@@ -7,7 +7,9 @@
 import * as THREE from 'three';
 import { isRecord } from '../util.js';
 import type { Species } from '../species/types.js';
-import { IN_WATER_IOR, makeSwimMaterial, swimUniforms } from './swimShader.js';
+import { IN_WATER_IOR, swimUniforms } from './swimShader.js';
+import { swimMaterialFor } from './swimNodes.js';
+import { fishRender } from './renderMode.js';
 import { FishModel } from './model.js';
 
 /** One models.json entry. */
@@ -106,13 +108,16 @@ function normaliseModel(root: THREE.Object3D, cfg: ModelConfig): NormalisedModel
 /** A swim material for one of a model's own materials: in-water Fresnel, no clearcoat or sheen. */
 function submerged(src: THREE.Material, uniforms: ReturnType<typeof swimUniforms>): THREE.Material {
   const mat = src.clone();
+  let phys: THREE.MeshPhysicalMaterial;
   if (mat instanceof THREE.MeshStandardMaterial) {
-    const phys = mat instanceof THREE.MeshPhysicalMaterial ? mat : new THREE.MeshPhysicalMaterial();
+    phys = mat instanceof THREE.MeshPhysicalMaterial ? mat : new THREE.MeshPhysicalMaterial();
     if (phys !== mat) THREE.MeshStandardMaterial.prototype.copy.call(phys, mat);
-    phys.ior = IN_WATER_IOR; phys.clearcoat = 0; phys.sheen = 0;
-    return makeSwimMaterial(phys, uniforms);
+  } else {
+    phys = new THREE.MeshPhysicalMaterial();
+    phys.copy(mat);
   }
-  return makeSwimMaterial(mat, uniforms);
+  phys.ior = IN_WATER_IOR; phys.clearcoat = 0; phys.sheen = 0;
+  return swimMaterialFor(phys as unknown as THREE.MeshPhysicalMaterialParameters, uniforms, null, fishRender.gpu);
 }
 
 export function buildCustomModel(_sp: Species, model: NormalisedModel): FishModel {

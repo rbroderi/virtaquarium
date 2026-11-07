@@ -37,7 +37,8 @@ const SUN_LOW = { x: 14, y: 11, z: 5 } as const;
 
 export interface LightingTargets {
   readonly stage: Stage;
-  readonly surface: WaterSurface;
+  /** The WebGL water surface; null under WebGPU (no surface is drawn). */
+  readonly surface: WaterSurface | null;
   readonly reef: TankScene;
   /** Exposure gain of the tone curve in use. */
   readonly toneGain: number;
@@ -90,10 +91,12 @@ export class LightingController {
     this.fogTint.copy(INSCATTER_DAY);
     if (level > 0) this.fogTint.lerp(SUN_HORIZON, (1 - sun.warmth) * FOG_WARMTH);
     stage.fog.color.copy(this.fogTint).multiplyScalar(NIGHT_FOG + (1 - NIGHT_FOG) * level);
-    stage.backdrop.backdropUniforms.uBase.value.copy(stage.fog.color);
+    if (stage.backdrop) stage.backdrop.backdropUniforms.uBase.value.copy(stage.fog.color);
     stage.renderer.toneMappingExposure = DAY_EXPOSURE * toneGain * (NIGHT_EXPOSURE + (1 - NIGHT_EXPOSURE) * level);
-    surface.surfaceUniforms.uLight.value = level;
-    surface.surfaceUniforms.uBase.value.copy(stage.fog.color);
+    if (surface) {
+      surface.surfaceUniforms.uLight.value = level;
+      surface.surfaceUniforms.uBase.value.copy(stage.fog.color);
+    }
     const panel = reef.backdrop?.material.uniforms['uLight'];
     if (panel) panel.value = PANEL_NIGHT + (1 - PANEL_NIGHT) * level;
   }

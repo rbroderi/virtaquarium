@@ -1,14 +1,19 @@
 // Builder for the tank's fixed stage: renderer, scene, water medium, camera framing and lights. Each
 // step is a small named method; build() returns the assembled parts for the composition root.
 import * as THREE from 'three';
+import type { WebGPURenderer } from 'three/webgpu';
 import {
   installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, setSunDirection,
   Caustics, WaterRenderer, type WaterBackdrop,
 } from '../water.js';
+import { loadTsl } from '../webgpu/tsl.js';
 import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
 import { setView, panAt } from '../view.js';
 import { PhotoCamera } from '../photo.js';
 import type { AppOptions } from './options.js';
+
+/** Either backend: the WebGL renderer is classic; the WebGPU renderer is the common/TSL renderer. */
+export type RendererLike = THREE.WebGLRenderer | WebGPURenderer;
 
 /** Tank width from the window's aspect: wide screens see a wider tank (16..30 units). */
 const TANK_WIDTH = { min: 16, max: 30, perAspect: 8.6, extra: 1.5 } as const;
@@ -36,17 +41,19 @@ const PHOTO_ISO = 0.6;
 
 export interface Stage {
   readonly canvas: HTMLCanvasElement;
-  readonly renderer: THREE.WebGLRenderer;
+  readonly renderer: RendererLike;
+  /** True when the renderer is three's WebGPURenderer (custom GLSL passes are disabled). */
+  readonly gpu: boolean;
   readonly scene: THREE.Scene;
   readonly fog: THREE.FogExp2;
-  readonly backdrop: WaterBackdrop;
+  readonly backdrop: WaterBackdrop | null;
   readonly camera: THREE.PerspectiveCamera;
   readonly tankWidth: number;
   readonly sun: THREE.DirectionalLight;
   readonly hemi: THREE.HemisphereLight;
   readonly rig: LightRig;
-  readonly caustics: Caustics;
-  readonly water: WaterRenderer;
+  readonly caustics: Caustics | null;
+  readonly water: WaterRenderer | null;
   readonly photo: PhotoCamera | null;
   /** Re-aim the camera's zoomed window for time t (view.ts pan). */
   frameView(t: number): void;
@@ -59,10 +66,10 @@ export function tankWidthFor(aspect: number): number {
 export class StageBuilder {
   constructor(private readonly canvas: HTMLCanvasElement, private readonly options: AppOptions) {}
 
-  build(): Stage {
-    const renderer = this.renderer();
-    installUnderwaterMedium();   // physically based water: per-channel absorption + scattering
-    const { scene, fog, backdrop } = this.scene(renderer);
+  async build(): Promise<Stage> {
+    const { renderer, gpu } = await this.renderer();
+    if (!gpu) installUnderwaterMedium();   // physically based water: per-channel absorption + scattering
+    const { scene, fog, backdrop } = this.scene(renderer, gpu);
     const aspect = window.innerWidth > 0 && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : FALLBACK_ASPECT;
     const tankWidth = tankWidthFor(aspect);
     const camera = this.camera(aspect);
@@ -73,20 +80,28 @@ export class StageBuilder {
     const sun = this.sun(tankWidth);
     scene.add(sun);
     // The fixture's light refracts through the moving surface: simulated caustics on every surface,
-    // and light shafts where the focused light crosses the water.
-    setSunDirection(sun.position);
-    const caustics = new Caustics(renderer);
-    const water = new WaterRenderer(renderer);
+    // and light shafts where the focused light crosses the water (WebGL-only; WebGPU renders directly).
+    if (!gpu) setSunDirection(sun.position);
+    const caustics = gpu ? null : new Caustics(renderer as THREE.WebGLRenderer);
+    const water = gpu ? null : new WaterRenderer(renderer as THREE.WebGLRenderer);
     const hemi = new THREE.HemisphereLight(HEMI_SKY, HEMI_GROUND, 1.0);
     scene.add(hemi);
     const rig = new LightRig(scene, sun, this.options.rig);
-    const photo = this.options.photo
-      ? new PhotoCamera(renderer, { fNumber: this.options.fNumber, iso: PHOTO_ISO, glass: this.options.glass })
+    const photo = !gpu && this.options.photo
+      ? new PhotoCamera(renderer as THREE.WebGLRenderer, { fNumber: this.options.fNumber, iso: PHOTO_ISO, glass: this.options.glass })
       : null;
-    return { canvas: this.canvas, renderer, scene, fog, backdrop, camera, tankWidth, sun, hemi, rig, caustics, water, photo, frameView };
+    return { canvas: this.canvas, renderer, gpu, scene, fog, backdrop, camera, tankWidth, sun, hemi, rig, caustics, water, photo, frameView };
   }
 
-  private renderer(): THREE.WebGLRenderer {
+  private async renderer(): Promise<{ renderer: RendererLike; gpu: boolean }> {
+    if (this.options.gpu === 'webgpu') {
+      const renderer = await this.webgpuRenderer();
+      if (renderer) return { renderer, gpu: true };
+    }
+    return { renderer: this.webglRenderer(), gpu: false };
+  }
+
+  private webglRenderer(): THREE.WebGLRenderer {
     const renderer = new THREE.WebGLRenderer({
       canvas: this.canvas, antialias: true, powerPreference: 'high-performance',
       preserveDrawingBuffer: this.options.capture || this.options.check === 'look',
@@ -101,13 +116,41 @@ export class StageBuilder {
     return renderer;
   }
 
-  private scene(renderer: THREE.WebGLRenderer): { scene: THREE.Scene; fog: THREE.FogExp2; backdrop: WaterBackdrop } {
+  /** Creates the WebGPU renderer, or null when WebGPU is unavailable or init fails (falls back to WebGL). */
+  private async webgpuRenderer(): Promise<WebGPURenderer | null> {
+    if (typeof navigator === 'undefined' || !('gpu' in navigator) || !navigator.gpu) return null;
+    try {
+      const wg = await loadTsl();
+      const renderer = new wg.WebGPURenderer({
+        canvas: this.canvas, antialias: true, powerPreference: 'high-performance',
+      });
+      await renderer.init();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      renderer.toneMapping = this.options.tone.mapping;
+      renderer.toneMappingExposure = BASE_EXPOSURE * this.options.tone.gain;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.shadowMap.enabled = true;
+      return renderer;
+    } catch (e) {
+      console.warn('WebGPU renderer unavailable, falling back to WebGL2', e instanceof Error ? e.message : e);
+      return null;
+    }
+  }
+
+  private scene(renderer: RendererLike, gpu: boolean): { scene: THREE.Scene; fog: THREE.FogExp2; backdrop: WaterBackdrop | null } {
     const scene = new THREE.Scene();
-    const backdrop = makeWaterBackdrop();
-    scene.add(backdrop);
     const fog = new THREE.FogExp2(INSCATTER_DAY.clone(), FOG_DENSITY);   // colour = inscatter radiance, density = turbidity
     scene.fog = fog;
-    scene.environment = makeEnvironment(renderer);
+    if (gpu) {
+      // The backdrop and PMREM environment are ShaderMaterial GLSL; the WebGPU path uses a flat
+      // open-water clear colour and stock exponential fog instead (see notes/webgpu-plan.md).
+      scene.background = INSCATTER_DAY.clone();
+      return { scene, fog, backdrop: null };
+    }
+    const backdrop = makeWaterBackdrop();
+    scene.add(backdrop);
+    scene.environment = makeEnvironment(renderer as THREE.WebGLRenderer);
     scene.environmentIntensity = ENVIRONMENT_INTENSITY;
     return { scene, fog, backdrop };
   }

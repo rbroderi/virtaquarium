@@ -43,11 +43,11 @@ export interface TankParts {
   readonly critters: readonly Critter[];
   readonly snow: MarineSnow;
   readonly bubbles: Bubbles | null;
-  readonly surface: WaterSurface;
+  readonly surface: WaterSurface | null;
   readonly lighting: LightingController;
   readonly daylight: DaylightSource;
   readonly feeder: Feeder;
-  readonly ao: ScreenAO;
+  readonly ao: ScreenAO | null;
   readonly isJellyTank: boolean;
   readonly drift: boolean;
   readonly motionBlur: boolean;
@@ -100,7 +100,7 @@ export class TankLoop {
   step(dt: number): void {
     const { stage, world, jellies, critters, snow, bubbles } = this.parts;
     // Motion blur (water.ts): poses before this step are the previous ones.
-    if (this.parts.motionBlur) {
+    if (this.parts.motionBlur && stage.water) {
       stage.water.markPrev(world.fish.map((f) => f.model), stage.camera);
       stage.water.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
     }
@@ -113,7 +113,7 @@ export class TankLoop {
     for (const j of jellies) j.update(dt, world, jellies);
     for (const c of critters) c.update(dt, world);
     updateWaves(this.time);
-    if (!this.parts.isJellyTank) stage.caustics.update();   // no surface in view in the jelly tank
+    if (!this.parts.isJellyTank && stage.caustics) stage.caustics.update();   // no surface in view in the jelly tank
     snow.update(dt, this.time, this.flow);
     bubbles?.update(dt, this.time, this.flow, world.light);
     if (this.parts.drift) this.driftCamera();
@@ -124,12 +124,19 @@ export class TankLoop {
 
   present(): void {
     const { stage, ao } = this.parts;
-    if (!stage.photo) stage.water.render(stage.scene, stage.camera, stage.sun);
-    else {
-      stage.water.render(stage.scene, stage.camera, stage.sun, stage.photo.begin());
-      stage.photo.finish(stage.water.target.depthTexture, stage.camera, this.time);
+    if (stage.gpu) {
+      // WebGPU: no water post pass yet, draw the scene straight to the screen (async on the backend).
+      void stage.renderer.render(stage.scene, stage.camera);
+      return;
     }
-    if (reefLightUniforms.uRLOn.value) ao.update(stage.water.target.depthTexture, stage.camera);   // read by the next frame
+    const water = stage.water;
+    if (!water) return;
+    if (!stage.photo) water.render(stage.scene, stage.camera, stage.sun);
+    else {
+      water.render(stage.scene, stage.camera, stage.sun, stage.photo.begin());
+      stage.photo.finish(water.target.depthTexture, stage.camera, this.time);
+    }
+    if (reefLightUniforms.uRLOn.value && ao) ao.update(water.target.depthTexture, stage.camera);   // read by the next frame
   }
 
   /** Track the canvas size every frame (window moves between monitors, panes resize without events). */

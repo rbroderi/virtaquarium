@@ -30,10 +30,13 @@ export interface UIWorld {
   readonly fish: readonly Fish[];
 }
 
+/** The renderer surface the UI needs (both WebGL and WebGPU renderers expose `domElement`). */
+interface RendererSurface { readonly domElement: HTMLCanvasElement }
+
 export interface UIOptions {
   readonly world: UIWorld;
   readonly camera: THREE.Camera;
-  readonly renderer: THREE.WebGLRenderer;
+  readonly renderer: RendererSurface;
   /** Food requested at x (world units). */
   readonly onFeed: (x: number) => void;
 }
@@ -58,7 +61,7 @@ export class UI {
   private readonly tagOf = new Map<Fish, HTMLDivElement>();
   private readonly world: UIWorld;
   private readonly camera: THREE.Camera;
-  private readonly renderer: THREE.WebGLRenderer;
+  private readonly renderer: RendererSurface;
   private readonly onFeed: (x: number) => void;
 
   constructor({ world, camera, renderer, onFeed }: UIOptions) {
