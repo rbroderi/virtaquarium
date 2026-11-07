@@ -7,6 +7,7 @@ import {
   Caustics, WaterRenderer, type WaterBackdrop,
 } from '../water.js';
 import { underwaterBackgroundNode, underwaterFogNode } from '../water/webgpuMedium.js';
+import { causticDirectionalLightNode, WebGpuCaustics } from '../water/webgpuCaustics.js';
 import { loadTsl } from '../webgpu/tsl.js';
 import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
 import { setView, panAt } from '../view.js';
@@ -57,7 +58,7 @@ export interface Stage {
   readonly sun: THREE.DirectionalLight;
   readonly hemi: THREE.HemisphereLight;
   readonly rig: LightRig;
-  readonly caustics: Caustics | null;
+  readonly caustics: Caustics | WebGpuCaustics | null;
   readonly water: WaterRenderer | null;
   readonly photo: PhotoCamera | null;
   /** Re-aim the camera's zoomed window for time t (view.ts pan). */
@@ -87,7 +88,7 @@ export class StageBuilder {
     // The fixture's light refracts through the moving surface: simulated caustics on every surface,
     // and light shafts where the focused light crosses the water (WebGL-only; WebGPU renders directly).
     if (!gpu) setSunDirection(sun.position);
-    const caustics = gpu ? null : new Caustics(renderer as THREE.WebGLRenderer);
+    const caustics = gpu ? new WebGpuCaustics(renderer as WebGPURenderer) : new Caustics(renderer as THREE.WebGLRenderer);
     const water = gpu ? null : new WaterRenderer(renderer as THREE.WebGLRenderer);
     const hemi = new THREE.HemisphereLight(HEMI_SKY, HEMI_GROUND, 1.0);
     scene.add(hemi);
@@ -133,7 +134,7 @@ export class StageBuilder {
       // three/webgpu is a self-contained build, so its node library is keyed by that build's light
       // classes; register the core-three light classes (the scene graph's) so the lights actually
       // light the auto-converted node materials instead of being skipped as "not found".
-      renderer.library.addLight(wg.DirectionalLightNode, THREE.DirectionalLight);
+      renderer.library.addLight(causticDirectionalLightNode(wg), THREE.DirectionalLight);
       renderer.library.addLight(wg.HemisphereLightNode, THREE.HemisphereLight);
       renderer.library.addLight(wg.PointLightNode, THREE.PointLight);
       renderer.library.addLight(wg.SpotLightNode, THREE.SpotLight);

@@ -11,10 +11,10 @@ import * as THREE from 'three';
 import { SURFACE_Y } from './medium.js';
 import { WAVE_GLSL, WAVE_TILE, waveUniforms } from './waves.js';
 
-const CAUSTIC_RES = 512;
+export const CAUSTIC_RES = 512;
 /** Seawater refractive index at ~650, 550, 450 nm. */
-const SEAWATER_IOR = [1.3370, 1.3405, 1.3445] as const;
-const GREEN_IOR = SEAWATER_IOR[1];
+export const SEAWATER_IOR = [1.3370, 1.3405, 1.3445] as const;
+export const GREEN_IOR = SEAWATER_IOR[1];
 const DEPTH_LAYERS = 3;
 const RGBA_BYTES = 4;
 const DEFAULT_GRID = 288;
@@ -112,7 +112,7 @@ export interface CausticsOptions {
 }
 
 /** Snell refraction through a flat (y-up) surface, for a downward direction. */
-function refractDir(incident: THREE.Vector3, eta: number): THREE.Vector3 {
+export function refractDir(incident: THREE.Vector3, eta: number): THREE.Vector3 {
   const ci = -incident.y, k = 1 - eta * eta * (1 - ci * ci);
   return new THREE.Vector3(incident.x * eta, incident.y * eta - (Math.sqrt(Math.max(0, k)) - eta * ci), incident.z * eta).normalize();
 }

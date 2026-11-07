@@ -209,7 +209,7 @@ async function main(): Promise<void> {
   // checks that run there (look, motion, critters) only touch the common surface and the world.
   const aquarium: AquariumHandle = {
     THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies, critters, SPECIES,
-    caustics: stage.caustics as NonNullable<Stage['caustics']>, water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as NonNullable<typeof surface>, daylight,
+    caustics: stage.caustics as unknown as AquariumHandle['caustics'], water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as NonNullable<typeof surface>, daylight,
     setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
   };
   debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging
