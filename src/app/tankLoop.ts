@@ -185,7 +185,7 @@ export class TankLoop {
   /** Autofocus on the fish nearest the middle of the frame, as a camera's centre AF point would. */
   private autofocus(dt: number): void {
     const { stage, world } = this.parts;
-    const photo = stage.photo;
+    const photo = stage.photo ?? stage.post?.photo;
     if (!photo) return;
     let best = null, bestDist = Infinity;
     for (const f of world.fish) {

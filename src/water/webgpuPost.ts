@@ -10,6 +10,7 @@ import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
 import type { WebGPURenderer } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
 import { getGpuCausticState, shaftCausticNode } from './webgpuCaustics.js';
+import { GpuPhotoCamera, type GpuPhotoOptions } from '../webgpu/photo.js';
 import { METRES_PER_UNIT, SURFACE_Y, GLASS_Z } from './medium.js';
 import type { ShaftLight } from './renderer.js';
 
@@ -52,6 +53,8 @@ export interface WebGpuWaterPostOptions {
   readonly scatterPerMetre?: number;
   /** Per-object motion blur (a separate half-res velocity pass). */
   readonly motionBlur?: boolean;
+  /** The photo camera (depth of field, lens fall-off, grain) on top of the composite. */
+  readonly photo?: GpuPhotoOptions | null;
 }
 
 /** The WebGPU counterpart of WaterRenderer: the HDR scene pass and the shaft/motion-blur composite. */
@@ -61,6 +64,8 @@ export class WebGpuWaterPost {
   readonly depthNode: NodeObject;
   /** The linear HDR composite (shafts + motion blur), before tone mapping. */
   readonly compositeNode: NodeObject;
+  /** The photo camera output on top of the composite, or null when photo is off. */
+  readonly photo: GpuPhotoCamera | null = null;
   /** Shutter time / step time; 0 turns the motion blur off. Set by the caller. */
   blurScale = 0;
 
@@ -78,7 +83,7 @@ export class WebGpuWaterPost {
     private readonly renderer: WebGPURenderer,
     private readonly scene: THREE.Scene,
     camera: THREE.PerspectiveCamera,
-    { scatterPerMetre = DEFAULT_SCATTER_PER_METRE, motionBlur = false }: WebGpuWaterPostOptions = {},
+    { scatterPerMetre = DEFAULT_SCATTER_PER_METRE, motionBlur = false, photo = null }: WebGpuWaterPostOptions = {},
   ) {
     const t = tsl();
     this.scenePass = t.pass(scene, camera, { samples: MSAA_SAMPLES }) as ShaderNodeObject<import('three/webgpu').PassNode>;
@@ -178,7 +183,13 @@ export class WebGpuWaterPost {
       return t.vec4(t.max(col.add(acc.mul(WB)), t.vec3(0)), t.float(1));
     })();
 
-    this.post = new t.PostProcessing(renderer, this.compositeNode);
+    if (photo) {
+      // The photo's depth-of-field gather re-samples the composite at arbitrary uvs, so it must be a
+      // texture (as WebGL renders it into photo.begin()); render the composite through an RTT first.
+      const compositeTex = t.convertToTexture(this.compositeNode) as unknown as NodeObject;
+      this.photo = new GpuPhotoCamera(compositeTex, this.depthNode, photo);
+    }
+    this.post = new t.PostProcessing(renderer, this.photo ? this.photo.outputNode : this.compositeNode);
   }
 
   /** Publish the current sun colour (times its intensity), as the shaft pass sees it. */
@@ -197,12 +208,16 @@ export class WebGpuWaterPost {
   }
 
   /** Draw the scene and composite it to the screen (async on the backend). */
-  render(camera: THREE.PerspectiveCamera, _t: number): void {
+  render(camera: THREE.PerspectiveCamera, t: number): void {
     this.uBlur.value = this.blurScale;
     camera.updateMatrixWorld();
     this.uProjInv.value.copy(camera.projectionMatrixInverse);
     this.uViewInv.value.copy(camera.matrixWorld);
     this.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
+    if (this.photo) {
+      this.renderer.getDrawingBufferSize(this.size);
+      this.photo.update(camera, t, this.size);
+    }
     if (this.velocityMaterial && this.velocityTarget && this.blurScale > 0) this.renderVelocity(camera);
     this.post.render();
   }

@@ -96,7 +96,10 @@ export class StageBuilder {
     const water = gpu ? null : new WaterRenderer(renderer as THREE.WebGLRenderer);
     // The shaft + motion-blur composite on the WebGPU path (the WebGL path is WaterRenderer above).
     const post = gpu
-      ? new WebGpuWaterPost(renderer as WebGPURenderer, scene, camera, { motionBlur: this.options.motionBlur })
+      ? new WebGpuWaterPost(renderer as WebGPURenderer, scene, camera, {
+          motionBlur: this.options.motionBlur,
+          photo: this.options.photo ? { fNumber: this.options.fNumber, iso: PHOTO_ISO, glass: this.options.glass } : null,
+        })
       : null;
     const hemi = new THREE.HemisphereLight(HEMI_SKY, HEMI_GROUND, 1.0);
     scene.add(hemi);
