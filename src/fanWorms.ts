@@ -20,6 +20,7 @@ import { organicPass, type OrganicOptions } from './core/organic.js';
 import type { SolidField } from './rockField.js';
 import { markNoHeight } from './reef/flags.js';
 import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
+import { waterTimeNode } from './webgpu/timeUniform.js';
 import type { Node, ShaderNodeObject, UniformArrayNode, UniformNode } from 'three/webgpu';
 
 /** Worms (the uRetract uniform array's size). */
@@ -198,7 +199,6 @@ export class FanWorms {
   readonly group = new THREE.Group();
   readonly worms: FanWorm[];
   private readonly uRetract = { value: new Float32Array(MAX_WORMS) };
-  private gpuTimeNode: ShaderNodeObject<UniformNode<number>> | null = null;
 
   constructor(rng: Rng, field: SolidField | null, heightAt: HeightSampler, options: FanWormOptions) {
     this.group.name = 'fanWorms';
@@ -297,22 +297,8 @@ export class FanWorms {
       // See crownMaterial(): blended, not cut out, so the mip-averaged pinnule alpha stays gauzy.
       map: tex, transparent: true, depthWrite: false, alphaTest: 0.03, side: THREE.DoubleSide, roughness: 0.6,
     });
-    mat.positionNode = this.crownPositionNode(uRetract, this.gpuTime());
+    mat.positionNode = this.crownPositionNode(uRetract, waterTimeNode());
     return mat;
-  }
-
-  /** Bridges waterUniforms.uTime (advanced by the tank loop) to a TSL uniform node, once per tank. */
-  private gpuTime(): ShaderNodeObject<UniformNode<number>> {
-    if (this.gpuTimeNode) return this.gpuTimeNode;
-    const node = tsl().uniform(waterUniforms.uTime.value);
-    Object.defineProperty(waterUniforms.uTime, 'value', {
-      get: (): number => node.value,
-      set: (v: number): void => { node.value = v; },
-      configurable: true,
-      enumerable: true,
-    });
-    this.gpuTimeNode = node;
-    return node;
   }
 
   /** TSL port of the radiole flare/curl/fold in crownMaterial()'s begin_vertex patch. */

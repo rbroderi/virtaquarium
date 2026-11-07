@@ -2,12 +2,20 @@
 // plants with the water.
 import * as THREE from 'three';
 import { addCaustics, waterUniforms } from '../water.js';
-import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishUniforms } from './fishPush.js';
+import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishPushBend, fishUniforms } from './fishPush.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { waterTimeNode } from '../webgpu/timeUniform.js';
+import type { Node } from 'three/webgpu';
 
 const GLSL_DIGITS = 4;
 
-/** A caustic-lit MeshStandardMaterial (water.ts addCaustics). */
-export function stdMat(params: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
+/** A caustic-lit MeshStandardMaterial (water.ts addCaustics); under WebGPU the caustic GLSL is dead,
+ *  so the same parameters become a plain MeshStandardNodeMaterial. */
+export function stdMat(params: THREE.MeshStandardMaterialParameters): THREE.Material {
+  if (gpuActive()) {
+    const t = tsl();
+    return new t.MeshStandardNodeMaterial(params);
+  }
   return addCaustics(new THREE.MeshStandardMaterial(params));
 }
 
@@ -22,9 +30,36 @@ export interface SwayOptions {
   readonly hTop?: number;
   /** Also part from nearby fish (a fixed-size uniform array updated once a frame). */
   readonly fishPush?: boolean;
+  /** The mesh is an InstancedMesh carrying the aInst0..aInst3 instance-matrix attributes. */
+  readonly instanced?: boolean;
 }
 
 const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
+
+/** TSL port of the sway's begin_vertex patch: the same h^2 bend from the piece's world position. */
+function swayNode(options: Required<Pick<SwayOptions, 'ax' | 'az' | 'hz' | 'hTop' | 'fishPush' | 'instanced'>>): Node {
+  const t = tsl();
+  const { ax, az, hz, hTop, fishPush, instanced } = options;
+  const time = waterTimeNode();
+  return t.Fn(() => {
+    const p = t.positionLocal.toVar();
+    const h = t.clamp(p.y.div(t.float(hTop)), t.float(0), t.float(1));
+    const ph = instanced
+      ? t.attribute('aInst3', 'vec4').x.mul(t.float(1.7)).add(t.attribute('aInst3', 'vec4').z.mul(t.float(2.3)))
+      : t.modelPosition.x.mul(t.float(1.7)).add(t.modelPosition.z.mul(t.float(2.3)));
+    const s = t.sin(time.mul(t.float(hz)).add(ph))
+      .add(t.float(0.35).mul(t.sin(time.mul(t.float(hz * 2.3)).add(ph.mul(t.float(1.9))))));
+    const out = p.toVar();
+    out.x.addAssign(s.mul(t.float(ax)).mul(h).mul(h));
+    out.z.addAssign(t.cos(time.mul(t.float(hz * 0.8)).add(ph.mul(t.float(1.3)))).mul(t.float(az)).mul(h).mul(h));
+    if (fishPush && instanced) {
+      return fishPushBend(out, h,
+        t.attribute('aInst0', 'vec4'), t.attribute('aInst1', 'vec4'),
+        t.attribute('aInst2', 'vec4'), t.attribute('aInst3', 'vec4'));
+    }
+    return out;
+  })();
+}
 
 /**
  * Soft tissue and plants sway with the water. h = height up the model (0 at the base, 1 at the top,
@@ -36,6 +71,13 @@ export function addSway<M extends THREE.Material>(mat: M, key: string, options: 
   const ax = options.ax ?? SWAY_DEFAULTS.ax, az = options.az ?? SWAY_DEFAULTS.az;
   const hz = options.hz ?? SWAY_DEFAULTS.hz, hTop = options.hTop ?? SWAY_DEFAULTS.hTop;
   const fishPush = options.fishPush ?? false;
+  const instanced = options.instanced ?? false;
+  if (gpuActive()) {
+    // WebGPURenderer never runs onBeforeCompile, so the GLSL below is dead; the same bend goes through
+    // a positionNode instead (the instance matrix arrives as per-instance attributes).
+    (mat as unknown as { positionNode: Node | null }).positionNode = swayNode({ ax, az, hz, hTop, fishPush, instanced });
+    return mat;
+  }
   const prev = mat.onBeforeCompile.bind(mat);
   const f = (x: number): string => x.toFixed(GLSL_DIGITS);
   mat.onBeforeCompile = (shader, r) => {

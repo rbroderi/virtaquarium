@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import { Noise, clamp, mulberry32, range, type Rng } from '../util.js';
 import { addTranslucency } from '../softSkin.js';
 import { addSway, stdMat } from './materials.js';
+import { addSwayInstanceAttrs } from './fishPush.js';
+import { gpuActive } from '../webgpu/tsl.js';
 import { GOLDEN_ANGLE, UP, color, lathe, scratch } from './geometry.js';
 
 /** Own seeded streams, so the reef's rng draws stay as they were before the anemone was reworked. */
@@ -72,7 +74,7 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
   const tg = lathe(TENTACLE_PROFILE, 8, tentacleColors());
   const mat = addSway(
     addTranslucency(stdMat({ vertexColors: true, roughness: 0.5 }), { wrap: 0.5, back: 0.9, tint: [1.0, 0.55, 0.6], thin: 0.7 }),
-    'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: TENTACLE_HEIGHT, fishPush: true },
+    'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: TENTACLE_HEIGHT, fishPush: true, instanced: true },
   );
   const tent = new THREE.InstancedMesh(tg, mat, TENTACLES);
   const girth = mulberry32(GIRTH_SEED);   // per-tentacle bulb size, off the reef's rng
@@ -90,6 +92,7 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
     m.compose(p.set(Math.cos(th) * r, discHeight(r) - 0.008, Math.sin(th) * r), q, s.set(size * g, size * range(rng, 0.85, 1.15) * (0.9 + 0.2 * jitter()), size * g * (0.9 + 0.2 * jitter())));
     tent.setMatrixAt(i, m);
   }
+  if (gpuActive()) addSwayInstanceAttrs(tent);   // the TSL sway/fish push reads the instance matrix this way
   tent.castShadow = true;
   return tent;
 }
