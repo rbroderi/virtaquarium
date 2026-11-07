@@ -38,6 +38,11 @@ export const CAMERA_LOOK = new THREE.Vector3(0, 3.9, 0);
 
 const SHADOW_MAP_SIZE = 2048;
 const SHADOW_BOX = { halfWidthPerTank: 0.75, top: 9, bottom: -9, near: 5, far: 40 } as const;
+/** Look checks compare a WebGL frame with a WebGPU one, but headless Chrome gives the two backends
+ *  windows of different inner height, so the aspect (and the tank width built from it) drifted between
+ *  them and the two runs rendered different scenes. A look check pins the canvas to one CSS size so both
+ *  backends build the same tank and render the same pixels. */
+const CHECK_VIEW = { width: 1600, height: 900 } as const;
 const SHADOW_BIAS = -0.0004;
 const SHADOW_NORMAL_BIAS = 0.03;
 const SHADOW_RADIUS = 4;
@@ -80,7 +85,14 @@ export class StageBuilder {
     const { renderer, gpu } = await this.renderer();
     if (!gpu) installUnderwaterMedium();   // physically based water: per-channel absorption + scattering
     const { scene, fog, backdrop } = this.scene(renderer, gpu);
-    const aspect = window.innerWidth > 0 && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : FALLBACK_ASPECT;
+    const checkView = this.options.check === 'look' ? CHECK_VIEW : null;
+    if (checkView) {
+      this.canvas.style.width = `${checkView.width}px`;
+      this.canvas.style.height = `${checkView.height}px`;
+    }
+    const aspect = checkView
+      ? checkView.width / checkView.height
+      : window.innerWidth > 0 && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : FALLBACK_ASPECT;
     const tankWidth = tankWidthFor(aspect);
     const camera = this.camera(aspect);
     const frameView = (t: number): void => setView(

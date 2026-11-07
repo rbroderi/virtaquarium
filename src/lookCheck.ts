@@ -11,6 +11,12 @@
 // compared over time without opening the pictures.
 import * as THREE from 'three';
 import type { AquariumHandle } from './app/handle.js';
+import { addCaustics } from './water/materials.js';
+import { causticUniforms } from './water/caustics.js';
+import { waveUniforms } from './water/waves.js';
+import { installReefLight } from './reefLight/webgpu.js';
+import { reefLightUniforms } from './reefLight/uniforms.js';
+import { gpuActive, tsl } from './webgpu/tsl.js';
 import { context2d } from './util.js';
 import { canvasToBlob, postDone, saveFile, CHECK_OUT_DIR } from './checks/report.js';
 
@@ -43,7 +49,13 @@ async function frameCanvas(aq: AquariumHandle): Promise<HTMLCanvasElement> {
   const out = document.createElement('canvas');
   out.width = canvas.width;
   out.height = canvas.height;
-  context2d(out).drawImage(bitmap, 0, 0, out.width, out.height);
+  // The screenshot is the whole page viewport, not the canvas: a look check pins the canvas to a fixed
+  // CSS size (stage.ts CHECK_VIEW) smaller than the window, so crop to the canvas rectangle first.
+  const rect = canvas.getBoundingClientRect();
+  const scale = bitmap.width / Math.max(1, window.innerWidth);
+  context2d(out).drawImage(
+    bitmap, rect.left * scale, rect.top * scale, rect.width * scale, rect.height * scale,
+    0, 0, out.width, out.height);
   bitmap.close();
   return out;
 }
@@ -72,7 +84,22 @@ export async function main(aq: AquariumHandle): Promise<void> {
   if (hide.includes('fish')) for (const f of world.fish) f.model.visible = false;
   if (hide.length) aq.scene.traverse((o) => { if (hide.includes(o.name)) o.visible = false; });
   aq.fitCanvas();
+  {
+    // A look check builds one pinned frame size on both backends (stage.ts CHECK_VIEW); log the geometry
+    // so a run can prove two captures came from the same scene, not just the same seed.
+    const c = aq.renderer.domElement;
+    console.log('look frame', JSON.stringify({
+      window: [window.innerWidth, window.innerHeight], css: [c.clientWidth, c.clientHeight],
+      px: [c.width, c.height], aspect: aq.camera.aspect,
+    }));
+  }
   if (q.get('series')) return series(aq, Number(q.get('series')), Number(q.get('dt') || DT));
+  if (q.get('probe') === 'lights') return probeLights(aq, at[0] ?? 5);
+  if (q.get('probe') === 'caufield') return probeCausticField(aq, at[0] ?? 5);
+  if (q.get('probe') === 'envtex') return probeEnvTex(aq, at[0] ?? 5);
+  if (q.get('probe') === 'envconst') return probeEnvConst(aq, at[0] ?? 5);
+  if (q.get('probe') === 'sphere') return probeSphere(aq, at[0] ?? 5);
+  if (q.get('probe') === 'wrap') return probeWrap(aq, at[0] ?? 5);
   const files: string[] = [], stats: FrameStats[] = [];
   let t = 0;
   for (const target of at) {
@@ -92,6 +119,523 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const report = { files, stats, station };
   console.log('look check', JSON.stringify(report));
   await postDone(JSON.stringify(report));
+}
+
+/** ?probe=lights: mean luminance with each light term alone (sun / hemi / environment), for comparing
+ *  two backends without hunting for a region: a term the backends treat differently shows as a
+ *  different contribution to the frame. */
+async function probeLights(aq: AquariumHandle, target: number): Promise<void> {
+  const tag = new URLSearchParams(location.search).get('tag') || 'probe';
+  for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
+  const { scene } = aq;
+  const suns: THREE.DirectionalLight[] = [], hemis: THREE.HemisphereLight[] = [];
+  scene.traverse((o) => {
+    if ((o as THREE.DirectionalLight).isDirectionalLight) suns.push(o as THREE.DirectionalLight);
+    if ((o as THREE.HemisphereLight).isHemisphereLight) hemis.push(o as THREE.HemisphereLight);
+  });
+  const sunIntensity = suns.map((l) => l.intensity), hemiIntensity = hemis.map((l) => l.intensity);
+  const envIntensity = scene.environmentIntensity;
+  // The sun's two multipliers on the direct term: the simulated caustic factor (pushing the depth
+  // layers past any surface makes causticAt return 1 on both backends) and the shadow map.
+  const cauDepth = causticUniforms.uCauDepth.value.clone();
+  const setCau = (on: boolean): void => {
+    if (on) causticUniforms.uCauDepth.value.copy(cauDepth);
+    else causticUniforms.uCauDepth.value.set(1e3, 2e3, 3e3);
+  };
+  const setShadow = (on: boolean): void => { for (const l of suns) l.shadow.intensity = on ? 1 : 0; };
+  // Flat water (every wave amplitude zero) refracts uniformly, so causticAt has to return 1 everywhere:
+  // a term that differs from the caustic-off variant with flat water is the lookup, not the simulation.
+  const amps = waveUniforms.uWaves.value.map((v) => v.z);
+  const setWaves = (on: boolean): void => {
+    waveUniforms.uWaves.value.forEach((v, i) => { v.z = on ? amps[i] ?? 0 : 0; });
+  };
+  const setTerms = (sun: boolean, hemi: boolean, env: number): void => {
+    suns.forEach((l, i) => { l.intensity = sun ? sunIntensity[i] ?? 0 : 0; });
+    hemis.forEach((l, i) => { l.intensity = hemi ? hemiIntensity[i] ?? 0 : 0; });
+    scene.environmentIntensity = envIntensity * env;
+  };
+  const variants = [
+    ['all', true, true, 1], ['sun', true, false, 0], ['hemi', false, true, 0],
+    ['env', false, false, 1], ['none', false, false, 0],
+    ['envx2', false, false, 2], ['envx5', false, false, 5], ['envx12', false, false, 12],
+    // The sun alone, with each of its two multipliers off in turn (see setCau / setShadow).
+    ['sun-nocau', true, false, 0], ['sun-noshadow', true, false, 0], ['sun-plain', true, false, 0],
+    ['sun-flat', true, false, 0],
+  ] as const;
+  const stats: ({ terms: string } & FrameStats)[] = [];
+  for (const [terms, sun, hemi, env] of variants) {
+    setTerms(sun, hemi, env);
+    setCau(!terms.includes('nocau') && !terms.endsWith('-plain'));
+    setShadow(!terms.includes('noshadow') && !terms.endsWith('-plain'));
+    setWaves(!terms.endsWith('-flat'));
+    // The caustic texture is only re-simulated inside the loop's step (which also re-applies the light
+    // rig and would undo setTerms), so re-simulate it here, after changing the waves.
+    aq.caustics?.update();
+    await aq.present();
+    await settle();
+    const shot = await frameCanvas(aq);
+    stats.push({ terms, t: target, ...measure(shot) });
+    await saveFile(`${CHECK_OUT_DIR}look-${tag}-${terms}-${target}s.png`, await canvasToBlob(shot));
+  }
+  setTerms(true, true, 1);
+  setCau(true);
+  setShadow(true);
+  setWaves(true);
+  console.log('look probe', JSON.stringify({ stats }));
+  await postDone(JSON.stringify({ stats }));
+}
+
+/** ?probe=caufield: read the simulated caustic field back (depth layer 1) and report its per-channel
+ *  mean and a 4x4 box mean. Both backends must simulate the same field: the sun's caustic factor is the
+ *  one term the two frames disagreed on, and this field is what feeds it. */
+async function probeCausticField(aq: AquariumHandle, target: number): Promise<void> {
+  for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
+  const cau = aq.caustics as unknown as { target?: THREE.WebGLArrayRenderTarget; targets?: THREE.RenderTarget[] };
+  let report: Record<string, unknown>;
+  if (isWebGpu(aq)) {
+    const rt = cau.targets?.[1];
+    if (!rt) { await postDone(JSON.stringify({ error: 'no gpu caustic target' })); return; }
+    const r = aq.renderer as unknown as {
+      readRenderTargetPixelsAsync(rt: THREE.RenderTarget, x: number, y: number, w: number, h: number): Promise<ArrayLike<number>>;
+    };
+    const decode = rt.texture.type === THREE.HalfFloatType ? halfToFloat : (v: number): number => v / 255;
+    report = { tex: texInfo(rt.texture), ...fieldStats(await r.readRenderTargetPixelsAsync(rt, 0, 0, rt.width, rt.height), rt.width, rt.height, decode) };
+  } else {
+    const rt = cau.target;
+    if (!rt) { await postDone(JSON.stringify({ error: 'no gl caustic target' })); return; }
+    const r = aq.renderer as THREE.WebGLRenderer, prev = r.getRenderTarget();
+    r.setRenderTarget(rt, 1);   // the array framebuffer stays on the layer last rendered to
+    const px = new Uint8Array(rt.width * rt.height * 4);   // three's array target is RGBA8 (see texInfo)
+    r.readRenderTargetPixels(rt, 0, 0, rt.width, rt.height, px as unknown as Float32Array);
+    r.setRenderTarget(prev);
+    report = { tex: texInfo(rt.texture), ...fieldStats(px, rt.width, rt.height, (v) => v / 255) };
+  }
+  console.log('look caustic field', JSON.stringify(report));
+  await postDone(JSON.stringify(report));
+}
+
+/** The sampler the lookup actually gets (three may not apply the options the target was built with). */
+function texInfo(t: THREE.Texture): Record<string, unknown> {
+  return {
+    type: t.type, format: t.format, wrap: [t.wrapS, t.wrapT], filter: [t.magFilter, t.minFilter],
+    mips: t.generateMipmaps, size: [t.image.width, t.image.height],
+  };
+}
+
+/** Per-channel mean of a readback and the mean of 4x4-pixel block averages (roughly what a blurred mip
+ *  level reads). `zero` is the fraction of texels still at the clear colour. */
+function fieldStats(px: ArrayLike<number>, w: number, h: number, decode: (v: number) => number): { mean: number[]; box: number[]; zero: number; max: number } {
+  const sum = [0, 0, 0], box = [0, 0, 0];
+  const add = (a: number[], i: number, v: number): void => { a[i] = (a[i] ?? 0) + v; };
+  let zero = 0, max = 0;
+  for (let y = 0; y < h; y += 4) {
+    for (let x = 0; x < w; x += 4) {
+      const block = [0, 0, 0];
+      for (let dy = 0; dy < 4; dy++) {
+        for (let dx = 0; dx < 4; dx++) {
+          const i = ((y + dy) * w + (x + dx)) * 4;
+          const rgb = [decode(px[i] ?? 0), decode(px[i + 1] ?? 0), decode(px[i + 2] ?? 0)];
+          rgb.forEach((v, c) => { add(block, c, v); add(sum, c, v); });
+          if (rgb[0] === 0 && rgb[1] === 0 && rgb[2] === 0) zero++;
+          max = Math.max(max, ...rgb.filter(Number.isFinite));
+        }
+      }
+      block.forEach((v, c) => add(box, c, v / 16));
+    }
+  }
+  const n = w * h, blocks = Math.ceil(w / 4) * Math.ceil(h / 4);
+  const round = (v: number): number => +v.toFixed(3);
+  return { mean: sum.map((v) => round(v / n)), box: box.map((v) => round(v / blocks)), zero: round(zero / n), max: round(max) };
+}
+
+/** ?probe=envtex: read the PMREM environment back and report the mean radiance of its first mip levels,
+ *  to see whether the node path's environment capture (mip 0) or its blur chain (mips 1+) is dark. */
+async function probeEnvTex(aq: AquariumHandle, target: number): Promise<void> {
+  for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
+  const env = aq.scene.environment as (THREE.Texture & { __pmremTarget?: THREE.RenderTarget }) | null;
+  const rt = env?.__pmremTarget;
+  if (!env || !rt) {
+    await postDone(JSON.stringify({ error: 'no environment render target' }));
+    return;
+  }
+  const w = rt.width, h = rt.height;
+  let pixels: ArrayLike<number>;
+  if (isWebGpu(aq)) {
+    const r = aq.renderer as unknown as {
+      readRenderTargetPixelsAsync: (t: THREE.RenderTarget, x: number, y: number, w: number, h: number) => Promise<ArrayLike<number>>;
+    };
+    pixels = await r.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
+  } else {
+    const buf = new Uint16Array(w * h * 4);
+    (aq.renderer as THREE.WebGLRenderer).readRenderTargetPixels(rt as THREE.WebGLRenderTarget, 0, 0, w, h, buf);
+    pixels = buf;
+  }
+  // CubeUV layout check: a coarse grid of per-cell means, in the read buffer's own row order (bottom-up
+  // for WebGL readPixels, top-down for the WebGPU readback), plus each half's overall mean.
+  const cols = 6, rows = 8;
+  const grid: number[][] = [];
+  const sums = new Map<string, { s: number[]; n: number }>();
+  const half = pixels instanceof Uint16Array;
+  for (let gy = 0; gy < rows; gy++) {
+    const line: number[] = [];
+    for (let gx = 0; gx < cols; gx++) {
+      const cell = { s: [0, 0, 0], n: 0 };
+      for (let y = Math.floor((gy * h) / rows); y < Math.floor(((gy + 1) * h) / rows); y++) {
+        for (let x = Math.floor((gx * w) / cols); x < Math.floor(((gx + 1) * w) / cols); x++) {
+          const i = (y * w + x) * 4;
+          for (let c = 0; c < 3; c++) cell.s[c]! += half ? halfToFloat(pixels[i + c] ?? 0) : pixels[i + c] ?? 0;
+          cell.n++;
+        }
+      }
+      line.push(Number(((cell.s[2] ?? 0) / Math.max(1, cell.n)).toFixed(3)));
+      const key = gy < rows / 2 ? 'top' : 'bottom';
+      const acc = sums.get(key) ?? { s: [0, 0, 0], n: 0 };
+      for (let c = 0; c < 3; c++) acc.s[c]! += cell.s[c]!;
+      acc.n += cell.n;
+      sums.set(key, acc);
+    }
+    grid.push(line);
+  }
+  const halves = [...sums].map(([k, v]) => ({ half: k, rgb: v.s.map((s) => Number((s / v.n).toFixed(4))) }));
+  const info = { size: [w, h], type: env.type, colorSpace: env.colorSpace, grid, halves };
+  console.log('look envtex', JSON.stringify(info));
+  await postDone(JSON.stringify(info));
+}
+
+/** ?probe=envconst: fill the PMREM environment's render target with one constant radiance, then render
+ *  environment-only frames. With every texel identical, the sampled mip/face no longer matters, so a
+ *  backend that still comes out dark has an application/units difference rather than a sampling one. */
+async function probeEnvConst(aq: AquariumHandle, target: number): Promise<void> {
+  const tag = new URLSearchParams(location.search).get('tag') || 'envconst';
+  for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
+  const { scene } = aq;
+  const suns: THREE.DirectionalLight[] = [], hemis: THREE.HemisphereLight[] = [];
+  scene.traverse((o) => {
+    if ((o as THREE.DirectionalLight).isDirectionalLight) suns.push(o as THREE.DirectionalLight);
+    if ((o as THREE.HemisphereLight).isHemisphereLight) hemis.push(o as THREE.HemisphereLight);
+  });
+  suns.forEach((l) => { l.intensity = 0; });
+  hemis.forEach((l) => { l.intensity = 0; });
+  const envIntensity = scene.environmentIntensity;
+  const rt = (scene.environment as (THREE.Texture & { __pmremTarget?: THREE.RenderTarget }) | null)?.__pmremTarget;
+  const stats: ({ terms: string } & FrameStats)[] = [];
+  const shoot = async (terms: string): Promise<void> => {
+    await aq.present();
+    await settle();
+    const shot = await frameCanvas(aq);
+    stats.push({ terms, t: target, ...measure(shot) });
+    await saveFile(`${CHECK_OUT_DIR}look-${tag}-${terms}-${target}s.png`, await canvasToBlob(shot));
+  };
+  scene.environmentIntensity = 0;
+  await shoot('none');
+  if (rt) {
+    const r = aq.renderer as unknown as {
+      getRenderTarget(): THREE.RenderTarget | null;
+      setRenderTarget(t: THREE.RenderTarget | null): void;
+      getClearColor(c: THREE.Color): THREE.Color;
+      setClearColor(c: THREE.Color | number, a?: number): void;
+      getClearAlpha(): number;
+      clear(color?: boolean, depth?: boolean, stencil?: boolean): void;
+    };
+    const prevTarget = r.getRenderTarget(), prevColor = r.getClearColor(new THREE.Color()), prevAlpha = r.getClearAlpha();
+    r.setRenderTarget(rt);
+    r.setClearColor(new THREE.Color(0.3, 0.3, 0.3), 1);   // linear working-space radiance, all directions
+    r.clear(true, false, false);
+    r.setClearColor(prevColor, prevAlpha);
+    r.setRenderTarget(prevTarget);
+  }
+  scene.environmentIntensity = envIntensity;
+  await shoot('const');
+  scene.environmentIntensity = envIntensity * 5;
+  await shoot('constx5');
+  console.log('look envconst', JSON.stringify({ hasTarget: !!rt, stats }));
+  await postDone(JSON.stringify({ hasTarget: !!rt, stats }));
+}
+
+/** ?probe=sphere: three plain white standard spheres in front of the camera — stock, through addCaustics
+ *  (the reef-light wrapper, as every reef material is), and one that also receives shadows — measured
+ *  under each light term and with the caustic factor switched off (uCauDepth pushed far past any
+ *  surface, which makes causticAt return 1 on both backends). Separates "the light is not delivered"
+ *  from "the wrapper drops it" from "the caustic multiplies it by zero". The materials are built the
+ *  way the tank builds them (reef/materials.ts stdMat): a node material on the WebGPU path. */
+async function probeSphere(aq: AquariumHandle, target: number): Promise<void> {
+  const tag = new URLSearchParams(location.search).get('tag') || 'sphere';
+  for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
+  const { scene, camera } = aq;
+  const dir = camera.getWorldDirection(new THREE.Vector3());
+  const centre = camera.position.clone().add(dir.multiplyScalar(6));
+  const mat = (wrap: boolean): THREE.Material => {
+    const params = { color: 0xffffff, roughness: 0.8, metalness: 0 };
+    if (gpuActive()) {
+      const t = tsl();
+      const m = new t.MeshStandardNodeMaterial(params) as unknown as THREE.Material;
+      return wrap ? installReefLight(m) : m;
+    }
+    const m = new THREE.MeshStandardMaterial(params);
+    return wrap ? addCaustics(m) : m;
+  };
+  const make = (dx: number, wrap: boolean): THREE.Mesh => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.6, 32, 16), mat(wrap));
+    m.position.copy(centre).add(new THREE.Vector3(dx, 0, 0));
+    scene.add(m);
+    return m;
+  };
+  const plain = make(-1.4, false);
+  const wrapped = make(0, true);
+  const receiver = make(1.4, true);
+  receiver.receiveShadow = true;
+  const suns: THREE.DirectionalLight[] = [], hemis: THREE.HemisphereLight[] = [];
+  scene.traverse((o) => {
+    if ((o as THREE.DirectionalLight).isDirectionalLight) suns.push(o as THREE.DirectionalLight);
+    if ((o as THREE.HemisphereLight).isHemisphereLight) hemis.push(o as THREE.HemisphereLight);
+  });
+  const sunIntensity = suns.map((l) => l.intensity), hemiIntensity = hemis.map((l) => l.intensity);
+  const envIntensity = scene.environmentIntensity;
+  const cauDepth = causticUniforms.uCauDepth.value.clone();
+  const resetCau = (): void => { causticUniforms.uCauDepth.value.copy(cauDepth); };
+  const noCau = (): void => { causticUniforms.uCauDepth.value.set(1e3, 2e3, 3e3); };
+  const resetShadow = (): void => { for (const l of suns) l.shadow.intensity = 1; };
+  const noShadow = (): void => { for (const l of suns) l.shadow.intensity = 0; };
+  const setTerms = (sun: boolean, hemi: boolean, env: number): void => {
+    suns.forEach((l, i) => { l.intensity = sun ? sunIntensity[i] ?? 0 : 0; });
+    hemis.forEach((l, i) => { l.intensity = hemi ? hemiIntensity[i] ?? 0 : 0; });
+    scene.environmentIntensity = envIntensity * env;
+  };
+  const variants: readonly (readonly [string, boolean, boolean, number, () => void])[] = [
+    ['sun', true, false, 0, resetCau],
+    ['sun-nocau', true, false, 0, noCau],
+    ['sun-nocau-noshadow', true, false, 0, () => { noCau(); noShadow(); }],
+    ['env', false, false, 1, resetCau],
+    ['none', false, false, 0, resetCau],
+  ];
+  const stats: ({ terms: string } & FrameStats)[] = [];
+  for (const [terms, sun, hemi, env, act] of variants) {
+    setTerms(sun, hemi, env);
+    act();
+    await aq.present();
+    await settle();
+    const shot = await frameCanvas(aq);
+    const W = shot.width, H = shot.height;
+    const box = (m: THREE.Mesh): number => {
+      const v = m.position.clone().project(camera);
+      const cx = ((v.x + 1) / 2) * W, cy = ((1 - v.y) / 2) * H, r = H * 0.06;
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      context2d(c).drawImage(shot, cx - r, cy - r, r * 2, r * 2, 0, 0, 64, 64);
+      return measure(c).lum;
+    };
+    stats.push({ terms, t: target, ...measure(shot) });
+    console.log('sphere', JSON.stringify({
+      terms, plain: box(plain), wrapped: box(wrapped), receiver: box(receiver),
+      cau: causticUniforms.uCauDepth.value.toArray().join(','), shadow: suns.map((l) => l.shadow.intensity).join(','),
+    }));
+    await saveFile(`${CHECK_OUT_DIR}look-${tag}-${terms}-${target}s.png`, await canvasToBlob(shot));
+  }
+  setTerms(true, true, 1);
+  resetCau();
+  resetShadow();
+  console.log('look sphere', JSON.stringify({ stats }));
+  await postDone(JSON.stringify({ stats }));
+}
+
+/** ?probe=wrap: why a wrapped (installReefLight) node material renders dimmer on WebGPU than the
+ *  unwrapped one. ONE sphere at one spot whose material is swapped, so every probe sees identical
+ *  framing and background (spheres at different x are not comparable), under all lights, env only, and
+ *  once more with the reef-light gate uniforms forced closed. The no-op wrapper (same overrides
+ *  installReefLight installs, body delegated straight to the inner model) separates "the
+ *  setupLightingModel override itself" from "the wrapper's shader code"; noopkey tests the
+ *  customProgramCacheKey override alone; start/direct/indirect take one wrapper method each. */
+async function probeWrap(aq: AquariumHandle, target: number): Promise<void> {
+  const tag = new URLSearchParams(location.search).get('tag') || 'wrap';
+  for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
+  if (!gpuActive()) { await postDone(JSON.stringify({ error: 'probe=wrap is WebGPU only' })); return; }
+  const { scene, camera } = aq;
+  const t = tsl();
+  const gate = auditGate();
+  // Which material classes the scene actually uses: a reef material built while gpuActive() was false
+  // would be a classic MeshStandardMaterial (converted internally by WebGPURenderer) and would never
+  // carry the reef-light wrapper at all.
+  const census = { node: 0, classic: 0, wrapped: 0, sample: [] as { name: string; type: string; wrapped: boolean }[] };
+  scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const m = mesh.material as (THREE.Material & { isMeshStandardNodeMaterial?: boolean; isMeshPhysicalNodeMaterial?: boolean }) | undefined;
+    if (!m || mesh.isMesh !== true) return;
+    const node = m.isMeshStandardNodeMaterial === true || m.isMeshPhysicalNodeMaterial === true;
+    if (node) census.node++; else census.classic++;
+    const wrapped = Object.prototype.hasOwnProperty.call(m, 'setupLightingModel');
+    if (wrapped) census.wrapped++;
+    if (census.sample.length < 12) census.sample.push({ name: mesh.name || '(unnamed)', type: m.type, wrapped });
+  });
+  console.log('wrap census', JSON.stringify(census));
+  // Save the WGSL of the wrapped materials' modules: the wrapper is the only thing between these
+  // materials, so its emitted code (the gate, rlSky/rlBounce/rlSun, the indirect assignment) is the
+  // evidence, and the harness truncates console lines but not files.
+  const gpuProto = (globalThis as unknown as { GPUDevice?: { prototype: { createShaderModule: (d: { code: string }) => unknown } } }).GPUDevice?.prototype;
+  let dumped = 0;
+  if (gpuProto) {
+    const orig = gpuProto.createShaderModule;
+    gpuProto.createShaderModule = function (this: unknown, desc: { code: string }): unknown {
+      const module = orig.call(this, desc);
+      if (desc.code.includes('rlSky') && dumped < 3) {
+        const name = `wgsl-${tag}-${dumped++}.wgsl`;
+        void saveFile(`${CHECK_OUT_DIR}${name}`, new Blob([desc.code], { type: 'text/plain' }));
+        console.log('wgsl saved', name, desc.code.length);
+      }
+      return module;
+    };
+  }
+  const dir = camera.getWorldDirection(new THREE.Vector3());
+  const centre = camera.position.clone().add(dir.multiplyScalar(8));
+  type NodeMat = { setupLightingModel?: () => unknown; customProgramCacheKey: () => string };
+  const plainMat = (): THREE.Material =>
+    new t.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0 }) as unknown as THREE.Material;
+  /** Node materials with identical params and the same customProgramCacheKey SHARE one shader program,
+   *  so every variant here must carry its own key or it silently renders the first variant's program. */
+  const uniq = (m: THREE.Material, k: string): THREE.Material => {
+    const nm = m as unknown as NodeMat;
+    const prevKey = nm.customProgramCacheKey.bind(m);
+    nm.customProgramCacheKey = () => prevKey() + `|${k}`;
+    return m;
+  };
+  type Model = { start: (...a: unknown[]) => void; direct: (...a: unknown[]) => void; indirect: (...a: unknown[]) => void; finish: (...a: unknown[]) => void };
+  /** The reef wrapper's own model, but only the named methods come from it; the rest come from a plain
+   *  PhysicalLightingModel, so one sphere per part shows which override loses the light. */
+  const mixWrap = (m: THREE.Material, keep: { start?: boolean; direct?: boolean; indirect?: boolean }, k: string): THREE.Material => {
+    installReefLight(m);
+    const nm = m as unknown as NodeMat;
+    const prev = nm.setupLightingModel!.bind(m);
+    nm.setupLightingModel = () => {
+      const w = prev() as Model;
+      const plain = new t.PhysicalLightingModel() as unknown as Model;
+      return {
+        start: (...a: unknown[]) => (keep.start ? w : plain).start(...a),
+        direct: (...a: unknown[]) => (keep.direct ? w : plain).direct(...a),
+        indirect: (...a: unknown[]) => (keep.indirect ? w : plain).indirect(...a),
+        finish: (...a: unknown[]) => plain.finish(...a),
+      };
+    };
+    return uniq(m, k);
+  };
+  /** The reef model's own methods, handed back as a plain object instead of a PhysicalLightingModel. */
+  const objFromReef = (m: THREE.Material): THREE.Material => {
+    installReefLight(m);
+    const nm = m as unknown as NodeMat;
+    const prev = nm.setupLightingModel!.bind(m);
+    nm.setupLightingModel = () => {
+      const w = prev() as Model;
+      return { start: w.start.bind(w), direct: w.direct.bind(w), indirect: w.indirect.bind(w), finish: w.finish.bind(w) };
+    };
+    return uniq(m, 'objreef');
+  };
+  /** A subclass of PhysicalLightingModel that only delegates: separates "extends PhysicalLightingModel"
+   *  from the reef wrapper's own method bodies. */
+  const delegClass = (m: THREE.Material): THREE.Material => {
+    const nm = m as unknown as NodeMat;
+    const prev = nm.setupLightingModel?.bind(m);
+    nm.setupLightingModel = () => {
+      const inner = (prev ? prev() : new t.PhysicalLightingModel()) as Model;
+      class DelegatingModel extends t.PhysicalLightingModel {
+        override start(...a: unknown[]): void { inner.start(...a); }
+        override direct(...a: unknown[]): void { inner.direct(...a); }
+        override indirect(...a: unknown[]): void { inner.indirect(...a); }
+        override finish(...a: unknown[]): void { inner.finish(...a); }
+      }
+      return new DelegatingModel();
+    };
+    return uniq(m, 'delegclass');
+  };
+  const makers: readonly (readonly [string, () => THREE.Material])[] = [
+    ['plain', plainMat],
+    ['reef', () => uniq(installReefLight(plainMat()), 'vreef')],
+    ['start', () => mixWrap(plainMat(), { start: true }, 'vstart')],
+    ['direct', () => mixWrap(plainMat(), { direct: true }, 'vdirect')],
+    ['indirect', () => mixWrap(plainMat(), { indirect: true }, 'vindirect')],
+    ['objreef', () => objFromReef(plainMat())],
+    ['delegclass', () => delegClass(plainMat())],
+  ];
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.42, 32, 16), makers[0]![1]());
+  sphere.position.copy(centre);
+  scene.add(sphere);
+  const mats = makers.map(([label, make]) => [label, make()] as const);
+  const suns: THREE.DirectionalLight[] = [], hemis: THREE.HemisphereLight[] = [];
+  scene.traverse((o) => {
+    if ((o as THREE.DirectionalLight).isDirectionalLight) suns.push(o as THREE.DirectionalLight);
+    if ((o as THREE.HemisphereLight).isHemisphereLight) hemis.push(o as THREE.HemisphereLight);
+  });
+  const sunI = suns.map((l) => l.intensity), hemiI = hemis.map((l) => l.intensity);
+  const envI = scene.environmentIntensity;
+  const setTerms = (sun: boolean, hemi: boolean, env: number): void => {
+    suns.forEach((l, i) => { l.intensity = sun ? sunI[i] ?? 0 : 0; });
+    hemis.forEach((l, i) => { l.intensity = hemi ? hemiI[i] ?? 0 : 0; });
+    scene.environmentIntensity = envI * env;
+  };
+  /** The sphere's on-screen box, 64x64. All probes share one sphere position, so every box has the same
+   *  framing and the same background behind it (comparing spheres at different x does not). */
+  const sphereBox = (shot: HTMLCanvasElement): HTMLCanvasElement => {
+    const W = shot.width, H = shot.height;
+    const v = centre.clone().project(camera);
+    const cx = ((v.x + 1) / 2) * W, cy = ((1 - v.y) / 2) * H;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const e = centre.clone().add(right.multiplyScalar(0.5)).project(camera);
+    const r = Math.max(8, Math.abs(((e.x - v.x) / 2) * W) * 0.8);
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    context2d(c).drawImage(shot, cx - r, cy - r, r * 2, r * 2, 0, 0, 64, 64);
+    return c;
+  };
+  const passes: readonly (readonly [string, () => void])[] = [
+    ['all', () => setTerms(true, true, 1)],
+    ['env', () => setTerms(false, false, 1)],
+    ['gate0', () => { setTerms(true, true, 1); gate.close(); }],
+  ];
+  const stats: Record<string, unknown>[] = [];
+  for (const [name, act] of passes) {
+    act();
+    const strip = document.createElement('canvas');
+    strip.width = 64 * mats.length;
+    strip.height = 64;
+    const row: Record<string, unknown> = { pass: name };
+    for (let i = 0; i < mats.length; i++) {
+      const [label, m] = mats[i]!;
+      sphere.material = m;
+      await aq.present();
+      await settle();
+      const box = sphereBox(await frameCanvas(aq));
+      const s = measure(box);
+      row[label] = Number(s.lum.toFixed(3));
+      row[`${label}:sat`] = Number(s.sat.toFixed(3));
+      // Top vs bottom half: a flipped environment lookup swaps the bright sky for the dark sand, which
+      // shows up as the wrapped sphere's bottom getting brighter than its top.
+      const top = document.createElement('canvas');
+      top.width = 64; top.height = 32;
+      const bot = document.createElement('canvas');
+      bot.width = 64; bot.height = 32;
+      context2d(top).drawImage(box, 0, 0, 64, 32, 0, 0, 64, 32);
+      context2d(bot).drawImage(box, 0, 32, 64, 32, 0, 0, 64, 32);
+      row[`${label}:t`] = Number(measure(top).lum.toFixed(3));
+      row[`${label}:b`] = Number(measure(bot).lum.toFixed(3));
+      context2d(strip).drawImage(box, i * 64, 0);
+    }
+    row.gate = gate.read();
+    stats.push(row);
+    console.log('wrap', JSON.stringify({ ...row, labels: mats.map(([l]) => l).join(',') }));
+    await saveFile(`${CHECK_OUT_DIR}look-${tag}-${name}-${target}s.png`, await canvasToBlob(strip));
+  }
+  scene.remove(sphere);
+  console.log('look wrap', JSON.stringify({ stats }));
+  await postDone(JSON.stringify({ stats }));
+}
+
+/** The reef-light gate uniforms, read and (for the probe) forced closed. */
+function auditGate(): { read: () => string; close: () => void } {
+  return {
+    read: () => [reefLightUniforms.uRLOn.value, reefLightUniforms.uRLScrOn.value, reefLightUniforms.uRLAOOn.value].join(','),
+    close: () => {
+      reefLightUniforms.uRLOn.value = 0;
+      reefLightUniforms.uRLScrOn.value = 0;
+      reefLightUniforms.uRLAOOn.value = 0;
+    },
+  };
 }
 
 /** The point a close-up centres on, or null if `what` isn't in the tank. */
