@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { range, clamp, type Rng } from '../util.js';
 import { sharedJellyGeometry } from './geometry.js';
 import { BELL_VERT, BELL_FRAG, TENT_VERT, TENT_FRAG, ARM_VERT, ARM_FRAG } from './shaders.js';
+import { makeGpuJellyMaterials } from './webgpu.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
 import type { JellyBounds, JellySpecies, JellyWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
@@ -79,10 +81,19 @@ export class Jelly {
       new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, ...ADDITIVE });
     // The shapes are built for a unit bell (uR = 1) and scaled with the group.
     this.u.uR.value = 1;
-    const bell = new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG, { ...this.u, uInner: { value: 0 } }));
-    const sub = new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG, { ...this.u, uInner: { value: 1 } }));   // the subumbrella
-    const tent = new THREE.LineSegments(g.tent, mat(TENT_VERT, TENT_FRAG));
-    const arms = g.arms.map((a) => new THREE.Mesh(a, mat(ARM_VERT, ARM_FRAG)));
+    const gpuMats = gpuActive() ? makeGpuJellyMaterials(tsl(), this.u) : null;
+    const bell = gpuMats
+      ? new THREE.Mesh(g.bell, gpuMats.bell)
+      : new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG, { ...this.u, uInner: { value: 0 } }));
+    const sub = gpuMats
+      ? new THREE.Mesh(g.bell, gpuMats.sub)
+      : new THREE.Mesh(g.bell, mat(BELL_VERT, BELL_FRAG, { ...this.u, uInner: { value: 1 } }));   // the subumbrella
+    const tent = gpuMats
+      ? new THREE.LineSegments(g.tent, gpuMats.tent)
+      : new THREE.LineSegments(g.tent, mat(TENT_VERT, TENT_FRAG));
+    const arms = gpuMats
+      ? g.arms.map((a) => new THREE.Mesh(a, gpuMats.arms))
+      : g.arms.map((a) => new THREE.Mesh(a, mat(ARM_VERT, ARM_FRAG)));
     this.inner.scale.setScalar(this.R);
     this.inner.add(bell, sub, tent, ...arms);
     this.model.add(this.inner);
