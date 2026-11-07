@@ -44,7 +44,8 @@ export async function main(aq: AquariumHandle): Promise<void> {
   let t = 0;
   for (const target of at) {
     for (; t < target - 1e-6; t += DT) aq.step(DT);
-    aq.present();
+    await aq.present();
+    await settle();   // WebGPU presents on the compositor after the render promise resolves
     const name = `look-${tag}-${target}s`;
     files.push(await saveFile(`${CHECK_OUT_DIR}${name}.png`, await canvasToBlob(canvas)));
     stats.push({ t: target, ...measure(canvas) });
@@ -91,9 +92,11 @@ function closeUp(aq: AquariumHandle, what: string, canvas: HTMLCanvasElement): H
   return c;
 }
 
+/** Two animation frames: lets the WebGPU compositor present before the canvas is read back. */
+const settle = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
 /** Mean luminance and HSV saturation of the frame (0..1), from a 1/8-size copy. */
-function measure(src: HTMLCanvasElement): { lum: number; sat: number } {
-  const c = document.createElement('canvas');
+function measure(src: HTMLCanvasElement): { lum: number; sat: number } {  const c = document.createElement('canvas');
   c.width = Math.ceil(src.width / MEASURE_DOWNSCALE);
   c.height = Math.ceil(src.height / MEASURE_DOWNSCALE);
   const g = context2d(c, { willReadFrequently: true });
@@ -118,9 +121,9 @@ async function series(aq: AquariumHandle, seconds: number, dt: number): Promise<
   if (hide.includes('fish')) for (const f of aq.world.fish) f.model.visible = false;
   for (let i = 0; i < frames; i++) {
     aq.step(jitter ? 0.008 + Math.random() * 0.042 : dt);
-    aq.present();
+    await aq.present();
     lums.push(measure(canvas).lum);
-    hdr.push(hdrStats(aq));
+    if (aq.water) hdr.push(hdrStats(aq));
   }
   const sorted = [...lums].sort((a, b) => a - b), median = sorted[Math.floor(sorted.length / 2)] ?? 0;
   const spikes = lums.map((lum, i) => ({ i, t: +(i * dt).toFixed(2), lum })).filter((f) => f.lum > median * 1.15);

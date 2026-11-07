@@ -8,7 +8,7 @@ export type CheckName = 'motion' | 'look' | 'critters' | 'startup' | 'perf';
 const CHECKS: readonly CheckName[] = ['motion', 'look', 'critters', 'startup', 'perf'];
 const isCheckName = (v: string | null): v is CheckName => v !== null && (CHECKS as readonly string[]).includes(v);
 
-/** The renderer backend. WebGL2 is the default; `?gpu=webgpu` asks for WebGPU (falls back to WebGL2). */
+/** The renderer backend. WebGL2 is the default; `?renderer=webgpu` asks for WebGPU (falls back to WebGL2). */
 export type GpuMode = 'webgl' | 'webgpu';
 const GPU_MODES: readonly GpuMode[] = ['webgl', 'webgpu'];
 const isGpuMode = (v: string | null): v is GpuMode => v !== null && (GPU_MODES as readonly string[]).includes(v);
@@ -39,8 +39,8 @@ export interface AppOptions {
   readonly check: CheckName | null;
   /** A check other than critters/startup steps the tank itself, so the page runs no animation loop. */
   readonly checkDrivesLoop: boolean;
-  /** Renderer backend: 'webgl' (default) or 'webgpu' (?gpu=webgpu, falls back to WebGL2). */
-  readonly gpu: GpuMode;
+  /** Renderer backend: 'webgl' (default) or 'webgpu' (?renderer=webgpu, falls back to WebGL2). */
+  readonly renderer: GpuMode;
 }
 
 export function parseAppOptions(params: URLSearchParams): AppOptions {
@@ -61,6 +61,6 @@ export function parseAppOptions(params: URLSearchParams): AppOptions {
     profile: params.get('profile') === '1',
     check: isCheckName(check) ? check : null,
     checkDrivesLoop: check !== null && check !== 'critters' && check !== 'startup',
-    gpu: isGpuMode(params.get('gpu')) ? (params.get('gpu') as GpuMode) : 'webgl',
+    renderer: isGpuMode(params.get('renderer')) ? (params.get('renderer') as GpuMode) : 'webgl',
   };
 }

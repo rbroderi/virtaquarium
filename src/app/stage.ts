@@ -94,7 +94,7 @@ export class StageBuilder {
   }
 
   private async renderer(): Promise<{ renderer: RendererLike; gpu: boolean }> {
-    if (this.options.gpu === 'webgpu') {
+    if (this.options.renderer === 'webgpu') {
       const renderer = await this.webgpuRenderer();
       if (renderer) return { renderer, gpu: true };
     }

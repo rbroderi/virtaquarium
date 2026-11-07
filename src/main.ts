@@ -109,7 +109,11 @@ function bindKeys(loop: TankLoop, daylight: DaylightSource, ui: UI, toggleReefLi
   });
 }
 
-async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle): Promise<void> {
+async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle, gpu: boolean): Promise<void> {
+  if (check === 'perf' && gpu) {
+    console.warn('The perf check is WebGL-only; skipping under WebGPU');
+    return;
+  }
   const loaders: Record<string, () => Promise<CheckModule>> = {
     critters: () => import('./critterCheck.js'),
     motion: () => import('./motionCheck.js'),
@@ -135,7 +139,7 @@ async function main(): Promise<void> {
   // Fish materials are built during stocking, so the backend flag must be set before the world is built.
   fishRender.finDepth = options.photo && !stage.gpu;
   fishRender.gpu = stage.gpu;
-  if (stage.gpu) console.info('WebGPU renderer active (post effects disabled; see notes/webgpu-plan.md)');
+  if (stage.gpu) console.info('WebGPU renderer active (?renderer=webgpu; post effects disabled, see notes/webgpu-plan.md)');
   timer.stage('renderer, environment, caustics');
 
   // Optional Tripo3D / GLB models replace procedural fish species by species.
@@ -201,20 +205,18 @@ async function main(): Promise<void> {
   });
   bindKeys(loop, daylight, ui, () => toggleReefLight(reef));
 
-  // The checks drive the WebGL renderer's own passes, so the headless handle is WebGL-only.
-  let aquarium: AquariumHandle | null = null;
-  if (!stage.gpu) {
-    aquarium = {
-      THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies, critters, SPECIES,
-      caustics: stage.caustics as NonNullable<Stage['caustics']>, water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as NonNullable<typeof surface>,
-      setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
-    };
-    debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging
-  }
+  // The handle is the WebGL renderer's shape; under WebGPU its GLSL-only members are null but the
+  // checks that run there (look, motion, critters) only touch the common surface and the world.
+  const aquarium: AquariumHandle = {
+    THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies, critters, SPECIES,
+    caustics: stage.caustics as NonNullable<Stage['caustics']>, water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as NonNullable<typeof surface>,
+    setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
+  };
+  debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging
 
   if (!options.checkDrivesLoop) startAnimation(loop, stage, timer, options, profiler);
   else loading?.finish();   // a check steps the tank itself and draws no first frame
-  if (options.check && aquarium) await runCheck(options.check, aquarium);
+  if (options.check) await runCheck(options.check, aquarium, stage.gpu);
 }
 
 /** L toggles the baked reef light (off: live reef shadows again). */

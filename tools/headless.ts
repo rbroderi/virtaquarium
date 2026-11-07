@@ -19,6 +19,8 @@ const BROWSER_CANDIDATES = [
 const WINDOW_SIZE = '--window-size=1920,1080';
 const SOFTWARE_GL = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 const HARDWARE_GL = ['--use-angle=d3d11', '--ignore-gpu-blocklist'];
+/** WebGPU in headless Chrome: enable the (unsafe) API and force the Vulkan backend past the blocklist. */
+const WEBGPU_GL = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan', '--ignore-gpu-blocklist'];
 const KILL_GRACE_MS = 500;
 const PROFILE_RM_RETRIES = 5, PROFILE_RM_DELAY_MS = 200;
 const CONSOLE_LINE_LIMIT = 400;
@@ -118,10 +120,11 @@ export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
   }
 
   const url = pageUrl(server, run.page, run.query);
+  const webgpu = run.query.get('renderer') === 'webgpu';
   console.log(`${path.basename(browser)}: ${url}`);
   child = spawn(browser, [
     '--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-    ...(run.gpu ? HARDWARE_GL : SOFTWARE_GL), WINDOW_SIZE,
+    ...(webgpu ? WEBGPU_GL : run.gpu ? HARDWARE_GL : SOFTWARE_GL), WINDOW_SIZE,
     ...(run.echoConsole ? ['--enable-logging=stderr', '--v=0'] : []), url,
   ], { stdio: ['ignore', 'ignore', run.echoConsole ? 'pipe' : 'ignore'] });
   if (run.echoConsole) echoPageConsole(child);

@@ -32,8 +32,8 @@ export interface AquariumHandle {
   setLight(level: number): void;
   /** Advance the tank by dt seconds (no drawing). */
   step(dt: number): void;
-  /** Draw the current state. */
-  present(): void;
+  /** Draw the current state (WebGPU returns the async render promise). */
+  present(): void | Promise<void>;
   /** Match the canvas to its CSS size. */
   fitCanvas(): void;
 }

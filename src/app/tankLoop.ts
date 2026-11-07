@@ -122,12 +122,11 @@ export class TankLoop {
     if (stage.photo) this.autofocus(dt);
   }
 
-  present(): void {
+  present(): void | Promise<void> {
     const { stage, ao } = this.parts;
     if (stage.gpu) {
       // WebGPU: no water post pass yet, draw the scene straight to the screen (async on the backend).
-      void stage.renderer.render(stage.scene, stage.camera);
-      return;
+      return stage.renderer.render(stage.scene, stage.camera);
     }
     const water = stage.water;
     if (!water) return;
