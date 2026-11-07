@@ -6,6 +6,7 @@
 // which gives the bright rim and see-through centre of real bubbles.
 import * as THREE from 'three';
 import { range, type Rng } from '../util.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
 import { METRES_PER_UNIT, SURFACE_Y } from './medium.js';
 import { NO_FLOW, type FlowField } from './flow.js';
 
@@ -82,7 +83,7 @@ interface BubbleUniforms {
 }
 
 export class Bubbles {
-  readonly mesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  readonly mesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.Material>;
   private readonly origin: THREE.Vector3;
   private readonly uniforms: BubbleUniforms = {
     uWater: { value: new THREE.Color(0.05, 0.25, 0.35) },
@@ -100,7 +101,7 @@ export class Bubbles {
 
   constructor(scene: THREE.Object3D, origin: THREE.Vector3, private readonly rng: Rng) {
     this.origin = origin.clone();
-    const material = new THREE.ShaderMaterial({
+    const material = gpuActive() ? this.gpuMaterial() : new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, uniforms: { ...this.uniforms },
       vertexShader: BUBBLE_VERT, fragmentShader: BUBBLE_FRAG,
     });
@@ -113,6 +114,42 @@ export class Bubbles {
       this.bubbles.push(b);
     }
     scene.add(this.mesh);
+  }
+
+  /** The WebGPU bubble material: the same Fresnel water-to-air rim (bubbles.ts BUBBLE_FRAG) in TSL. */
+  private gpuMaterial(): import('three/webgpu').NodeMaterial {
+    const t = tsl();
+    // uLight is replaced wholesale each frame by update(), so bridge it to the uniform node; the
+    // other uniforms are fixed and baked as constants.
+    const uLight = t.uniform(this.uniforms.uLight.value);
+    Object.defineProperty(this.uniforms.uLight, 'value', {
+      get: (): number => uLight.value,
+      set: (v: number): void => { uLight.value = v; },
+      configurable: true, enumerable: true,
+    });
+    const uWater = t.vec3(this.uniforms.uWater.value.r, this.uniforms.uWater.value.g, this.uniforms.uWater.value.b);
+    const uSky = t.vec3(this.uniforms.uSky.value.r, this.uniforms.uSky.value.g, this.uniforms.uSky.value.b);
+    const uSun = t.vec3(this.uniforms.uSun.value.x, this.uniforms.uSun.value.y, this.uniforms.uSun.value.z);
+
+    const material = new t.NodeMaterial();
+    material.fragmentNode = t.Fn(() => {
+      const n = t.normalWorld.normalize();
+      const v = t.cameraPosition.sub(t.positionWorld).normalize();
+      const c = t.abs(n.dot(v));
+      const s2 = t.float(1).sub(c.mul(c)).mul(t.float(1.33 * 1.33));
+      const ct = t.sqrt(t.float(1).sub(s2));
+      const rs = t.float(1.33).mul(c).sub(ct).div(t.float(1.33).mul(c).add(ct));
+      const rp = c.sub(t.float(1.33).mul(ct)).div(c.add(t.float(1.33).mul(ct)));
+      const F = t.select(s2.greaterThanEqual(t.float(1)), t.float(1), t.float(0.5).mul(rs.mul(rs).add(rp.mul(rp))));
+      const r = t.reflect(v.negate(), n);
+      const env = t.mix(uWater, uSky, t.smoothstep(t.float(0.2), t.float(0.9), r.y));
+      const spec = t.pow(t.max(r.dot(uSun.normalize()), t.float(0)), t.float(120)).mul(t.float(6));
+      const col = env.mul(F).add(spec).mul(uLight);
+      return t.vec4(col, t.clamp(F.mul(t.float(0.9)).add(spec), t.float(0), t.float(1)));
+    })();
+    material.transparent = true;
+    material.depthWrite = false;
+    return material;
   }
 
   private spawn(b: Bubble): Bubble {

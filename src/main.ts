@@ -171,7 +171,7 @@ async function main(): Promise<void> {
   timer.stage('reef light bake');
 
   const snow = new MarineSnow(stage.scene, stage.tankWidth * SNOW_SPREAD, rng);
-  const bubbles = reef.bubbler && !stage.gpu ? new Bubbles(stage.scene, reef.bubbler, rng) : null;
+  const bubbles = reef.bubbler ? new Bubbles(stage.scene, reef.bubbler, rng) : null;
   const surface = stage.gpu ? makeGpuSurface(stage.tankWidth) : makeSurface(stage.tankWidth);
   if (!isJellyTank && surface) stage.scene.add(surface);
 
