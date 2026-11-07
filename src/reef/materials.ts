@@ -50,8 +50,8 @@ const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
 
 /** TSL port of the sway's begin_vertex patch: the same h^2 bend from the piece's model-space position.
  *  The bend runs in the blade/tentacle's own space (the authored position, not the instance-transformed
- *  one), exactly like the GLSL; on an InstancedMesh the instance matrix is applied at the end, since
- *  WebGPU folds it into positionLocal before the position node runs. */
+ *  one), exactly like the GLSL, and the renderer's InstanceNode prepass applies the instance matrix to
+ *  the result afterwards, so the position node returns model-space and never applies the matrix itself. */
 function swayNode(options: { ax: number; az: number; hz: number; hTop: number; fishPush: boolean; instanced: boolean; instanceMatrixNode: ShaderNodeObject<Node> | undefined; deformNode: ((p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>) => ShaderNodeObject<Node>) | undefined }): Node {
   const t = tsl();
   const { ax, az, hz, hTop, fishPush, instanced, instanceMatrixNode, deformNode } = options;
@@ -82,13 +82,9 @@ function swayNode(options: { ax: number; az: number; hz: number; hTop: number; f
       const bent = instanced
         ? fishPushBend(out, h, i0, i1, i2, i3)
         : fishPushBend(out, h, t.vec4(1, 0, 0, 0), t.vec4(0, 1, 0, 0), t.vec4(0, 0, 1, 0), t.vec4(0, 0, 0, 1));
-      return instanced
-        ? t.mat4(i0, i1, i2, i3).mul(t.vec4(bent, 1)).xyz
-        : bent;
+      return bent;
     }
-    return instanced
-      ? t.mat4(i0, i1, i2, i3).mul(t.vec4(out, 1)).xyz
-      : out;
+    return out;
   })();
 }
 

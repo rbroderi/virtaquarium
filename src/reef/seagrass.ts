@@ -187,9 +187,9 @@ function grassPositionNode(): Node {
     const ph = aInst3.x.mul(1.7).add(aInst3.z.mul(2.3));
     const zSway = t.cos(time.mul(t.float(0.56)).add(ph.mul(1.3))).mul(t.float(0.16)).mul(h).mul(h);
     const out = q.add(t.vec3(0, 0, zSway)).toVar();
-    const bent = fishPushBend(out, t.clamp(h, t.float(0), t.float(1)), aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3);
-    // fishPushBend returns the bent blade in its own space; WebGPU folds the instance matrix in here.
-    return t.mat4(aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3).mul(t.vec4(bent, 1)).xyz;
+    // fishPushBend returns the bent blade in its own space; the renderer's InstanceNode prepass applies
+    // the instance matrix to the position-node result, so it is not applied here.
+    return fishPushBend(out, t.clamp(h, t.float(0), t.float(1)), aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3);
   })();
 }
 
