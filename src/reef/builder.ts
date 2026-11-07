@@ -17,6 +17,7 @@ import { brainCoral, color, domeCluster, leatherPlate, rockGeometry, ruffledFan,
 import { grainTexture, poreTexture, rockDetailTexture, seaFanTexture } from './textures.js';
 import { anemone } from './anemone.js';
 import { bladeGeometry, grassMaterial, tuftedShoot } from './seagrass.js';
+import { setFishPushReactors, type FishPushReactor } from './fishPush.js';
 import { swapCoral } from './scenery.js';
 import { inNoHeightSubtree, isMesh, isSolid, markNoHeight, markSolid, naturalSize } from './flags.js';
 import {
@@ -32,6 +33,10 @@ const EIGHT_DIRECTIONS = 8;
 const SAND_SHADE_FROM = -1.0;
 const SAND_SHADE_TO = -4.2;
 const SAND_SHADE_MIN = 0.22;
+/** How far a fish is tracked around the anemone crown for tentacle parting (world units). */
+const ANEMONE_REACTOR_RADIUS = 1.0;
+/** How far a fish is tracked around a sea-grass patch for blade parting (world units). */
+const GRASS_REACTOR_RADIUS = 1.4;
 
 export interface ReefBuildParams {
   readonly scene: THREE.Object3D;
@@ -80,6 +85,7 @@ export class ReefBuilder {
   private readonly anemoneSpot: THREE.Vector3;
   private readonly caves: Cave[] = [];
   private readonly planted: PlantedCounts = { grass: 0, clumps: 0, rubble: 0 };
+  private readonly reactors: FishPushReactor[] = [];
 
   constructor(params: ReefBuildParams) {
     this.width = params.width;
@@ -125,6 +131,7 @@ export class ReefBuilder {
     const shoalCoral = this.shoalCoral(shelters);
     const hf = this.hf;
     const anemones: Anemone[] = [{ pos: new THREE.Vector3(this.anemoneSpot.x, this.anemoneSpot.y + 0.35, this.anemoneSpot.z), radius: 0.75 }];
+    setFishPushReactors(this.reactors);
     return {
       group: this.group,
       heightAt: (x, z) => hf.sample(x, z),
@@ -433,6 +440,7 @@ export class ReefBuilder {
     const spot = this.anemoneSpot;
     this.addRock(spot.x, spot.z, 1.1, 0.7, 0.9, 0.1);
     spot.y = this.restingHeight(spot.x, spot.z, 0.15) - 0.12;
+    this.reactors.push({ x: spot.x, z: spot.z, r: ANEMONE_REACTOR_RADIUS });
     const an = anemone(this.rng);
     an.position.copy(spot);
     an.traverse((o) => markNoHeight(o));
@@ -562,6 +570,7 @@ export class ReefBuilder {
       const at = this.findSpot(grng, spots, 0.3, -0.4, 1.8, 1.2);
       if (!at) break;
       const [cx, cz] = at, shoots = Math.floor(range(grng, 45, 65)), blades: Blade[] = [];
+      this.reactors.push({ x: cx, z: cz, r: GRASS_REACTOR_RADIUS });
       for (let sh = 0; sh < shoots; sh++) {
         const a = grng() * Math.PI * 2, r = Math.sqrt(grng()) * 0.6;
         const yaw = grng() * Math.PI * 2;

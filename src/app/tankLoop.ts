@@ -9,6 +9,7 @@ import type { World } from '../world.js';
 import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
 import type { TankScene } from '../reef/types.js';
+import { updateFishPush } from '../reef/fishPush.js';
 import type { Stage } from './stage.js';
 import { CAMERA_BASE, CAMERA_LOOK } from './stage.js';
 import type { LightingController } from './lighting.js';
@@ -30,6 +31,9 @@ const AF_VERTICAL_WEIGHT = 0.8;
 const FOCUS_RATE = 3;
 const MAX_PIXEL_RATIO = 2;
 const NIGHT_THRESHOLD = 0.5;
+/** N jumps the running clock to these hours (a plain light toggle when the clock is off). */
+const NOON_HOUR = 12;
+const MIDNIGHT_HOUR = 0;
 
 export interface TankParts {
   readonly stage: Stage;
@@ -72,9 +76,11 @@ export class TankLoop {
     this.paused = !this.paused;
   }
 
-  /** N: lights between day and night. */
-  toggleLights(): void {
-    this.targetLight = this.targetLight > NIGHT_THRESHOLD ? 0 : 1;
+  /** N: jump the running day/night clock to noon or midnight (a plain toggle when the clock is off). */
+  toggleDayNight(): void {
+    const { daylight } = this.parts;
+    if (daylight.followsClock) daylight.jumpTo(daylight.level() > NIGHT_THRESHOLD ? MIDNIGHT_HOUR : NOON_HOUR);
+    else this.targetLight = this.targetLight > NIGHT_THRESHOLD ? 0 : 1;
   }
 
   /** Jump straight to a light level (checks, console). */
@@ -103,6 +109,7 @@ export class TankLoop {
     this.updateLight(dt);
     world.feedIn = this.parts.feeder.update(dt);   // fish learn the schedule (feeding anticipation)
     world.update(dt);
+    updateFishPush(world, stage.camera, dt);   // grass/anemone part from the fish that just moved
     for (const j of jellies) j.update(dt, world, jellies);
     for (const c of critters) c.update(dt, world);
     updateWaves(this.time);
@@ -142,6 +149,7 @@ export class TankLoop {
 
   private updateLight(dt: number): void {
     const { daylight, world } = this.parts;
+    daylight.advance(dt);
     if (daylight.followsClock) this.targetLight = lerp(this.targetLight, daylight.level(), Math.min(1, dt * CLOCK_FOLLOW_RATE));
     this.applyLight(clamp(lerp(world.light, this.targetLight, Math.min(1, dt * LIGHT_FOLLOW_RATE)), 0, 1));
   }
@@ -149,7 +157,7 @@ export class TankLoop {
   /** The look (lighting.ts) and what the fish see: brains read world.light (night colours, sleep, sight). */
   private applyLight(level: number): void {
     this.parts.world.light = level;
-    this.parts.lighting.apply(level);
+    this.parts.lighting.apply(level, this.parts.daylight.sun());
   }
 
   private driftCamera(): void {

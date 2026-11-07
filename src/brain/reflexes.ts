@@ -30,7 +30,7 @@ const BODY_AVOID = 3;
 /** A fish slows once another body ahead of it is nearer than this (body lengths of the smaller fish). */
 const CROWD_GAP = 0.3;
 /** Room a sheltering fish wants between its snout or tail and the rock, beyond its half-depth. */
-const SHELTER_ROCK_ROOM = 0.05;
+export const SHELTER_ROCK_ROOM = 0.05;
 /** A sheltering fish within this many body lengths of its spot's height leaves its height alone. */
 const SHELTER_DEAD_BAND = 0.1;
 
@@ -122,6 +122,13 @@ function keepInShelter(brain: Brain, me: Fish, world: SwimWorld, dir: THREE.Vect
   brain.sheltered = sh && (brain.mode === 'rest' || brain.mode === 'flee') && pos.y < sh.top + (was ? 0.25 : 0)
     && Math.hypot(pos.x - sh.pos.x, (pos.z - sh.pos.z) * (sh.kind === 'ledge' ? 0.6 : 1)) < sh.r + extra ? sh : null;
   if (!brain.sheltered || !sh) return false;
+  // A fish settled on the rock for the night (rest.ts perches it) holds still: the rock pushes it back
+  // out (fish.ts), and steering it again would only pitch it into the rock and start it bobbing.
+  if (brain.perched && brain.mode === 'rest') {
+    brain.reefSeen = undefined;
+    brain.rockSteer.set(0, 0, 0);
+    return true;
+  }
   // Ease to the middle of the gap (hard limits either side made it bob between them).
   // Each at its own spot's height (Brain.shelterGoal), so a shoal sheltering together doesn't stack up.
   const mid = clamp(brain.shelterGoal(sh, pos, world).y, sh.floor + me.size * 0.15, sh.top - me.size * 0.25);

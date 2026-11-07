@@ -15,6 +15,8 @@
   #help { position: fixed; top: 20px; left: 20px; padding: 14px 18px; border-radius: 12px; background: rgba(0, 20, 30, 0.7); font-size: 14px; line-height: 1.7; display: none; }
   #help.show { display: block; }
   #help kbd { display: inline-block; min-width: 18px; padding: 0 6px; margin-right: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.15); text-align: center; }
+  #clock { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 16px; background: rgba(0, 20, 30, 0.6); font-size: 14px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity 0.5s; pointer-events: none; }
+  #clock.show { opacity: 1; }
   #tags { position: fixed; inset: 0; pointer-events: none; display: none; }
   .tag { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 12px; padding: 2px 8px; border-radius: 10px; background: rgba(0, 25, 35, 0.55); }
   .tag.sel { background: rgba(255, 200, 80, 0.75); color: #111; }
@@ -58,12 +60,15 @@
   </div>
 </div>
 <div id="hint">Click to feed · click a fish to see its brain · H for help</div>
+<div id="clock"></div>
 <div id="help">
   <div><kbd>click</kbd>drop food (or select a fish)</div>
   <div><kbd>Tab</kbd>inspect next fish's brain</div>
   <div><kbd>B</kbd>show every fish's current thought</div>
   <div><kbd>F</kbd>feed</div>
-  <div><kbd>N</kbd>toggle lights (day / night)</div>
+  <div><kbd>N</kbd>jump between noon and midnight</div>
+  <div><kbd>&lt;</kbd><kbd>&gt;</kbd>slow down / speed up the day-night clock</div>
+  <div><kbd>R</kbd>back to the real-time clock</div>
   <div><kbd>Space</kbd>pause</div>
   <div><kbd>Esc</kbd>close brain panel</div>
   <div><kbd>F11</kbd>full screen</div>

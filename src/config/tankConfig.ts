@@ -70,7 +70,7 @@ export function defaultTank(catalogue: HabitatCatalogue): Tank {
     version: TANK_VERSION,
     seed: DEFAULT_SEED,
     scenery: 'reef',
-    clock: false,
+    clock: true,
     feedMinutes: DEFAULT_FEED_MINUTES,
     drift: true,
     fish: defaultStock(catalogue, 'reef'),

@@ -5,7 +5,8 @@
 //   <species> the first fish of that species
 //   fanworm   the most open feather-duster worm
 //   <name>    a scenery piece by its object name (rock_a, coral_table, ...)
-// URL options: &at=5,30 (seconds), &close=station,cleanerwrasse, &tag=name, &night=1 (lights off).
+// URL options: &at=5,30 (seconds), &close=station,cleanerwrasse, &tag=name, &night=1 (lights off),
+// &light=0.35 (fixed level), &hour=18 (jump the clock to an hour, for dawn/dusk/night colour).
 // Reports { files, stats } to /__done, stats per frame: mean luminance and saturation, so looks can be
 // compared over time without opening the pictures.
 import * as THREE from 'three';
@@ -32,6 +33,11 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const close = (q.get('close') || 'station').split(',').filter(Boolean);
   const tag = q.get('tag') || 'tank';
   if (q.get('night') === '1') aq.setLight(0);
+  if (q.has('light')) aq.setLight(Number(q.get('light')));   // e.g. 0.35: dusk
+  if (q.has('hour')) {
+    const hour = Number(q.get('hour'));
+    if (Number.isFinite(hour)) aq.daylight.jumpTo(hour);   // e.g. 19: golden dusk with the real sun colour
+  }
   aq.fitCanvas();
   if (q.get('series')) return series(aq, Number(q.get('series')), Number(q.get('dt') || DT));
   const canvas = renderer.domElement, files: string[] = [], stats: FrameStats[] = [];

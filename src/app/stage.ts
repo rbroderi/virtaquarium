@@ -5,7 +5,7 @@ import {
   installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, setSunDirection,
   Caustics, WaterRenderer, type WaterBackdrop,
 } from '../water.js';
-import { LightRig, LIGHTS } from '../rig.js';
+import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
 import { setView, panAt } from '../view.js';
 import { PhotoCamera } from '../photo.js';
 import type { AppOptions } from './options.js';
@@ -23,7 +23,6 @@ const CAMERA = { fov: 40, near: 0.1, far: 120 } as const;
 export const CAMERA_BASE = new THREE.Vector3(0, 4.6, 15);
 export const CAMERA_LOOK = new THREE.Vector3(0, 3.9, 0);
 
-const SUN_COLOR = 0xfff2dc;
 const SHADOW_MAP_SIZE = 2048;
 const SHADOW_BOX = { halfWidthPerTank: 0.75, top: 9, bottom: -9, near: 5, far: 40 } as const;
 const SHADOW_BIAS = -0.0004;
@@ -121,7 +120,7 @@ export class StageBuilder {
   }
 
   private sun(tankWidth: number): THREE.DirectionalLight {
-    const sun = new THREE.DirectionalLight(SUN_COLOR, LIGHTS.sun);
+    const sun = new THREE.DirectionalLight(SUN_NOON, LIGHTS.sun);
     sun.position.set(...LIGHTS.sunPos);
     sun.castShadow = true;
     sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);

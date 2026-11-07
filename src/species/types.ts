@@ -270,6 +270,8 @@ export interface BrainTraits {
   cleaner?: boolean;
   client?: boolean;
   shelterRoll?: number;
+  /** Perches on the rock to sleep (settles still once against it in its shelter). */
+  perch?: boolean;
 }
 
 export type SwimMode = 'bcf' | 'labriform' | 'balistiform' | 'anguilliform';

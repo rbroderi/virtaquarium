@@ -72,7 +72,7 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
   const tg = lathe(TENTACLE_PROFILE, 8, tentacleColors());
   const mat = addSway(
     addTranslucency(stdMat({ vertexColors: true, roughness: 0.5 }), { wrap: 0.5, back: 0.9, tint: [1.0, 0.55, 0.6], thin: 0.7 }),
-    'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: TENTACLE_HEIGHT },
+    'anemone', { ax: 0.09, az: 0.07, hz: 1.2, hTop: TENTACLE_HEIGHT, fishPush: true },
   );
   const tent = new THREE.InstancedMesh(tg, mat, TENTACLES);
   const girth = mulberry32(GIRTH_SEED);   // per-tentacle bulb size, off the reef's rng

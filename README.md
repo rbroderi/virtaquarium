@@ -29,7 +29,9 @@ opens the browser for you.
 | Tab | inspect the next fish's brain |
 | B | show every fish's current thought |
 | F | feed |
-| N | toggle lights (day / night) |
+| N | jump between noon and midnight |
+| < / > | slow down / speed up the day-night clock |
+| R | back to the real-time clock |
 | L | toggle the baked reef light |
 | Space | pause |
 | H | help |
@@ -39,7 +41,7 @@ opens the browser for you.
 | Option | Effect |
 |---|---|
 | `?seed=7` | reef layout and stocking |
-| `?clock=1` | lights follow your local time |
+| `?clock=0` | turn off the day-night clock (the tank stays bright; it follows your local time by default) |
 | `?feed=4` | auto-feeder interval in minutes (`0` = off) |
 | `?drift=0` | no camera parallax |
 | `?zoom=1` | show the whole tank (default is a 1/1.6 window near the sand) |

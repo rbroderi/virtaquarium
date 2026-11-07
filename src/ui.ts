@@ -15,6 +15,8 @@ const TRAIT_LABELS: Readonly<Record<keyof Personality, string>> = {
 
 const HINT_FADE_MS = 6000;
 const IDLE_CURSOR_MS = 3000;
+/** The day/night clock readout stays up this long after a clock key. */
+const CLOCK_FADE_MS = 2500;
 /** A click within this fraction of a fish's length of it selects the fish (fish are small and moving). */
 const PICK_RADIUS = 0.6;
 /** The F key drops food within +-half this of the tank's centre. */
@@ -45,12 +47,14 @@ function bar(label: string, v: number, cls = ''): string {
 export class UI {
   private selected: Fish | null = null;
   private showTags = false;
+  private clockTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly ray = new THREE.Raycaster();
   private readonly projected = new THREE.Vector3();
   private readonly panel = requireElement('brain', HTMLDivElement);
   private readonly tags = requireElement('tags', HTMLDivElement);
   private readonly help = requireElement('help', HTMLDivElement);
   private readonly hint = requireElement('hint', HTMLDivElement);
+  private readonly clock = requireElement('clock', HTMLDivElement);
   private readonly tagOf = new Map<Fish, HTMLDivElement>();
   private readonly world: UIWorld;
   private readonly camera: THREE.Camera;
@@ -87,6 +91,20 @@ export class UI {
       e.preventDefault();
       this.cycle();
     }
+  }
+
+  /** Show the day/night clock briefly (time, and the rate when it isn't 1x). */
+  showClock(clock: { hour(): number | null; rate(): number }): void {
+    const hour = clock.hour();
+    if (hour === null) return;
+    const h = Math.floor(hour) % 24;
+    const m = Math.floor((hour - Math.floor(hour)) * 60);
+    const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    const rate = clock.rate();
+    this.clock.textContent = rate === 1 ? time : `${time} · ${rate}×`;
+    this.clock.classList.add('show');
+    clearTimeout(this.clockTimer);
+    this.clockTimer = setTimeout(() => this.clock.classList.remove('show'), CLOCK_FADE_MS);
   }
 
   private hideIdleCursor(): void {

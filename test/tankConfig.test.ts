@@ -46,8 +46,8 @@ describe('normalizeTank', () => {
   });
 
   it('only accepts booleans for flags', () => {
-    expect(normalize({ clock: 'yes', drift: 0 }).tank).toMatchObject({ clock: false, drift: true });
-    expect(normalize({ clock: true, drift: false }).tank).toMatchObject({ clock: true, drift: false });
+    expect(normalize({ clock: 'yes', drift: 0 }).tank).toMatchObject({ clock: true, drift: true });
+    expect(normalize({ clock: false, drift: false }).tank).toMatchObject({ clock: false, drift: false });
   });
 
   it('falls back to reef for unknown scenery', () => {

@@ -96,6 +96,8 @@ export class Brain {
   /** Shelter the fish knows near home (main assigns it), and the one it is in now. */
   shelter: Shelter | null = null;
   sheltered: Shelter | null = null;
+  /** A resting fish settled on the rock inside its shelter (rest.ts): hold still, don't chase the spot. */
+  perched = false;
   /** An eel's cave direction (unit, facing out), or null. */
   lurkDir: THREE.Vector3 | null = null;
   /** How close the nearest body ahead is (reflexes avoidBody): 0 clear, 1 touching. The fish slows. */

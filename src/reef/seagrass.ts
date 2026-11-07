@@ -107,7 +107,7 @@ const FRAG_COLOUR = /* glsl */`#include <color_fragment>
 
 /** The grass material: vertex colours, the blade shape and colour above, swaying with the water. */
 export function grassMaterial(): THREE.MeshStandardMaterial {
-  const mat = addSway(stdMat({ vertexColors: true, roughness: 0.55, side: THREE.DoubleSide }), 'seagrass-organic', { ax: 0, az: 0.16, hz: 0.7 });
+  const mat = addSway(stdMat({ vertexColors: true, roughness: 0.55, side: THREE.DoubleSide }), 'seagrass-organic', { ax: 0, az: 0.16, hz: 0.7, fishPush: true });
   const swayed = mat.onBeforeCompile.bind(mat);
   mat.onBeforeCompile = (shader, r) => {
     swayed(shader, r);

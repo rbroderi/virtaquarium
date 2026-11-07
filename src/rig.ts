@@ -32,14 +32,17 @@ export function toneFor(params: URLSearchParams): ToneCurve {
 // the reef light's sky term) is kept low, so undersides and overhangs go properly dark and form reads.
 export const LIGHTS = {
   /** Directional intensity. */
-  sun: 3.4,
+  sun: 3.8,
   /** Nearly overhead, a little towards the front. */
   sunPos: [2, 24, 5] as const,
   /** Hemisphere / sky fill with the baked reef light on (1 without it). */
-  ambient: 0.4,
+  ambient: 0.5,
   /** Environment map intensity, times ambient. */
-  env: 0.3,
+  env: 0.4,
 } as const;
+
+/** Sun colour at noon: white with a touch of blue, shared by the tank and the bake. */
+export const SUN_NOON = new THREE.Color(0xf2f7ff);
 
 /** Night floor on the key light so moonlit scenes are never pitch black. */
 const KEY_FLOOR = 0.05;

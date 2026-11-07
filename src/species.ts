@@ -312,7 +312,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
     ],
     caudal: { type: 'truncate', spread: 0.15, fill: '#f0f0e8', alpha: 0.5 },
     pectoral: { u: 0.45, v: 0.15, len: 0.1, w: 0.06, fill: '#fff2a0', alpha: 0.5 },
-    brain: { maxSpeed: 1.3, turn: 3.0, zone: [0.4, 1.0], school: 0.2, grazer: 0.85, territorial: 0.1, boldness: 0.5, curiosity: 0.5, activity: 0.65, tailHz: 3.2 },
+    brain: { maxSpeed: 1.3, turn: 3.0, zone: [0.4, 1.0], school: 0.2, grazer: 0.85, territorial: 0.1, boldness: 0.5, curiosity: 0.5, activity: 0.65, tailHz: 3.2, perch: true },
   },
   {
     id: 'chromis', name: 'Blue-Green Chromis', sci: 'Chromis viridis',

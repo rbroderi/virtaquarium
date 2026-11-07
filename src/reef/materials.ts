@@ -2,6 +2,7 @@
 // plants with the water.
 import * as THREE from 'three';
 import { addCaustics, waterUniforms } from '../water.js';
+import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishUniforms } from './fishPush.js';
 
 const GLSL_DIGITS = 4;
 
@@ -19,6 +20,8 @@ export interface SwayOptions {
   readonly hz?: number;
   /** Model-space height of the top, where the bend is full. */
   readonly hTop?: number;
+  /** Also part from nearby fish (a fixed-size uniform array updated once a frame). */
+  readonly fishPush?: boolean;
 }
 
 const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
@@ -32,12 +35,19 @@ const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
 export function addSway<M extends THREE.Material>(mat: M, key: string, options: SwayOptions = {}): M {
   const ax = options.ax ?? SWAY_DEFAULTS.ax, az = options.az ?? SWAY_DEFAULTS.az;
   const hz = options.hz ?? SWAY_DEFAULTS.hz, hTop = options.hTop ?? SWAY_DEFAULTS.hTop;
+  const fishPush = options.fishPush ?? false;
   const prev = mat.onBeforeCompile.bind(mat);
   const f = (x: number): string => x.toFixed(GLSL_DIGITS);
   mat.onBeforeCompile = (shader, r) => {
     prev(shader, r);
     shader.uniforms['uTime'] = waterUniforms.uTime;
-    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace('#include <begin_vertex>', `
+    if (fishPush) {
+      shader.uniforms['uFishPos'] = fishUniforms.uFishPos;
+      shader.uniforms['uFishVel'] = fishUniforms.uFishVel;
+      shader.uniforms['uFishCount'] = fishUniforms.uFishCount;
+    }
+    const head = 'uniform float uTime;\n' + (fishPush ? FISH_PUSH_HEADER : '');
+    shader.vertexShader = head + shader.vertexShader.replace('#include <begin_vertex>', `
       vec3 transformed = vec3(position);
       {
         #ifdef USE_INSTANCING
@@ -49,9 +59,10 @@ export function addSway<M extends THREE.Material>(mat: M, key: string, options: 
         float s = sin(uTime * ${f(hz)} + ph) + 0.35 * sin(uTime * ${f(hz * 2.3)} + ph * 1.9);
         transformed.x += s * ${f(ax)} * h * h;
         transformed.z += cos(uTime * ${f(hz * 0.8)} + ph * 1.3) * ${f(az)} * h * h;
+        ${fishPush ? FISH_PUSH_APPLY : ''}
       }`);
   };
-  mat.customProgramCacheKey = () => key;
+  mat.customProgramCacheKey = () => key + (fishPush ? '-fish' : '');
   return mat;
 }
 

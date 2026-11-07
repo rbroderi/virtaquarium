@@ -8,6 +8,7 @@ import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
 import type { Species } from '../species.js';
 import type { Caustics, WaterRenderer, MarineSnow, Bubbles, WaterSurface } from '../water.js';
+import type { DaylightSource } from './daylight.js';
 
 export interface AquariumHandle {
   readonly THREE: typeof THREE;
@@ -25,6 +26,8 @@ export interface AquariumHandle {
   readonly snow: MarineSnow;
   readonly bubbles: Bubbles | null;
   readonly surface: WaterSurface;
+  /** The day/night clock (the look check jumps it to a fixed hour). */
+  readonly daylight: DaylightSource;
   /** Jump the light level (0 night .. 1 day). */
   setLight(level: number): void;
   /** Advance the tank by dt seconds (no drawing). */

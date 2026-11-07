@@ -90,7 +90,6 @@ export async function main(aq: AquariumHandle): Promise<void> {
   if (qs.has('light')) aq.setLight(Number(qs.get('light')));   // e.g. 0.35: dusk, when lionfish hunt
   const probeAt = (qs.get('probe') || '').split(',').filter(Boolean).map((s) => Math.round(Number(s) * STEPS_PER_SECOND));
 
-  const ln = world.fish.find((f) => f.sp.id === 'longnose');
   let updateMs = 0;
   const lurkFrames = new Map<Fish, number>();
   for (let n = 0; n < frames; n++) {
@@ -98,15 +97,6 @@ export async function main(aq: AquariumHandle): Promise<void> {
     if (n % STEPS_PER_SECOND === 0) shoals.sample(world.fish);
     const t0 = performance.now();
     world.update(DT);
-    if (ln && n % 3 === 0) {
-      const b = ln.brain, sh = b.shelter;
-      const g = sh ? b.shelterGoal(sh, ln.pos, world) : null;
-      const stations = [ln.body.nose, 0, ln.body.fin].map((s) => world.rockDist(new THREE.Vector3().copy(ln.pos).addScaledVector(ln.dir, s)).toFixed(2));
-      const mid = sh ? Math.max(sh.floor + ln.size * 0.15, Math.min(sh.top - ln.size * 0.25, g!.y)) : 0;
-      console.log('LN', n, 'y', ln.pos.y.toFixed(2), 'vy', ln.vel.y.toFixed(2), 'dirY', ln.dir.y.toFixed(2), 'spd', ln.speed.toFixed(2),
-        'mode', b.mode, 'sh', b.sheltered ? 1 : 0, 'goalY', g ? g.y.toFixed(2) : '-', 'mid', mid.toFixed(2), 'fl', sh ? sh.floor.toFixed(2) : '-', 'top', sh ? sh.top.toFixed(2) : '-',
-        'rd', stations.join(','));
-    }
     updateMs += performance.now() - t0;
     for (const c of aq.critters) c.update(DT, world);
     cleaning?.step(DT);

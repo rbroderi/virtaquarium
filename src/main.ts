@@ -23,7 +23,7 @@ import { LoadingScreen } from './app/loadingScreen.js';
 import { startProfiler, profileReport, type ProfileReport } from './app/profiler.js';
 import { StageBuilder, useSoftFishShadows, CAMERA_BASE, type Stage } from './app/stage.js';
 import { LightingController, BAKE_SKY } from './app/lighting.js';
-import { daylightFor } from './app/daylight.js';
+import { daylightFor, wallClockDaylight, type DaylightSource } from './app/daylight.js';
 import { Feeder, type TankEvents } from './app/feeder.js';
 import { stockTank } from './app/stocking.js';
 import { trackViewer } from './app/viewer.js';
@@ -98,11 +98,14 @@ function swimBox(stage: Stage): TankBounds {
   };
 }
 
-function bindKeys(loop: TankLoop, toggleReefLight: () => void): void {
+function bindKeys(loop: TankLoop, daylight: DaylightSource, ui: UI, toggleReefLight: () => void): void {
   window.addEventListener('keydown', (e) => {
     if (e.key === ' ') loop.togglePause();
-    if (e.key === 'n' || e.key === 'N') loop.toggleLights();
+    if (e.key === 'n' || e.key === 'N') { loop.toggleDayNight(); ui.showClock(daylight); }
     if (e.key === 'l' || e.key === 'L') toggleReefLight();
+    if (e.key === '<') { daylight.slowDown(); ui.showClock(daylight); }
+    if (e.key === '>') { daylight.speedUp(); ui.showClock(daylight); }
+    if (e.key === 'r' || e.key === 'R') { daylight.reset(); ui.showClock(daylight); }
   });
 }
 
@@ -181,16 +184,21 @@ async function main(): Promise<void> {
 
   const lighting = new LightingController({ stage, surface, reef, toneGain: options.tone.gain });
   const feeder = new Feeder(bus, tank.feedMinutes, bounds, rng, !isJellyTank);   // jellies aren't fed flakes
+  // Checks keep a fixed light (they call setLight); the live page follows the clock by default. The look
+  // check can also be pinned to a specific hour of day (--hour=18) to preview dawn/dusk/night.
+  const followClock = tank.clock && options.check === null;
+  const lookHour = options.check === 'look' && params.has('hour') ? Number(params.get('hour')) : NaN;
+  const daylight = Number.isFinite(lookHour) ? wallClockDaylight() : daylightFor(followClock);
   const loop = new TankLoop({
     stage, world, reef, jellies, critters, snow, bubbles, surface, lighting,
-    daylight: daylightFor(tank.clock), feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur,
+    daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur,
     afterStep: () => ui.update(),
   });
-  bindKeys(loop, () => toggleReefLight(reef));
+  bindKeys(loop, daylight, ui, () => toggleReefLight(reef));
 
   const aquarium: AquariumHandle = {
     THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer, world, reef, jellies, critters, SPECIES,
-    caustics: stage.caustics, water: stage.water, snow, bubbles, surface,
+    caustics: stage.caustics, water: stage.water, snow, bubbles, surface, daylight,
     setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
   };
   debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging

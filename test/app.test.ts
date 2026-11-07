@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { daylightAtHour, wallClockDaylight, alwaysDay } from '../src/app/daylight.js';
+import { daylightAtHour, wallClockDaylight, alwaysDay, DaylightClock } from '../src/app/daylight.js';
 import { Feeder, FIRST_FEED_SECONDS, type TankEvents } from '../src/app/feeder.js';
 import { EventBus } from '../src/core/eventBus.js';
 import { mulberry32 } from '../src/core/rng.js';
 import { StartupTimer } from '../src/app/startupTimer.js';
 
 describe('daylight', () => {
-  it('ramps up at dawn and down at dusk', () => {
-    expect(daylightAtHour(3)).toBe(0);
-    expect(daylightAtHour(7)).toBe(0);
-    expect(daylightAtHour(7.75)).toBeCloseTo(0.5);
+  it('follows the sun through dawn, a noon peak and golden dusk', () => {
+    expect(daylightAtHour(5)).toBe(0);
+    expect(daylightAtHour(6)).toBe(0);
+    expect(daylightAtHour(7)).toBeCloseTo(0.425);
+    expect(daylightAtHour(10)).toBeCloseTo(0.925);
     expect(daylightAtHour(12)).toBe(1);
-    expect(daylightAtHour(20.75)).toBeCloseTo(0.5);
+    expect(daylightAtHour(14)).toBeCloseTo(0.925);
+    expect(daylightAtHour(18)).toBeCloseTo(0.425);
     expect(daylightAtHour(21.5)).toBe(0);
   });
 
@@ -21,6 +23,17 @@ describe('daylight', () => {
     expect(noon.level()).toBe(1);
     expect(night.level()).toBe(0);
     expect(alwaysDay.level()).toBe(1);
+  });
+
+  it('speeds the clock away from real time, jumps it and resets it', () => {
+    const clock = new DaylightClock(() => new Date(2026, 0, 1, 12, 0));
+    expect(clock.rate()).toBe(1);
+    clock.speedUp(); expect(clock.rate()).toBe(2);
+    clock.speedUp(); expect(clock.rate()).toBe(5);
+    clock.slowDown(); expect(clock.rate()).toBe(2);
+    clock.jumpTo(0); expect(clock.hour()).toBeCloseTo(0);
+    clock.reset(); expect(clock.rate()).toBe(1);
+    expect(clock.hour()).toBeCloseTo(12);
   });
 });
 
