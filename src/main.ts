@@ -2,6 +2,7 @@
 // document, builds the stage, reef and stock, wires the event bus, and starts the loop. Every module
 // it wires receives its collaborators here; none reaches for a global.
 import * as THREE from 'three';
+import type { WebGPURenderer } from 'three/webgpu';
 import { SPECIES } from './species.js';
 import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } from './reef.js';
 import { World, type TankBounds } from './world.js';
@@ -10,6 +11,7 @@ import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { makeGpuSurface } from './water/webgpuSurface.js';
 import { bakeReefLightCached, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
 import type { ReefLightOptions } from './reefLight.js';
+import { WebGpuScreenAO } from './webgpu/screenAO.js';
 import { JELLY_SPECIES, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES } from './critters.js';
 import { UI } from './ui.js';
@@ -158,7 +160,9 @@ async function main(): Promise<void> {
   const reef = await buildScenery(stage, tank, options, timer);
   timer.stage('build reef');
 
-  const ao = stage.gpu ? null : new ScreenAO(stage.renderer as THREE.WebGLRenderer);
+  const ao = stage.gpu
+    ? (stage.post ? new WebGpuScreenAO(stage.renderer as WebGPURenderer, stage.post.depthNode) : null)
+    : new ScreenAO(stage.renderer as THREE.WebGLRenderer);
   const useReefLight = !isJellyTank && options.reefLight && !stage.gpu;
   if (useReefLight) useSoftFishShadows(stage);
   // Shaders compile in parallel while the rest of startup runs, instead of blocking on first draw. Bound

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { clamp, lerp } from '../core/math.js';
 import { waterUniforms, updateWaves, MarineSnow, Bubbles, type SurfaceUniforms } from '../water.js';
 import { reefLightUniforms, type ScreenAO } from '../reefLight.js';
+import type { WebGpuScreenAO } from '../webgpu/screenAO.js';
 import type { World } from '../world.js';
 import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
@@ -47,7 +48,7 @@ export interface TankParts {
   readonly lighting: LightingController;
   readonly daylight: DaylightSource;
   readonly feeder: Feeder;
-  readonly ao: ScreenAO | null;
+  readonly ao: ScreenAO | WebGpuScreenAO | null;
   readonly isJellyTank: boolean;
   readonly drift: boolean;
   readonly motionBlur: boolean;
@@ -133,7 +134,10 @@ export class TankLoop {
     if (stage.gpu) {
       if (stage.post) {
         stage.post.setSun(stage.sun);
-        return stage.post.render(stage.camera, this.time);
+        stage.post.render(stage.camera, this.time);
+        // Screen AO publishes to reefLightUniforms for the next frame (inert until the bake is on).
+        if (reefLightUniforms.uRLOn.value && ao) (ao as WebGpuScreenAO).update(stage.camera);
+        return;
       }
       // No post yet: draw the scene straight to the screen (async on the backend).
       return stage.renderer.render(stage.scene, stage.camera);
@@ -145,7 +149,7 @@ export class TankLoop {
       water.render(stage.scene, stage.camera, stage.sun, stage.photo.begin());
       stage.photo.finish(water.target.depthTexture, stage.camera, this.time);
     }
-    if (reefLightUniforms.uRLOn.value && ao) ao.update(water.target.depthTexture, stage.camera);   // read by the next frame
+    if (reefLightUniforms.uRLOn.value && ao) (ao as ScreenAO).update(water.target.depthTexture, stage.camera);   // read by the next frame
   }
 
   /** Track the canvas size every frame (window moves between monitors, panes resize without events). */
