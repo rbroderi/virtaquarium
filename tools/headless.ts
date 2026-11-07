@@ -203,7 +203,9 @@ export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
   }
 
   const url = pageUrl(server, run.page, run.query);
-  const webgpu = run.query.get('renderer') === 'webgpu';
+  // The page defaults to auto (WebGPU when available, else WebGL); only an explicit ?renderer=webgl
+  // should withhold the WebGPU browser flags.
+  const webgpu = run.query.get('renderer') !== 'webgl';
   console.log(`${path.basename(browser)}: ${url}`);
   child = spawn(browser, [
     '--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
