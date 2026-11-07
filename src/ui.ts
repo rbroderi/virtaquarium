@@ -89,6 +89,7 @@ export class UI {
   private readonly cardText: HTMLDivElement;
   private readonly cardHost: HTMLDivElement;
   private readonly cardGo: HTMLButtonElement;
+  private readonly cardDisclosure: HTMLDivElement;
 
   constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher, crystal }: UIOptions) {
     this.scenery = scenery;
@@ -108,7 +109,9 @@ export class UI {
     this.cardGo = document.createElement('button');
     this.cardGo.className = 'cc-go';
     this.cardGo.type = 'button';
-    this.card.append(this.cardText, this.cardHost, this.cardGo);
+    this.cardDisclosure = document.createElement('div');
+    this.cardDisclosure.className = 'cc-disc';
+    this.card.append(this.cardText, this.cardHost, this.cardGo, this.cardDisclosure);
     document.body.appendChild(this.card);
     this.cardGo.addEventListener('click', () => this.visitSponsor());
     document.addEventListener('pointerdown', (e) => {
@@ -234,13 +237,15 @@ export class UI {
     const msg = this.crystal?.current();
     if (!msg || !msg.url) return;
     let host = '';
-    try { host = new URL(msg.url).hostname; } catch { /* leave empty */ }
+    try { host = new URL(msg.url).hostname.replace(/^www\./, ''); } catch { /* leave empty */ }
     const lines = Array.isArray(msg.text) ? msg.text : [msg.text];
     this.cardText.innerHTML = lines.map((l) => `<div>${l.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))}</div>`).join('');
     this.cardHost.textContent = host;
-    this.cardGo.textContent = 'Visit sponsor ↗';
+    this.cardGo.textContent = host.includes('amazon') ? 'View on Amazon ↗' : 'Visit sponsor ↗';
+    this.cardDisclosure.textContent = msg.disclosure ?? '';
+    this.cardDisclosure.style.display = msg.disclosure ? '' : 'none';
     this.card.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
-    this.card.style.top = `${Math.min(e.clientY + 12, window.innerHeight - 120)}px`;
+    this.card.style.top = `${Math.min(e.clientY + 12, window.innerHeight - 160)}px`;
     this.card.classList.add('open');
   }
 

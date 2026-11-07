@@ -10,6 +10,7 @@ import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
 import type { TankScene } from '../reef/types.js';
 import { updateFishPush } from '../reef/fishPush.js';
+import { renderCrystalBgScene } from '../reef/crystalBg.js';
 import type { Stage } from './stage.js';
 import { CAMERA_BASE, CAMERA_LOOK } from './stage.js';
 import type { LightingController } from './lighting.js';
@@ -124,6 +125,8 @@ export class TankLoop {
 
   present(): void {
     const { stage, ao } = this.parts;
+    // The crystal's sub-frustum transmission background, rendered before the main pass samples it.
+    renderCrystalBgScene(stage.renderer, stage.scene, stage.camera, this.parts.world.fish.map((f) => f.model));
     if (!stage.photo) stage.water.render(stage.scene, stage.camera, stage.sun);
     else {
       stage.water.render(stage.scene, stage.camera, stage.sun, stage.photo.begin());

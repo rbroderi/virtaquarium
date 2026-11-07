@@ -11,7 +11,10 @@ export interface CrystalMessage {
   readonly text: string | string[];
   readonly url?: string;
   readonly impressionUrl?: string;
+  /** Kept for source compatibility; defaults to empty (nothing is etched under the product). */
   readonly label?: string;
+  /** The click card's small-print disclosure line (set by the source; Amazon sets its own). */
+  readonly disclosure?: string;
 }
 
 /** A provider seam: a JSON file now, later an affiliate list or a native-ad feed. */
@@ -39,7 +42,8 @@ export function parseCrystalMessages(raw: unknown): CrystalMessage[] {
     const url = typeof entry['url'] === 'string' && entry['url'].length > 0 ? entry['url'] : undefined;
     const impressionUrl = typeof entry['impressionUrl'] === 'string' && entry['impressionUrl'].length > 0 ? entry['impressionUrl'] : undefined;
     const label = typeof entry['label'] === 'string' && entry['label'].length > 0 ? entry['label'] : DEFAULT_LABEL;
-    out.push({ text: lines, ...(url !== undefined ? { url } : {}), ...(impressionUrl !== undefined ? { impressionUrl } : {}), label });
+    const disclosure = typeof entry['disclosure'] === 'string' && entry['disclosure'].length > 0 ? entry['disclosure'] : undefined;
+    out.push({ text: lines, ...(url !== undefined ? { url } : {}), ...(impressionUrl !== undefined ? { impressionUrl } : {}), label, ...(disclosure !== undefined ? { disclosure } : {}) });
   }
   return out;
 }

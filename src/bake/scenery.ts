@@ -10,6 +10,7 @@ import {
 import { World, type TankBounds } from '../world.js';
 import { mulberry32 } from '../util.js';
 import { isNoHeight, inBackdropOnlySubtree } from '../reef/flags.js';
+import { renderCrystalBgScene } from '../reef/crystalBg.js';
 import { bakeReefLight, reefLightUniforms } from '../reefLight.js';
 import { windowTopY } from '../view.js';
 import { LIGHTS } from '../rig.js';
@@ -209,6 +210,7 @@ export async function bakeScenery(renderer: THREE.WebGLRenderer, config: BakeCon
   const key = `${scenery}-${seed}`;
   const out = blankCanvas(strip.w, strip.h);
   const g = readbackContext(out);
+  renderCrystalBgScene(renderer, scene, camera, []);
   waterRenderer.render(scene, camera, sun);
   g.drawImage(renderer.domElement, 0, 0, strip.w, strip.h);
   const backdrop = await saveBackdropTiles(out, strip, key);

@@ -7,6 +7,7 @@
 // A second overlay set covers the foreground reef layer and is drawn over it.
 import * as THREE from 'three';
 import { waterUniforms, updateWaves, type Caustics, type WaterRenderer, type ShaftLight } from '../water.js';
+import { renderCrystalBgScene } from '../reef/crystalBg.js';
 import { context2d } from '../util.js';
 import { CAUSTIC_T, SUPERSAMPLE, WATER_SCALE, type BakeConfig } from './config.js';
 import { blankCanvas, readbackContext, saveAsset, toBlob, type Log } from './io.js';
@@ -55,6 +56,7 @@ function makeGrabber(stage: WaterStage, w: number, h: number): { back(): Rgba; f
     },
     back() {
       renderer.setClearColor(0x000000, 1);
+      renderCrystalBgScene(renderer, scene, camera, []);
       waterRenderer.render(scene, camera, sun);
       return read();
     },

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { addCaustics } from '../water.js';
 import { isMesh } from './flags.js';
 import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
+import { crystalBgUniforms } from './crystalBg.js';
 
 /** How near a triangle's normal must be to the face's normal to belong to the face (dot product). */
 const FACE_NORMAL_DOT = 0.93;
@@ -253,27 +254,37 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
 
 // ---------------------------------------------------------------------------
 // Materials
+//
+// The crystal fakes three.js transmission: the material is opaque (transmission = 0, so the renderer
+// never runs its expensive full-screen transmission pass) and its shader mixes in a small sub-frustum
+// render of the reef behind it (crystalBg.ts). Flat shading, a little iridescence and a tight specular
+// read as a mineral crystal rather than a smooth water blob.
 
-/** A clear glass body material, caustic-lit like the rest of the reef. */
+interface CrystalShaderOptions {
+  readonly face: boolean;
+  readonly transmission: number;
+  readonly thickness: number;
+  readonly tint: THREE.Color;
+}
+
+/** The faceted crystal body, caustic-lit like the rest of the reef. */
 function bodyMaterial(thickness: number): THREE.MeshPhysicalMaterial {
   const mat = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, roughness: 0.12, metalness: 0,
-    transmission: 1, ior: 1.54, thickness,
-    attenuationColor: ATTENUATION_COLOR.clone(), attenuationDistance: 4,
-    specularIntensity: 1, specularColor: new THREE.Color(1, 1, 1),
-    envMapIntensity: 0.6,
+    color: 0xffffff, roughness: 0.15, metalness: 0,
+    flatShading: true,
+    iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessRange: [100, 400],
+    specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
+    envMapIntensity: 0.35,
   });
-  return addCaustics(mat);
+  return addCrystalShader(addCaustics(mat), { face: false, transmission: 0.78, thickness: Math.min(0.16, thickness), tint: ATTENUATION_COLOR.clone() });
 }
 
 /** The etched face: the same glass, with the etched mask fading in via uCrystalFade. */
 function makeFaceMaterial(aspect: number): THREE.MeshPhysicalMaterial {
   const mat = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, roughness: 0.9, metalness: 0,
-    transmission: 1, ior: 1.54, thickness: 0,   // the clear face is a window: no refraction offset
-    attenuationColor: new THREE.Color(1, 1, 1), attenuationDistance: Infinity,
-    specularIntensity: 1, specularColor: new THREE.Color(1, 1, 1),
-    envMapIntensity: 0.6,
+    color: 0xffffff, roughness: 0.8, metalness: 0,
+    specularIntensity: 0.6, specularColor: new THREE.Color(1, 1, 1),
+    envMapIntensity: 0.25,
   });
   const canvas = document.createElement('canvas');
   canvas.width = FACE_TEXTURE_W;
@@ -285,43 +296,76 @@ function makeFaceMaterial(aspect: number): THREE.MeshPhysicalMaterial {
   mask.generateMipmaps = false;
   mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
   renderMask(canvas, DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL);
-  mat.transmissionMap = mask;
-  mat.roughnessMap = mask;
   mat.userData['crystalMask'] = mask;
   mat.userData['crystalAspect'] = aspect;
   mat.userData['crystalFade'] = { value: 1 };
-  return addCrystalFade(addCaustics(mat));
+  return addCrystalShader(addCaustics(mat), { face: true, transmission: 0.9, thickness: 0, tint: new THREE.Color(1, 1, 1) });
 }
 
 /**
- * Fades the etched mask in and out (uCrystalFade: 0 = fully clear, 1 = etched). Patches the transmission
- * and roughness lookups, which are still #include directives when onBeforeCompile runs.
+ * Patches the material to mix in the sub-frustum transmission background (uCrystalBg), and, for the
+ * face, frost the etched letters (roughness from the mask's green channel) and fade them (uCrystalFade).
  */
-function addCrystalFade(mat: THREE.MeshPhysicalMaterial): THREE.MeshPhysicalMaterial {
-  const fade = mat.userData['crystalFade'] as { value: number };
+function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShaderOptions): THREE.MeshPhysicalMaterial {
+  const fade = mat.userData['crystalFade'] as { value: number } | undefined;
   const prev = mat.onBeforeCompile.bind(mat);
   const prevKey = mat.customProgramCacheKey.bind(mat);
-  const chunksMatch = (): boolean =>
-    THREE.ShaderChunk['transmission_fragment'].includes('material.transmission *= texture2D( transmissionMap, vTransmissionMapUv ).r;') &&
-    THREE.ShaderChunk['roughnessmap_fragment'].includes('roughnessFactor *= texelRoughness.g;');
   mat.onBeforeCompile = (shader, renderer) => {
     prev(shader, renderer);
-    shader.uniforms['uCrystalFade'] = fade;
-    if (!chunksMatch()) {
-      console.warn('crystal: three.js chunks changed; etched text fade off');
-      return;
+    Object.assign(shader.uniforms, crystalBgUniforms, {
+      uCrystalFade: fade ?? { value: 1 },
+      uCrystalTransmission: { value: options.transmission },
+      uCrystalIor: { value: 1.54 },
+      uCrystalThickness: { value: options.thickness },
+      uCrystalTint: { value: options.tint },
+    });
+    if (options.face) {
+      shader.uniforms['uEtchTex'] = { value: mat.userData['crystalMask'] as THREE.Texture };
+      shader.vertexShader = 'varying vec2 vCrystalUv;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace('void main() {', 'void main() {\n\tvCrystalUv = uv;');
     }
-    shader.fragmentShader = 'uniform float uCrystalFade;\n' + shader.fragmentShader
-      .replace('#include <transmission_fragment>',
-        THREE.ShaderChunk['transmission_fragment'].replace(
-          'material.transmission *= texture2D( transmissionMap, vTransmissionMapUv ).r;',
-          'material.transmission *= mix( 1.0, texture2D( transmissionMap, vTransmissionMapUv ).r, uCrystalFade );'))
-      .replace('#include <roughnessmap_fragment>',
-        THREE.ShaderChunk['roughnessmap_fragment'].replace(
-          'roughnessFactor *= texelRoughness.g;',
-          'roughnessFactor *= mix( 1.0, texelRoughness.g, uCrystalFade );'));
+
+    const head = `
+uniform sampler2D uCrystalBg;
+uniform vec2 uCrystalBgSize;
+uniform mat4 uCrystalBgProj;
+uniform float uCrystalFade;
+uniform float uCrystalTransmission;
+uniform float uCrystalIor;
+uniform float uCrystalThickness;
+uniform vec3 uCrystalTint;
+${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
+`;
+    shader.fragmentShader = head + shader.fragmentShader;
+
+    if (options.face) {
+      shader.fragmentShader = shader.fragmentShader.replace('void main() {',
+        'void main() {\n\tvec4 crystalMask = texture2D( uEtchTex, vCrystalUv );\n\tfloat crystalEtch = ( 1.0 - crystalMask.r ) * uCrystalFade;');
+      const roughness = THREE.ShaderChunk['roughnessmap_fragment'];
+      if (roughness.includes('roughnessFactor *= texelRoughness.g;')) {
+        shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>',
+          roughness.replace('float roughnessFactor = roughness;', 'float roughnessFactor = roughness;\n\troughnessFactor *= mix( 1.0, crystalMask.g, uCrystalFade );'));
+      } else {
+        console.warn('crystal: three.js roughness chunk changed; frost off');
+      }
+    }
+
+    const mixCode = `
+  {
+    vec3 crystalV = normalize( cameraPosition - vCW );
+    vec3 crystalN = normalize( normal );
+    vec3 crystalR = refract( -crystalV, crystalN, 1.0 / uCrystalIor );
+    vec3 crystalExit = vCW + crystalR * uCrystalThickness;
+    vec4 crystalNdc = uCrystalBgProj * vec4( crystalExit, 1.0 );
+    vec2 crystalUv = crystalNdc.xy / max( 1e-5, crystalNdc.w ) * 0.5 + 0.5;
+    vec3 crystalTransmitted = texture2D( uCrystalBg, crystalUv ).rgb * uCrystalTint;
+    float crystalMix = uCrystalTransmission${options.face ? ' * ( 1.0 - crystalEtch )' : ''};
+    outgoingLight = mix( outgoingLight, crystalTransmitted, crystalMix );
+  }
+`;
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', mixCode + '#include <opaque_fragment>');
   };
-  mat.customProgramCacheKey = () => prevKey() + '|crystalfade';
+  mat.customProgramCacheKey = () => prevKey() + (options.face ? '|crystalface' : '|crystalbody');
   return mat;
 }
 
