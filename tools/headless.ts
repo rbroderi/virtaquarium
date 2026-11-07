@@ -102,7 +102,8 @@ export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
   const finished = new Promise<HeadlessResult>((resolve) => { settle = resolve; });
 
   let done = false;
-  const server = await startServer(0, (event: ServerEvent) => {
+  // CHECK_PORT pins the port (the browser's own stores, e.g. ?store=browser, are per origin); else any free one.
+  const server = await startServer(Number(process.env['CHECK_PORT'] ?? 0), (event: ServerEvent) => {
     if (event.type === 'saved') run.onSaved?.(event.path);
     else finish(!event.body.startsWith('FAILED'), event.body);
   });

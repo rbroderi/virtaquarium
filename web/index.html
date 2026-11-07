@@ -46,6 +46,13 @@
   #loading .label { margin-top: 12px; min-height: 1.4em; font-size: 14px; color: #a9c9d8; }
   #loading.failed .bar i { background: #ff7a6a; }
   #loading.failed .label { color: #ffb4a8; }
+  /* Tank switcher: bottom right, fades out with the cursor when idle. */
+  #tanks { position: fixed; right: 20px; bottom: 24px; display: none; gap: 4px; padding: 4px; border-radius: 18px; background: rgba(0, 20, 30, 0.55); transition: opacity 0.6s; }
+  #tanks.show { display: flex; }
+  body.idle:not(.fresh) #tanks { opacity: 0; }
+  #tanks button { font: inherit; font-size: 13px; color: #cfe6f2; background: none; border: 0; border-radius: 14px; padding: 6px 12px; cursor: pointer; }
+  #tanks button:hover { background: rgba(255, 255, 255, 0.1); }
+  #tanks button[aria-pressed="true"] { background: rgba(92, 200, 255, 0.3); color: #fff; cursor: default; }
 </style>
 </head>
 <body>
@@ -62,6 +69,10 @@
 </div>
 <div id="hint">Click to feed · click a fish or critter to inspect it · H for help</div>
 <div id="clock"></div>
+<div id="tanks" role="group" aria-label="Tank">
+  <button type="button" data-scenery="reef">Reef</button>
+  <button type="button" data-scenery="jelly">Moon jellies</button>
+</div>
 <div id="help">
   <div><kbd>click</kbd>drop food (or select a fish or critter)</div>
   <div><kbd>Tab</kbd>inspect next fish's brain</div>
@@ -70,6 +81,7 @@
   <div><kbd>N</kbd>jump between noon and midnight</div>
   <div><kbd>&lt;</kbd><kbd>&gt;</kbd>slow down / speed up the day-night clock</div>
   <div><kbd>R</kbd>back to the real-time clock</div>
+  <div><kbd>T</kbd>switch between the reef and the moon jelly tank</div>
   <div><kbd>Space</kbd>pause</div>
   <div><kbd>Esc</kbd>close the inspect panel</div>
   <div><kbd>F11</kbd>full screen</div>

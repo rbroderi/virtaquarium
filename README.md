@@ -33,6 +33,7 @@ opens the browser for you.
 | < / > | slow down / speed up the day-night clock |
 | R | back to the real-time clock |
 | L | toggle the baked reef light |
+| T | switch between the reef and the moon jelly tank (also the buttons bottom right) |
 | Space | pause |
 | H | help |
 
@@ -257,6 +258,15 @@ has no `any` and no `@ts-ignore`. Untrusted input (tank documents, manifests, UR
 `unknown` and is validated at the boundary. The parity tests compare the RNG, species catalogue, organic
 noise and reef layouts against recorded outputs in `test/goldens/`, so a seed always builds the same
 tank.
+
+### Deploying
+
+`railway.json` deploys the site on [Railway](https://railway.com): it builds with `bun run build` and runs
+`bun tools/serve.ts --public` on the port Railway gives it. In public mode the server is read-only. It
+serves only what the tank page loads (no lab, bake or Roku pages, reference photos or check output), and
+the page URL takes only `?scenery=jelly`. The painted fish skins and the baked reef light are kept in each
+visitor's own browser (Cache Storage), so a return visit skips that work. `?store=browser` tries this
+locally; with `bun run check`, set `CHECK_PORT` so successive runs share one origin.
 
 ### Layout
 

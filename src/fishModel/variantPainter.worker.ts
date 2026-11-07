@@ -8,6 +8,7 @@ import { paintSkin } from './skin.js';
 import { paintFins } from './fins.js';
 import { paintPectoral } from './pectoral.js';
 import type { Species } from '../species/types.js';
+import { fetchCached } from '../core/cacheStore.js';
 
 // OffscreenCanvas stands in for document.createElement('canvas'); makeCanvas sets width/height afterwards.
 const canvasShim = {
@@ -69,11 +70,11 @@ function skinMean(canvas: OffscreenCanvas | ImageBitmap): [number, number, numbe
 
 async function loadCachedSkin(cache: VariantCache): Promise<{ skin?: ImageBitmap; avg?: [number, number, number] }> {
   try {
-    const r = await fetch(cache.metaUrl, { cache: 'no-cache' });
+    const r = await fetchCached(cache.metaUrl, { cache: 'no-cache' });
     if (!r.ok) return {};
     const meta: unknown = await r.json();
     if (!meta || typeof meta !== 'object' || (meta as { key?: unknown }).key !== cache.key) return {};
-    const r2 = await fetch(cache.skinUrl);
+    const r2 = await fetchCached(cache.skinUrl);
     if (!r2.ok) return {};
     const skin = await createImageBitmap(await r2.blob(), { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
     const m = (meta as { avg?: unknown }).avg;
