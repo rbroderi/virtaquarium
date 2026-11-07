@@ -1,10 +1,16 @@
 // Magnificent sea anemone (Heteractis magnifica), the clownfish's host: a pale cream-to-lilac column
-// with a dense carpet of thick, soft finger-like tentacles. Each tentacle is one cheap lathe (128
-// triangles, 8 sides) with a nearly even girth, a swollen rounded tip and a small violet dot; the
-// gradients ride on the vertices. Per-instance attributes add a static curl (so the tube is never a
-// straight needle) and a violet-dot hue, while instance colours vary the overall cream/pink tint. The
-// golden-angle packing is broken up by a smooth swirl field, so neighbours lean together in drifts
-// rather than all pointing radially outward.
+// with a dense carpet of slender, soft finger-like tentacles. The real animal (Fautin & Allen 1992;
+// Animal Diversity Web) has a 30-50 cm oral disc and 5-8 cm finger-like tentacles, blunt or slightly
+// swollen at the tip; at this tank's 1 unit = 12.5 cm those are 0.40-0.64 units long and roughly a
+// tenth of a clownfish's length thick, and the tank's reduced crown keeps those proportions against
+// its 0.62-unit (7.75 cm) clownfish. Each tentacle is one cheap lathe (128
+// triangles, 8 sides) with a nearly even girth and a swollen, rounded bulb; the tip is tinted violet
+// over its last tenth by a soft gradient, not a cap. The gradients ride on the vertices. Per-instance
+// attributes add a static curl, a tip hue and a mottle phase, while instance colours vary the overall
+// cream/pink tint; a vertex aThin ramp feeds the tissue translucency so light glows through the tips.
+// The golden-angle packing is broken up by a smooth swirl field, so neighbours lean together in drifts
+// rather than all pointing radially outward. The crown is kept close to the old footprint so the
+// clownfish stays visible among the tentacles.
 import * as THREE from 'three';
 import { Noise, TAU, clamp, mulberry32, pick, range, type Rng } from '../util.js';
 import { addTranslucency } from '../softSkin.js';
@@ -17,11 +23,15 @@ const GIRTH_SEED = 912;
 const JITTER_SEED = 913;
 const CURL_SEED = 914;
 const TIP_SEED = 915;
-/** 640 thick tentacles (the old crown had 320 thin ones); 640 also matches the old tentacle-load's
- *  draw count from the reef rng (320 x 2), so the rest of the seeded reef is unchanged. */
+/**
+ * 640 slender tentacles, one rng draw each: the same 640 draws the old crown made (320 x 2), so the
+ * rest of the seeded reef layout is unchanged. Widths follow the real animal: at 1 unit = 12.5 cm,
+ * Fautin & Allen's 5-8 cm tentacles are 0.40-0.64 units long and about a tenth of a clownfish's
+ * length thick (tentacle width is not published; from the reference photo it is ~0.6-1.3 cm).
+ */
 const TENTACLES = 640;
-/** Tentacles reach out to the disc's rim. */
-const TENTACLE_SPREAD = 0.6;
+/** Tentacles reach out to the disc's rim (about the old crown's footprint). */
+const TENTACLE_SPREAD = 0.56;
 
 type Profile = readonly (readonly [number, number])[];
 
@@ -30,14 +40,14 @@ const COLUMN_PROFILE: Profile = [[0.0, -0.02], [0.46, -0.02], [0.48, 0.02], [0.4
 /** Where the disc's top starts in COLUMN_PROFILE (rim in to the mouth). */
 const DISC_TOP_FROM = 8;
 /**
- * (r, y): the base buried in the disc, an even stem (the width holds all the way up), the swollen
- * rounded bulb at 0.86-0.93, and a small violet cap. Length 0.981 / stem diameter ~0.104 = 9.4x; the
- * bulb is ~1.2x the stem's width.
+ * (r, y): the base buried in the disc, an even stem (the width holds all the way up), a swollen
+ * rounded bulb from 0.84, and a blunt rounded top. Length 0.981 / stem diameter ~0.068 = 14x; the
+ * bulb is ~1.35x the stem's width. No point: the last tenth rounds over rather than tapering to a spike.
  */
-const TENTACLE_PROFILE: Profile = [[0.026, 0.0], [0.052, 0.06], [0.051, 0.55], [0.063, 0.86], [0.058, 0.912], [0.043, 0.948], [0.028, 0.966], [0.011, 0.977], [0.0, 0.981]];
+const TENTACLE_PROFILE: Profile = [[0.018, 0.0], [0.034, 0.06], [0.034, 0.55], [0.041, 0.84], [0.046, 0.875], [0.044, 0.915], [0.036, 0.945], [0.021, 0.965], [0.0, 0.981]];
 const TENTACLE_HEIGHT = 0.981;
-/** The small violet dot covers the very top (model y), mixed over a soft edge. */
-const TIP_MASK_FROM = 0.97, TIP_MASK_TO = 0.979;
+/** The violet tip tint grows in over the last ~10% of the model's length, blending out of the cream. */
+const TIP_GRADIENT_FROM = 0.88, TIP_GRADIENT_TO = 0.972;
 
 /** The disc's top at radius r, for seating the tentacles. */
 function discHeight(r: number): number {
@@ -69,22 +79,21 @@ function column(): THREE.Mesh {
   return new THREE.Mesh(cg, addTranslucency(stdMat({ vertexColors: true, roughness: 0.9 }), { wrap: 0.25, back: 0.2, tint: [1.0, 0.85, 0.82], thin: 0.1 }));
 }
 
-/** Pale cream through beige-pink to a yellower bulb; the very tip's colour is replaced per instance. */
+/** Pale cream through beige-pink to a warm translucent bulb; the tip's violet is blended per instance. */
 function tentacleColors(): (y: number, c: THREE.Color) => void {
-  const foot = color('#b59b8b'), stem = color('#d1b7a9'), mid = color('#dfc8bc'), pale = color('#e8d3b4'), bulb = color('#ebd8b5'), dot = color('#7c5c9e');
+  const foot = color('#ae9384'), stem = color('#cea99f'), mid = color('#ddbfb6'), pale = color('#e9d2b6'), bulb = color('#efdebd');
   return (y, c) => {
     if (y < 0.09) c.copy(foot).lerp(stem, y / 0.09);
     else if (y < 0.42) c.copy(stem).lerp(mid, (y - 0.09) / 0.33);
     else if (y < 0.72) c.copy(mid).lerp(pale, (y - 0.42) / 0.30);
-    else if (y < TIP_MASK_FROM) c.copy(pale).lerp(bulb, (y - 0.72) / (TIP_MASK_FROM - 0.72));
-    else c.copy(dot);
+    else c.copy(pale).lerp(bulb, clamp((y - 0.72) / (0.9 - 0.72), 0, 1));
   };
 }
 
-/** Violet dot hues, per tentacle, so the tips are not one flat colour. */
-const TIP_COLORS = [color('#7c63a0'), color('#8d6cae'), color('#6c5691'), color('#9a78b2'), color('#82649e'), color('#9274a8')];
-/** Overall tentacle tints (peach, lilac, cream, a little yellow), multiplied over the vertex gradient. */
-const TINTS = [color('#ffe3cd'), color('#eadcf0'), color('#fff0d2'), color('#f5dfe1'), color('#e6e8f4')];
+/** Lilac tip hues, softened with cream, so adjacent tips differ but never read as stickers. */
+const TIP_COLORS = [color('#b49cc4'), color('#c0a9ce'), color('#a48bb8'), color('#c9b2d6'), color('#ab94c6'), color('#b9a3c9')];
+/** Overall tentacle tints (peach, lilac, cream, a little yellow and rose), multiplied over the gradient. */
+const TINTS = [color('#ffd9c0'), color('#ddc8e8'), color('#fff0c8'), color('#ffd6dc'), color('#dbe4f2'), color('#f0e0c8'), color('#ffd9ea'), color('#e9e6d2')];
 
 /**
  * A smooth swirl field over the disc: a slow turn around the column plus low-frequency wobble, so
@@ -102,16 +111,30 @@ const CURL_DEFORM = /* glsl */`
         float wig = sin(h * 5.3 + aCurl.w) * 0.22 * h * h;
         transformed.x += (aCurl.x * curlH - aCurl.y * wig) * aCurl.z;
         transformed.z += (aCurl.y * curlH + aCurl.x * wig) * aCurl.z;
+        // Not a perfect pipe: the girth swells and thins a little along the tube, out of phase per
+        // tentacle, so the surface undulates instead of reading as an extruded cylinder.
+        transformed.x *= 1.0 + 0.045 * sin(h * 21.0 + aCurl.w * 2.3);
+        transformed.z *= 1.0 + 0.04 * sin(h * 17.0 - aCurl.w * 1.7);
 `;
 const CURL_PRELUDE = 'attribute vec4 aCurl;\n';
 
-/** Replaces the (cream/violet) tip vertex colour with the instance's own violet hue. */
+/**
+ * Tints the last tenth of each tentacle with the instance's violet hue, as a gradient out of the cream
+ * (not a cap), and adds a faint tissue mottling along the tube, out of phase per tentacle.
+ */
 function addTipTint(mat: THREE.Material): void {
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   mat.onBeforeCompile = (shader, r) => {
     prev(shader, r);
     shader.vertexShader = 'attribute vec3 aTip;\n' + shader.vertexShader.replace('#include <color_vertex>', `#include <color_vertex>
-      vColor = mix(vColor, aTip, smoothstep(${TIP_MASK_FROM}, ${TIP_MASK_TO}, position.y));`);
+      float tipK = smoothstep(${TIP_GRADIENT_FROM}, ${TIP_GRADIENT_TO}, position.y);
+      float tipDeep = smoothstep(${TIP_GRADIENT_TO}, ${TENTACLE_HEIGHT}, position.y);
+      vColor = mix(vColor, aTip * (0.9 + 0.1 * tipDeep), tipK);
+      // Faint tissue mottling (pink/cream striation) along the tube, out of phase per tentacle.
+      float mott = sin(position.y * 31.0 + aCurl.w * 4.3) * 0.55 + sin(position.y * 11.0 - aCurl.w * 7.1) * 0.45;
+      vColor *= 1.0 + mott * 0.075;
+      vColor.r *= 1.0 + 0.03 * sin(position.y * 9.0 + aCurl.w);
+      vColor.b *= 1.0 - 0.024 * sin(position.y * 9.0 + aCurl.w);`);
   };
   mat.customProgramCacheKey = () => prevKey() + '|tip';
 }
@@ -121,12 +144,21 @@ const WHITE = new THREE.Color(1, 1, 1);
 /** A dense carpet of curled, tinted tentacles, one instanced draw. */
 function tentacles(rng: Rng): THREE.InstancedMesh {
   const tg = lathe(TENTACLE_PROFILE, 8, tentacleColors());
+  // Tissue thinness up the tube (base solid, tip translucent), for the SSS transmission lobe. The
+  // geometry is shared by every instance, so this costs one attribute and no rng.
+  const pos = tg.getAttribute('position');
+  const thin = new THREE.BufferAttribute(new Float32Array(pos.count), 1);
+  for (let i = 0; i < pos.count; i++) {
+    const h = clamp(pos.getY(i) / TENTACLE_HEIGHT, 0, 1);
+    thin.setX(i, 0.28 + 0.72 * h * h * (0.6 + 0.4 * h));   // stout at the foot, translucent at the tip
+  }
+  tg.setAttribute('aThin', thin);
   const curl = new THREE.InstancedBufferAttribute(new Float32Array(TENTACLES * 4), 4);
   const tip = new THREE.InstancedBufferAttribute(new Float32Array(TENTACLES * 3), 3);
   tg.setAttribute('aCurl', curl);
   tg.setAttribute('aTip', tip);
   const mat = addSway(
-    addTranslucency(stdMat({ vertexColors: true, roughness: 0.82 }), { wrap: 0.55, back: 0.55, tint: [1.0, 0.8, 0.78], thin: 0.6 }),
+    addTranslucency(stdMat({ vertexColors: true, roughness: 0.46 }), { wrap: 0.85, back: 1.25, tint: [1.0, 0.68, 0.66], thin: 'attr' }),
     'anemone', { ax: 0.05, az: 0.04, hz: 1.15, hTop: TENTACLE_HEIGHT, fishPush: true, prelude: CURL_PRELUDE, deform: CURL_DEFORM, variant: 'curl' },
   );
   addTipTint(mat);
@@ -135,7 +167,7 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
   const { m, q, s, p } = scratch;
   const jitter = mulberry32(JITTER_SEED);  // placement and posture, off the reef's rng too
   const curls = mulberry32(CURL_SEED);     // the static bend, and which way it bends
-  const tips = mulberry32(TIP_SEED);       // tip-dot hue and overall tint
+  const tips = mulberry32(TIP_SEED);       // tip hue and overall tint
   const roll = new THREE.Quaternion(), tint = new THREE.Color(), tipCol = new THREE.Color();
   for (let i = 0; i < TENTACLES; i++) {
     // Break the golden-angle spiral: nudge each tentacle round and out, and let the rim wander. Every
@@ -155,11 +187,13 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
     dx /= dl; dz /= dl;
     // Tilt from upright: strong variation, and much more towards the rim, so the edge drapes over the
     // column and the interior tentacles lie across each other rather than standing to attention.
-    const tilt = skirt ? 1.1 + 0.35 * jitter() : 0.4 + 0.7 * jitter() + 0.35 * edge, st = Math.sin(tilt), ct = Math.cos(tilt);
+    const tilt = skirt ? 1.12 + 0.38 * jitter() : 0.55 + 0.85 * jitter() + 0.35 * edge, st = Math.sin(tilt), ct = Math.cos(tilt);
     q.setFromUnitVectors(UP, p.set(dx * st, ct, dz * st).normalize());
     q.multiply(roll.setFromAxisAngle(UP, jitter() * TAU));   // roll the tube's facets and curl round its axis
-    const g = (0.84 + 0.4 * girth()) * (skirt ? 1.1 : 1);
-    const len = range(rng, 0.5, 1.05) * (1 + 0.1 * (1 - r / TENTACLE_SPREAD)) * (skirt ? 1.25 : 1);
+    const g = (0.74 + 0.34 * girth()) * (skirt ? 1.06 : 1);
+    // Real 5-8 cm tentacles (0.40-0.64 units) scaled by the profile's 0.981 height; the skirt a touch
+    // longer. It keeps the crown near the old anemone's footprint, so the clownfish stays visible.
+    const len = range(rng, 0.30, 0.66) * (1 + 0.1 * (1 - r / TENTACLE_SPREAD)) * (skirt ? 1.12 : 1);
     // Bases sink just below the disc (and the skirt just below the rim), so no gap shows under them.
     m.compose(p.set(x, discHeight(Math.min(r, 0.52)) - 0.02 - (skirt ? 0.008 : 0) + (jitter() - 0.5) * 0.018, z), q, s.set(g, len, g));
     tent.setMatrixAt(i, m);

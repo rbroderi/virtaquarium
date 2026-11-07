@@ -29,6 +29,12 @@ const JITTER_STEPS = 15;
 const VY_EPSILON = 1e-4;
 /** A fish's centre this deep in rock (body lengths) counts as inside it. */
 const IN_ROCK_DEPTH = 0.1;
+/** Clownfish: deep in the host anemone means within this reach of its column axis ... */
+const HOST_DEEP_RADIUS = 0.35;
+/** ... and between this far below and above the disc centre (world units). */
+const HOST_DEEP_BELOW = 0.3, HOST_DEEP_ABOVE = 0.5;
+/** Near the host means within this distance of the anemone's centre. */
+const HOST_NEAR = 2.5;
 /** Fish that have lost to a rival this often keep a truce. */
 const TRUCE_LOSSES = 2;
 const PROBE_TEXT_LIMIT = 200;
@@ -82,6 +88,11 @@ export async function main(aq: AquariumHandle): Promise<void> {
   // The same wobble count on the drawn position (Fish.present smooths the collision pushes).
   const drawn: FishStats[] = world.fish.map((f) => ({ f, y: f.pos.y, vy: 0, ext: null, rise: 0, jitter: 0, inRock: 0, last: f.pos.clone(), maxStep: 0 }));
   const eels = new Map(world.fish.filter((f) => f.spine).map((f) => [f, new EelTally()] as const));
+  // Clownfish hosting: how much of the run each spends deep in the tentacles, near the host, and in
+  // the host behaviour (so a change to its weight can be checked against how it actually swims).
+  const hostAn = world.reef.anemones[0] ?? null;
+  const hostFish = hostAn ? world.fish.filter((f) => f.sp.brain.host) : [];
+  const hostTallies = new Map(hostFish.map((f) => [f, { deep: 0, near: 0, mode: 0 }]));
   const cleaning = world.station ? new CleaningTally(world.station) : null;
   const shoals = new ShoalSampler(world.fish);
   const overlaps = new FishOverlapTally(world.fish);
@@ -99,6 +110,14 @@ export async function main(aq: AquariumHandle): Promise<void> {
     world.update(DT);
     updateMs += performance.now() - t0;
     for (const c of aq.critters) c.update(DT, world);
+    if (hostAn) for (const f of hostFish) {
+      const tally = hostTallies.get(f);
+      if (!tally) continue;
+      const flat = Math.hypot(f.pos.x - hostAn.pos.x, f.pos.z - hostAn.pos.z);
+      if (flat < HOST_DEEP_RADIUS && f.pos.y > hostAn.pos.y - HOST_DEEP_BELOW && f.pos.y < hostAn.pos.y + HOST_DEEP_ABOVE) tally.deep++;
+      if (f.pos.distanceTo(hostAn.pos) < HOST_NEAR) tally.near++;
+      if (f.brain.mode === 'host') tally.mode++;
+    }
     cleaning?.step(DT);
     overlaps.step();
     truth?.step(world);
@@ -153,6 +172,11 @@ export async function main(aq: AquariumHandle): Promise<void> {
     firstHandPerMin: perMinute((f) => f.brain.firstHand),
     shoals: shoals.summary(),
     shelteredShare: shoals.shelteredShare(),
+    // Clownfish hosting, per fish, as a share of the run frames: deep among the tentacles, near the
+    // host, and in the host behaviour (target roughly a quarter deep, most of it near; host.ts).
+    hostStay: [...hostTallies].map(([f, t]) => ({
+      fish: f.name || f.sp.id, deep: +(t.deep / frames).toFixed(2), near: +(t.near / frames).toFixed(2), host: +(t.mode / frames).toFixed(2),
+    })),
     lionfishStrikes: world.fish.reduce((a, f) => a + f.brain.strikes, 0),
     truces: world.fish.reduce((a, f) => a + [...(f.brain.lostTo?.values() ?? [])].filter((k) => k >= TRUCE_LOSSES).length, 0),
     ...(cleaning ? { cleaning: cleaning.summary() } : {}),
