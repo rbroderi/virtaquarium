@@ -97,32 +97,37 @@ vec3 fishPushWorld(vec3 wp, float h) {
 
 /**
  * The block that runs after the sway has bent the vertex: it takes the bent vertex's world position,
- * folds the world-space push back into model space, and bends rather than stretches: the tip angle is
- * capped and each vertex keeps its distance from the base, so the stalk leans over and the base stays
- * planted and thick.
+ * bends in world space (where the push lives) rather than stretches: the tip angle is capped and each
+ * vertex keeps its world distance from the base, so the stalk leans over and the base stays planted
+ * and thick.
  */
 export const FISH_PUSH_APPLY = /* glsl */`
+      mat3 fpM = mat3(modelMatrix);
       #ifdef USE_INSTANCING
+      fpM = fpM * mat3(instanceMatrix);
       vec4 fpWp = modelMatrix * (instanceMatrix * vec4(transformed, 1.0));
-      mat4 fpM = instanceMatrix;
       #else
       vec4 fpWp = modelMatrix * vec4(transformed, 1.0);
-      mat4 fpM = modelMatrix;
       #endif
       vec3 fpPush = fishPushWorld(fpWp.xyz, h);
       {
-        mat3 fpM3 = mat3(fpM);
-        vec3 fpS = max(vec3(length(fpM3[0].xyz), length(fpM3[1].xyz), length(fpM3[2].xyz)), vec3(1e-3));
+        vec3 fpS = max(vec3(length(fpM[0].xyz), length(fpM[1].xyz), length(fpM[2].xyz)), vec3(1e-3));
         float fpMag = length(fpPush);
         if (fpMag > 1e-5) {
           float fpCap = fpS.y * ${f(BEND_CHORD)};
           if (fpMag > fpCap) fpPush *= fpCap / fpMag;
-          mat3 fpRot = mat3(fpM3[0].xyz / fpS.x, fpM3[1].xyz / fpS.y, fpM3[2].xyz / fpS.z);
-          vec3 fpLocal = (fpPush * fpRot) / fpS;
-          float fpR = length(transformed);
-          vec3 fpBent = transformed + fpLocal;
+          mat3 fpRot = mat3(fpM[0].xyz / fpS.x, fpM[1].xyz / fpS.y, fpM[2].xyz / fpS.z);
+          // Bend in world space, keeping each vertex its distance from the plant's base. Renormalising
+          // in model space let a blade's width (its instance x is scaled ~30x smaller than its length)
+          // and the shader's sideways wave stand in for the blade's length: a push could then carry a
+          // tip several blade-lengths into the air instead of leaning it over. The world push is capped
+          // at BEND_CHORD of the plant's height, so the tip leans at most MAX_BEND.
+          vec3 fpOff = fpM * transformed;   // world offset from the instance's base
+          float fpR = length(fpOff);
+          vec3 fpBent = fpOff + fpPush;
           float fpRL = length(fpBent);
-          if (fpRL > 1e-5) transformed = fpBent * (fpR / fpRL);
+          if (fpRL > 1e-5) fpOff = fpBent * (fpR / fpRL);
+          transformed = (fpOff * fpRot) / fpS;   // back to the model's own space
         }
       }
 `;

@@ -14,6 +14,7 @@ import type { AquariumHandle } from './app/handle.js';
 import type { Fish } from './fish.js';
 import { context2d } from './util.js';
 import { paintPendingVariants } from './fishModel.js';
+import { fishUniforms } from './reef/fishPush.js';
 import { canvasToBlob, postDone, saveFile, CHECK_OUT_DIR } from './checks/report.js';
 
 const DT = 1 / 30;
@@ -57,6 +58,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const variantSpeciesId = q.get('variants');
   if (variantSpeciesId) return variants(aq, variantSpeciesId);
   if (q.get('series')) return series(aq, Number(q.get('series')), Number(q.get('dt') || DT));
+  if (q.get('frames')) return frameSeries(aq, Number(q.get('frames')), Number(q.get('dt') || DT), Number(q.get('warm') || 0), tag, Number(q.get('every') ?? 1));
   const canvas = renderer.domElement, files: string[] = [], stats: FrameStats[] = [];
   let t = 0;
   for (const target of at) {
@@ -149,6 +151,166 @@ async function variants(aq: AquariumHandle, species: string): Promise<void> {
   await saveFile(path, await canvasToBlob(strip));
   console.log('look check variants', JSON.stringify({ file: path, fish: strip.width / VARIANT_CELL_PX, swapMs }));
   await postDone(JSON.stringify({ files: [path], stats: [] }));
+}
+
+/** Width (px) of each saved sequence frame (the drawing buffer is 1920 px wide headless). */
+const FRAME_TILE_PX = 960;
+/** Downscale for the grass silhouette read-back (fraction of the drawing buffer). */
+const GRASS_MASK_SCALE = 2;
+/** A grass pixel is anything the silhouette pass drew brighter than this (0..255 sum of rgb). */
+const GRASS_PIXEL_MIN = 12;
+
+interface FrameGrass { i: number; t: number; px: number; x0: number; y0: number; x1: number; y1: number; fish?: number; near?: number; str?: number }
+
+/** The nearest fish to any sea-grass patch (horizontal units) and the strongest parting strength. */
+function grassFish(aq: AquariumHandle, patches: THREE.Vector3[]): { fish: number; near: number; str: number } {
+  let near = Infinity;
+  for (const f of aq.world.fish) for (const p of patches) near = Math.min(near, Math.hypot(f.pos.x - p.x, f.pos.z - p.z));
+  return { fish: fishUniforms.uFishCount.value, near: +near.toFixed(2), str: +Math.max(0, ...Array.from(fishUniforms.uFishVel.value).filter((_, k) => k % 4 === 3)).toFixed(2) };
+}
+
+/**
+ * ?frames=N: a consecutive sequence of frames (with the pan, if ?pan=1), plus a per-frame measure of
+ * the seagrass's screen footprint: the number of pixels its silhouette covers and its bounding box
+ * (fractions of the frame). A frame where the grass swells or smears shows a spike in px and in the
+ * box's size, and can be opened to see what happened.
+ *
+ * ?every=K writes out/frames-<tag>-<i>.png every K frames (0 writes none: a long sweep can be measured
+ * first and the suspect frames captured in a second, short run). Each frame's spike score compares its
+ * silhouette with the running median of +-SPIKE_WINDOW frames, so a slow change over a long sweep does
+ * not hide a few bad frames.
+ */
+const SPIKE_WINDOW = 12;
+/** Width (px) of the composite comparison image (1/8 of the headless drawing buffer). */
+const DIFF_PX = 240;
+
+interface FrameDiff { i: number; t: number; mean: number; blk: number }
+
+/** A DIFF_PX-wide luminance copy of the finished (water + photo) frame, for frame-to-frame comparison. */
+function downsample(canvas: HTMLCanvasElement, cv: HTMLCanvasElement): Uint8ClampedArray {
+  cv.width = DIFF_PX; cv.height = Math.max(1, Math.round(DIFF_PX * canvas.height / canvas.width));
+  const g = context2d(cv, { willReadFrequently: true });
+  g.drawImage(canvas, 0, 0, cv.width, cv.height);
+  return g.getImageData(0, 0, cv.width, cv.height).data;
+}
+
+async function frameSeries(aq: AquariumHandle, count: number, dt: number, warm: number, tag: string, every = 1): Promise<void> {
+  const canvas = aq.renderer.domElement, files: string[] = [], series: FrameGrass[] = [], diffs: FrameDiff[] = [];
+  const diffCanvas = document.createElement('canvas');
+  let prev: Uint8ClampedArray | null = null;
+  aq.reef.group.updateMatrixWorld(true);
+  const patches: THREE.Vector3[] = [];
+  aq.reef.group.traverse((o) => { if (o.name === 'seagrass') patches.push(o.getWorldPosition(new THREE.Vector3())); });
+  for (let t = 0; t < warm - 1e-9; t += dt) aq.step(dt);
+  for (let i = 0; i < count; i++) {
+    aq.step(dt);
+    aq.present();
+    const cur = downsample(canvas, diffCanvas);
+    const dw = diffCanvas.width, dh = diffCanvas.height;
+    let mean = 0, blk = 0;
+    if (prev) {
+      // Mean and worst 8x8-block absolute luminance difference from the previous frame: a smooth pan
+      // changes little, but a frame where the grass swells, smears or pops stands out.
+      for (let by = 0; by < dh; by += 8) {
+        for (let bx = 0; bx < dw; bx += 8) {
+          let sum = 0, n = 0;
+          for (let y = by; y < Math.min(dh, by + 8); y++) {
+            for (let x = bx; x < Math.min(dw, bx + 8); x++) {
+              const p = (y * dw + x) * 4;
+              const dl = Math.abs((cur[p] ?? 0) * LUMA[0] + (cur[p + 1] ?? 0) * LUMA[1] + (cur[p + 2] ?? 0) * LUMA[2]
+                - ((prev[p] ?? 0) * LUMA[0] + (prev[p + 1] ?? 0) * LUMA[1] + (prev[p + 2] ?? 0) * LUMA[2]));
+              sum += dl; n++;
+            }
+          }
+          const m = sum / Math.max(1, n);
+          mean += m * n;
+          if (m > blk) blk = m;
+        }
+      }
+      mean /= dw * dh;
+      diffs.push({ i, t: +(warm + i * dt).toFixed(3), mean: +mean.toFixed(3), blk: +blk.toFixed(3) });
+    }
+    prev = cur;
+    if (every > 0 && i % every === 0) {
+      const shot = document.createElement('canvas');
+      shot.width = FRAME_TILE_PX; shot.height = Math.round(FRAME_TILE_PX * canvas.height / canvas.width);
+      context2d(shot).drawImage(canvas, 0, 0, shot.width, shot.height);
+      files.push(await saveFile(`${CHECK_OUT_DIR}frames-${tag}-${String(i).padStart(3, '0')}.png`, await canvasToBlob(shot)));
+    }
+    series.push({ i, t: +(warm + i * dt).toFixed(3), ...grassSilhouette(aq), ...grassFish(aq, patches) });
+    if (i % 30 === 0) console.log('frames', i, JSON.stringify(series[series.length - 1]));
+  }
+  const medianOf = (v: number[]): number => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)] ?? 0;
+  const around = (i: number, f: (s: FrameGrass) => number): number => {
+    const lo = Math.max(0, i - SPIKE_WINDOW), hi = Math.min(series.length, i + SPIKE_WINDOW + 1);
+    return medianOf(series.slice(lo, hi).map(f)) || 1;
+  };
+  const scored = series.map((s, i) => ({
+    ...s,
+    score: +(s.px / around(i, (f) => f.px)).toFixed(3),
+    box: +(((s.x1 - s.x0) * (s.y1 - s.y0)) / around(i, (f) => (f.x1 - f.x0) * (f.y1 - f.y0))).toFixed(3),
+    wide: +((s.x1 - s.x0) / around(i, (f) => f.x1 - f.x0)).toFixed(3),
+    tall: +((s.y1 - s.y0) / around(i, (f) => f.y1 - f.y0)).toFixed(3),
+  }));
+  const spikes = scored.filter((f) => f.score > 1.35 || f.box > 1.5 || f.wide > 1.3 || f.tall > 1.3);
+  const worst = scored.slice().sort((a, b) => Math.max(b.score, b.box) - Math.max(a.score, a.box)).slice(0, 8);
+  const diffMedian = (i: number): { mean: number; blk: number } => {
+    const lo = Math.max(0, i - SPIKE_WINDOW), hi = Math.min(diffs.length, i + SPIKE_WINDOW + 1);
+    const win = diffs.slice(lo, hi);
+    return { mean: medianOf(win.map((d) => d.mean)) || 1e-3, blk: medianOf(win.map((d) => d.blk)) || 1e-3 };
+  };
+  const jumpy = diffs.map((d, i) => {
+    const m = diffMedian(i);
+    return { ...d, meanRatio: +(d.mean / m.mean).toFixed(2), blkRatio: +(d.blk / m.blk).toFixed(2) };
+  });
+  const jumps = jumpy.filter((d) => d.meanRatio > 3 || d.blkRatio > 3).sort((a, b) => b.meanRatio - a.meanRatio);
+  const worstDiff = diffs.slice().sort((a, b) => b.mean - a.mean).slice(0, 8);
+  const report = { frames: count, files: files.length, spikes, worst, jumps, worstDiff, series };
+  console.log('look frames', JSON.stringify({ ...report, series: undefined }));
+  console.log('look frames series', JSON.stringify(series));
+  await postDone(JSON.stringify(report));
+}
+
+/**
+ * The seagrass's screen footprint: renders only the grass (straight to the canvas, at the current
+ * camera) and reads back a downscaled mask. Bypasses the water/photo passes, so it measures the
+ * blades' geometry and vertex-shader shape, not their lighting.
+ */
+function grassSilhouette(aq: AquariumHandle): { px: number; x0: number; y0: number; x1: number; y1: number } {
+  const { scene, renderer, camera, reef } = aq;
+  const saved: [THREE.Object3D, boolean][] = [];
+  scene.traverse((o) => saved.push([o, o.visible]));
+  scene.traverse((o) => { o.visible = false; });
+  // Show the grass meshes and every ancestor up to the scene.
+  reef.group.traverse((o) => {
+    if (o.name !== 'seagrass') return;
+    for (let p: THREE.Object3D | null = o; p; p = p.parent) p.visible = true;
+  });
+  const prevTarget = renderer.getRenderTarget();
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(prevTarget);
+  for (const [o, v] of saved) o.visible = v;
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  const w = Math.ceil(W / GRASS_MASK_SCALE), h = Math.ceil(H / GRASS_MASK_SCALE);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = context2d(c, { willReadFrequently: true });
+  g.drawImage(renderer.domElement, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data;
+  let px = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0, i = 0; y < h; y++) {
+    for (let x = 0; x < w; x++, i += 4) {
+      if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) < GRASS_PIXEL_MIN) continue;
+      px++;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (px === 0) return { px, x0: 0, y0: 0, x1: 0, y1: 0 };
+  return { px, x0: +(x0 / w).toFixed(4), y0: +(y0 / h).toFixed(4), x1: +((x1 + 1) / w).toFixed(4), y1: +((y1 + 1) / h).toFixed(4) };
 }
 
 /** Mean luminance and HSV saturation of the frame (0..1), from a 1/8-size copy. */
