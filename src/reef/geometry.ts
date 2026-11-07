@@ -189,10 +189,14 @@ export function leatherPlate(rng: Rng): THREE.BufferGeometry {
     const r = i / RINGS;
     for (let a = 0; a < SPOKES; a++) {
       const th = (a / SPOKES) * Math.PI * 2;
-      const ruffle = Math.sin(th * 7 + ph) * 0.12 * r * r * r + Math.sin(th * 13) * 0.04 * r * r;
+      // Folds of unequal size and spacing (the lobes drift in phase and height round the rim), and a
+      // rim that wanders in and out, not a ruled circle. (Only ph is drawn, as before.)
+      const lobe = 1 + 0.35 * Math.sin(th * 3 + ph * 1.7), drift = th * 7 + ph + 0.5 * Math.sin(th * 2 + ph * 3);
+      const ruffle = Math.sin(drift) * 0.12 * lobe * r * r * r + Math.sin(th * 13 + ph * 5 + 1.3 * Math.sin(th * 4 + ph)) * 0.04 * (1.4 - 0.4 * lobe) * r * r;
       const y = 0.18 * (1 - r * r) + ruffle - 0.15 * r * r;
-      pos.push(Math.cos(th) * r, y, Math.sin(th) * r * 0.85);
-      c.copy(inner).lerp(outer, r * r);
+      const rim = r * (1 + (i === RINGS ? 0.07 * Math.sin(th * 5 + ph * 2) + 0.05 * Math.sin(th * 11 + ph * 7) : 0) * r);
+      pos.push(Math.cos(th) * rim, y, Math.sin(th) * rim * 0.85);
+      c.copy(inner).lerp(outer, r * r * (1 + 0.25 * Math.sin(th * 5 + ph * 4) * r));
       if (rng() < 0.2) c.multiplyScalar(1.1);
       col.push(c.r, c.g, c.b);
     }
@@ -213,9 +217,11 @@ export function ruffledFan(): THREE.BufferGeometry {
     const r = 0.05 + (i / RINGS) * 0.95;
     for (let a = 0; a <= SPOKES; a++) {
       const th = (a / SPOKES) * Math.PI;
-      const flute = Math.sin(th * 14);
-      pos.push(Math.cos(th) * r, Math.sin(th) * r * 0.8, flute * 0.07 * r + r * r * 0.25);
-      c.copy(dark).lerp(light, 0.5 + flute * 0.5);
+      // Flutes of uneven spacing and depth, and a rim that wanders (no rng: fixed phases).
+      const flute = Math.sin(th * 14 + 1.1 * Math.sin(th * 3 + 0.6) + 0.5 * Math.sin(th * 7)), deep = 1 + 0.3 * Math.sin(th * 5 + 2.0);
+      const rr = r * (1 + (i === RINGS ? 0.06 * Math.sin(th * 6 + 1.0) + 0.04 * Math.sin(th * 13 + 0.3) : 0) * r);
+      pos.push(Math.cos(th) * rr, Math.sin(th) * rr * 0.8, flute * 0.07 * deep * r + r * r * 0.25);
+      c.copy(dark).lerp(light, clamp(0.5 + flute * 0.5 + 0.12 * Math.sin(th * 9 + r * 4), 0, 1));
       col.push(c.r, c.g, c.b);
     }
   }

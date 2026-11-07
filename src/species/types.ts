@@ -29,6 +29,22 @@ export interface Anatomy {
 /** Boxed-head cross-section (triggerfish plates). */
 export interface BodySection { u0: number; u1: number; ease: number; lo: number; hi: number; round: number; sharp: number }
 
+/** A moray-like head: deeper than the body behind, laterally flattened, bulging up over the jaw muscles. */
+export interface HeadShape {
+  /** Body u where the bulge rises off the snout. */
+  u0: number;
+  /** Body u where the bulge peaks (over the eye and jaw muscles). */
+  u1: number;
+  /** Body u where the head has blended back into the body. */
+  u2: number;
+  /** Peak extra half-depth as a share of H (the head is this much deeper than the body). */
+  depth: number;
+  /** Share of the extra depth carried dorsally (1: all of it rises above the midline). */
+  top: number;
+  /** The head's half-width at the peak, as a share of the usual section width. */
+  width: number;
+}
+
 export type ScaleType = 'ctenoid' | 'cycloid';
 
 export interface Body {
@@ -53,6 +69,8 @@ export interface Body {
   headW?: number;
   mouth?: number;
   section?: BodySection;
+  /** A moray-like head bulge (only the moray sets this). */
+  head?: HeadShape;
 }
 
 export interface Eye {

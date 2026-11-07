@@ -13,7 +13,9 @@ const _mouth = new THREE.Vector3();
 export const lurk: Behaviour = {
   mode: 'lurk',
 
-  score: ({ species: sp, drives: d, dark }) => (sp.lurker ? 0.85 + (1 - d.energy) * 0.4 - d.hunger * 0.35 - dark * 0.45 : 0),
+  // The cave clock (brain/caveClock.ts) says when: in the cave this beats everything but a hungry
+  // eel's feed and a real fright; on a foray it is off.
+  score: ({ brain, species: sp, drives: d }) => (sp.lurker && brain.cave?.inCave ? 1.5 - d.hunger * 0.3 : 0),
 
   steer({ brain, me, dir, pos, pace, wasBacking, out }) {
     dir.subVectors(brain.home, pos);

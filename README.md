@@ -43,7 +43,7 @@ opens the browser for you.
 | `?feed=4` | auto-feeder interval in minutes (`0` = off) |
 | `?drift=0` | no camera parallax |
 | `?zoom=1` | show the whole tank (default is a 1/1.6 window near the sand) |
-| `?pan=1` | pan slowly across the tank |
+| `?pan=0` | hold the camera still (by default it pans slowly across the tank and back, once every 2 minutes; the Roku bake pans only with `?pan=1`) |
 | `?scenery=jelly` | the jelly tank: moon jellies in a backlit deep-blue kreisel |
 | `?tank=tanks/example.json` | stock the tank from a tank document (see `schema/`) |
 | `?rig=led` | light the tank with an aquarium LED bar instead of the sun |
@@ -100,8 +100,21 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   undulates its whole body. Tail-beat frequency follows the Strouhal relation `f = St·U/A`.
 - **Body wave**: a spine curve that travels head to tail, so the body keeps its length and the caudal
   blade pitches. Damped springs give secondary motion: the tail lags into turns, fins fold at speed,
-  pectorals feather on the recovery stroke and spines lock up when a fish is alarmed. The moray's body is
-  a chain that traces its head's path and drapes over ledges.
+  pectorals feather on the recovery stroke and spines lock up when a fish is alarmed.
+- **The moray**: its body follows the path its head took, so a turn flows down the body through the same
+  curve, and it is drawn along that path rather than bent about a straight axis. An anguilliform wave
+  (about 0.6 body lengths long, so one or two bends always show) runs head to tail on top, small at the
+  head and growing towards the tail, and travels faster than the eel swims. Near the reef the body settles
+  onto the rock and lies along its contours, and no part of it enters the rock. By day it rests in its
+  cave with the body in line along the crevice behind it, its head and neck out, swaying and gulping
+  water; to go home it backs in tail first.
+- **Collision**: rock and coral are a 3D signed distance field on a 1 cm grid. Checked against the drawn
+  meshes, it never reads rock as open water, and it puts the surface about 0.05 units (6 mm) out on the
+  water side. Each fish is its axis with an elliptical section that tapers to the snout and peduncle.
+  The snout, middle and peduncle each keep that section off the rock, pushed out no faster than they
+  were moving in. After every step, fish bodies that overlap are pushed apart (the lighter fish moves
+  more) and lose their closing speed. This comes on top of the brain's personal space. The moray's
+  chain is an obstacle the others are pushed off. A cleaner and its client may touch.
 - **Water**: a per-channel Beer–Lambert medium with in-scattering and a reef-depth white balance, an
   underwater environment with Snell's window overhead, and a slow divergence-free current from the return
   pump that carries fish, food, bubbles and particles.

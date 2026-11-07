@@ -12,6 +12,7 @@ import { GOLDEN_ANGLE, UP, color, lathe, scratch } from './geometry.js';
 /** Own seeded streams, so the reef's rng draws stay as they were before the anemone was reworked. */
 const WRINKLE_SEED = 911;
 const GIRTH_SEED = 912;
+const JITTER_SEED = 913;
 const TENTACLES = 320;
 /** Tentacles reach out to the disc's rim (0.55; the old column ended at 0.42). */
 const TENTACLE_SPREAD = 0.58;
@@ -48,7 +49,7 @@ function column(): THREE.Mesh {
   const p = cg.getAttribute('position'), cl = cg.getAttribute('color'), v = new THREE.Vector3(), c = new THREE.Color();
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
-    const r = Math.hypot(v.x, v.z), k = 1 + (noise.noise3(v.x * 7, v.y * 7, v.z * 7) - 0.5) * 0.12 * clamp(r / 0.3, 0, 1);
+    const r = Math.hypot(v.x, v.z), k = 1 + (noise.noise3(v.x * 7, v.y * 7, v.z * 7) - 0.5) * 0.2 * clamp(r / 0.3, 0, 1);
     p.setXYZ(i, v.x * k, v.y + (r < 0.45 && v.y > 0.25 ? (noise.noise3(v.x * 5 + 9, 0, v.z * 5) - 0.5) * 0.03 : 0), v.z * k);
     if (v.y > 0.28 && r < 0.12) { c.fromBufferAttribute(cl, i).lerp(mouth, clamp((0.12 - r) / 0.08, 0, 1)); cl.setXYZ(i, c.r, c.g, c.b); }
   }
@@ -76,12 +77,17 @@ function tentacles(rng: Rng): THREE.InstancedMesh {
   const tent = new THREE.InstancedMesh(tg, mat, TENTACLES);
   const girth = mulberry32(GIRTH_SEED);   // per-tentacle bulb size, off the reef's rng
   const { m, q, s, p } = scratch;
+  const jitter = mulberry32(JITTER_SEED);   // placement and posture, off the reef's rng too
   for (let i = 0; i < TENTACLES; i++) {
-    const r = Math.sqrt(i / TENTACLES) * TENTACLE_SPREAD, th = i * GOLDEN_ANGLE;
-    const out = new THREE.Vector3(Math.cos(th) * r * 1.6, 1, Math.sin(th) * r * 1.6).normalize();
+    // The golden-angle spiral is too perfect: nudge each tentacle round and out, let the disc's rim wander,
+    // and let each lean its own way (some bent over, some upright), a little shorter or longer by region.
+    const th = i * GOLDEN_ANGLE + (jitter() - 0.5) * 0.35;
+    const rim = 1 + 0.07 * Math.sin(th * 3 + 0.8) + 0.04 * Math.sin(th * 7 + 2.1);
+    const r = Math.sqrt(i / TENTACLES) * TENTACLE_SPREAD * rim * (1 + (jitter() - 0.5) * 0.1);
+    const out = new THREE.Vector3(Math.cos(th) * r * 1.6 + (jitter() - 0.5) * 0.3, 1, Math.sin(th) * r * 1.6 + (jitter() - 0.5) * 0.3).normalize();
     q.setFromUnitVectors(UP, out);
     const size = range(rng, 0.8, 1.2), g = 0.85 + 0.3 * girth();
-    m.compose(p.set(Math.cos(th) * r, discHeight(r) - 0.008, Math.sin(th) * r), q, s.set(size * g, size * range(rng, 0.85, 1.15), size * g));
+    m.compose(p.set(Math.cos(th) * r, discHeight(r) - 0.008, Math.sin(th) * r), q, s.set(size * g, size * range(rng, 0.85, 1.15) * (0.9 + 0.2 * jitter()), size * g * (0.9 + 0.2 * jitter())));
     tent.setMatrixAt(i, m);
   }
   tent.castShadow = true;

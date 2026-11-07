@@ -90,6 +90,8 @@ export class RockField implements SolidField {
   private solid: Uint8Array | null;
   /** Signed distances, set by finish(). */
   private distances: Float32Array = new Float32Array(0);
+  /** The meshes rasterised into the field (the motion check tests fish against them exactly). */
+  readonly meshes: THREE.Mesh[] = [];
 
   constructor(box: FieldBox, cell = DEFAULT_CELL) {
     this.cell = cell;
@@ -116,6 +118,7 @@ export class RockField implements SolidField {
       if (!isMesh(o) || skip(o)) return;
       const g = o.geometry, pos = g.attributes['position'], idx = g.index;
       if (!pos) return;
+      this.meshes.push(o);
       const instanced = isInstancedMesh(o);
       const n = instanced ? o.count : 1;
       const world = new Float32Array(pos.count * 3);

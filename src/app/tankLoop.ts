@@ -61,7 +61,7 @@ export class TankLoop {
 
   constructor(private readonly parts: TankParts) {
     this.targetLight = parts.daylight.level();
-    parts.lighting.apply(this.targetLight);
+    this.applyLight(this.targetLight);
   }
 
   get seconds(): number {
@@ -80,7 +80,7 @@ export class TankLoop {
   /** Jump straight to a light level (checks, console). */
   setLight(level: number): void {
     this.targetLight = level;
-    this.parts.lighting.apply(level);
+    this.applyLight(level);
   }
 
   /** One animation frame: fit the canvas, step (unless paused) and draw. */
@@ -130,7 +130,9 @@ export class TankLoop {
     const { canvas, renderer, camera } = this.parts.stage;
     const w = canvas.clientWidth, h = canvas.clientHeight, dpr = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO);
     if (!w || !h) return;
-    if (canvas.width === Math.round(w * dpr) && canvas.height === Math.round(h * dpr)) return;
+    // three's setSize floors w * dpr; comparing against a rounded size resized every frame at
+    // fractional display scaling (125%, 150%).
+    if (canvas.width === Math.floor(w * dpr) && canvas.height === Math.floor(h * dpr)) return;
     renderer.setPixelRatio(dpr);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
@@ -139,9 +141,15 @@ export class TankLoop {
   }
 
   private updateLight(dt: number): void {
-    const { daylight, world, lighting } = this.parts;
+    const { daylight, world } = this.parts;
     if (daylight.followsClock) this.targetLight = lerp(this.targetLight, daylight.level(), Math.min(1, dt * CLOCK_FOLLOW_RATE));
-    lighting.apply(clamp(lerp(world.light, this.targetLight, Math.min(1, dt * LIGHT_FOLLOW_RATE)), 0, 1));
+    this.applyLight(clamp(lerp(world.light, this.targetLight, Math.min(1, dt * LIGHT_FOLLOW_RATE)), 0, 1));
+  }
+
+  /** The look (lighting.ts) and what the fish see: brains read world.light (night colours, sleep, sight). */
+  private applyLight(level: number): void {
+    this.parts.world.light = level;
+    this.parts.lighting.apply(level);
   }
 
   private driftCamera(): void {

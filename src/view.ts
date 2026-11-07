@@ -2,8 +2,9 @@
 // framed by main's camera; the screen shows a 1/zoom window into it, held near the bottom (sand and
 // reef in view, the surface above the frame) and panning slowly from side to side, as a camera pushed
 // up to the glass would. On the Roku the backdrop is baked as the strip that window slides along.
-//   ?zoom=1.6 (1 shows the whole tank)   ?pan=1 pans the window across the tank (off by default: on
-//   the Roku the strip it pans along measured 53-66 MB of texture memory against a 50 MB target)
+//   ?zoom=1.6 (1 shows the whole tank)   ?pan=0/1: the PC view pans across the tank by default; the
+//   Roku bake only with ?pan=1 (the strip it pans along measured 53-66 MB of texture memory against a
+//   50 MB target)
 import * as THREE from 'three';
 
 /** Where the window sits in the frame's height: 0 top, 1 bottom. */
@@ -25,9 +26,11 @@ export interface PixelSize {
   readonly h: number;
 }
 
-export function viewOptions(params: URLSearchParams): ViewOptions {
+/** `panByDefault`: pan unless ?pan=0 (the PC view); otherwise only with ?pan=1 (the Roku bake). */
+export function viewOptions(params: URLSearchParams, panByDefault = false): ViewOptions {
   const zoom = Math.max(1, Number(params.get('zoom') ?? DEFAULT_ZOOM));
-  return { zoom, pan: zoom > 1 && params.get('pan') === '1' };
+  const pan = params.get('pan') ?? (panByDefault ? '1' : '0');
+  return { zoom, pan: zoom > 1 && pan === '1' };
 }
 
 /** Pan position 0 (left end) .. 1 (right end) at time t: eases in and out at the ends. */

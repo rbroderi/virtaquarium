@@ -6,6 +6,7 @@ import type { Species } from './species.js';
 import type { Anemone, CaveRoof, TankScene } from './reef/types.js';
 import type { FanWormWorld } from './fanWorms.js';
 import type { SwimWorld } from './world/ports.js';
+import { BodySeparation } from './world/separation.js';
 import type { Food, Station, TankBounds, Viewer, WorldCritter } from './world/types.js';
 
 export type { Food, Station, TankBounds, Viewer, WorldCritter, Threat } from './world/types.js';
@@ -44,6 +45,9 @@ const SIGHT_SAMPLES = [0.2, 0.4, 0.6, 0.8] as const;
 /** The height field is a conservative grid: allowance before rock blocks a sight line. */
 const SIGHT_ALLOWANCE = 0.15;
 
+/** `?separate=0` turns the fish-fish body separation off, to compare. */
+const SEPARATE = typeof location === 'undefined' || new URLSearchParams(location.search).get('separate') !== '0';
+
 interface ShoalGoal {
   readonly pos: THREE.Vector3;
   t: number;
@@ -69,6 +73,8 @@ export class World implements SwimWorld, FanWormWorld {
   readonly maxFood = MAX_FOOD;
   readonly foodMesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
 
+  /** Pushes overlapping fish bodies apart after they move (world/separation.ts). */
+  readonly separation = new BodySeparation();
   private readonly goals = new Map<string, ShoalGoal>();
   private readonly scratchMatrix = new THREE.Matrix4();
   private readonly scratchQuat = new THREE.Quaternion();
@@ -213,6 +219,8 @@ export class World implements SwimWorld, FanWormWorld {
     this.updateFood(dt);
     this.drawFood();
     for (const f of this.fish) f.update(dt, this);
+    if (SEPARATE) this.separation.step(this.fish, dt, this);
+    for (const f of this.fish) f.present(dt);
     this.reef.fanWorms?.update(dt, this);
   }
 

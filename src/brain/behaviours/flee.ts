@@ -12,10 +12,10 @@ export const flee: Behaviour = {
 
   score: ({ species: sp, drives: d }) => (sp.host ? 0 : d.fear * 1.8),
 
-  steer({ brain, me, dir, pos, pace, out }) {
+  steer({ brain, me, world, dir, pos, pace, out }) {
     if (brain.threat) dir.subVectors(pos, brain.threat.pos).normalize().multiplyScalar(1.5);
     const sh = brain.shelter && brain.shelter.pos.distanceTo(pos) < SHELTER_REACH ? brain.shelter : null;
-    dir.add(_toCover.subVectors(sh ? brain.shelterGoal(sh, pos) : brain.home, pos).normalize().multiplyScalar(sh ? 1.4 : 1));
+    dir.add(_toCover.subVectors(sh ? brain.shelterGoal(sh, pos, world) : brain.home, pos).normalize().multiplyScalar(sh ? 1.4 : 1));
     out.speed = pace.flee;
     out.clearance = me.size * 0.2;
   },

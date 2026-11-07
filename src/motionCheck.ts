@@ -7,12 +7,15 @@
 // and for each eel, frames where a node of its body (with the head lift the shader adds) is inside a
 // cave roof, and where a node of the body as drawn is inside the rock field (eelBodyInRock).
 // It also samples shoal structure, shelter use and the cleaning station (checks/motionStats.ts).
+// Also fish-fish body overlaps and fish against the drawn rock (checks/bodyContacts.ts; &truth=0 skips the latter).
 // &probe=10,60: at those seconds, log the eel's chain nodes with the rock distance and the meshes there.
+import { CAVE_RANGE } from './brain/caveClock.js';
 import * as THREE from 'three';
 import type { AquariumHandle } from './app/handle.js';
 import type { Fish } from './fish.js';
 import type { World } from './world.js';
 import { postDone } from './checks/report.js';
+import { FishOverlapTally, RockTruthTally } from './checks/bodyContacts.js';
 import { CleaningTally, EelTally, ShoalSampler, spineNodes, type FishStats } from './checks/motionStats.js';
 
 const STEPS_PER_SECOND = 30;
@@ -55,15 +58,19 @@ function probe(world: World): void {
 }
 
 /** Climb and jitter for one fish this step. */
-function trackClimb(s: FishStats, n: number): void {
-  const f = s.f, L = f.size, vy = (f.pos.y - s.y) / DT;
+function trackClimb(s: FishStats, n: number, y = s.f.pos.y): void {
+  const f = s.f, L = f.size, vy = (y - s.y) / DT;
   s.rise = Math.max(s.rise, vy / L);
   // A reversal: the climb changes sign. Count it when the swing since the last one is big and quick.
   if (Math.sign(vy) !== Math.sign(s.vy) && Math.abs(vy) > VY_EPSILON) {
-    if (s.ext && Math.abs(f.pos.y - s.ext.y) > JITTER_SWING * L && n - s.ext.n < JITTER_STEPS) s.jitter++;
-    s.ext = { y: f.pos.y, n };
+    if (s.ext && Math.abs(y - s.ext.y) > JITTER_SWING * L && n - s.ext.n < JITTER_STEPS) {
+      s.jitter++;
+      const why = f.brain.mode + (f.brain.sheltered ? '/sheltered' : '') + (f.brain.crowding > 0 ? '/crowded' : '');
+      (s.jitterBy ??= {})[why] = (s.jitterBy[why] ?? 0) + 1;
+    }
+    s.ext = { y, n };
   }
-  s.y = f.pos.y;
+  s.y = y;
   s.vy = vy;
 }
 
@@ -72,19 +79,40 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const qs = new URLSearchParams(location.search);
   const frames = STEPS_PER_SECOND * Number(qs.get('seconds') ?? DEFAULT_SECONDS);
   const stats: FishStats[] = world.fish.map((f) => ({ f, y: f.pos.y, vy: 0, ext: null, rise: 0, jitter: 0, inRock: 0, last: f.pos.clone(), maxStep: 0 }));
+  // The same wobble count on the drawn position (Fish.present smooths the collision pushes).
+  const drawn: FishStats[] = world.fish.map((f) => ({ f, y: f.pos.y, vy: 0, ext: null, rise: 0, jitter: 0, inRock: 0, last: f.pos.clone(), maxStep: 0 }));
   const eels = new Map(world.fish.filter((f) => f.spine).map((f) => [f, new EelTally()] as const));
   const cleaning = world.station ? new CleaningTally(world.station) : null;
   const shoals = new ShoalSampler(world.fish);
+  const overlaps = new FishOverlapTally(world.fish);
+  const truth = qs.get('truth') === '0' ? null : new RockTruthTally(world);
   if (qs.get('night') === '1') aq.setLight(0);
   if (qs.has('light')) aq.setLight(Number(qs.get('light')));   // e.g. 0.35: dusk, when lionfish hunt
   const probeAt = (qs.get('probe') || '').split(',').filter(Boolean).map((s) => Math.round(Number(s) * STEPS_PER_SECOND));
 
+  const ln = world.fish.find((f) => f.sp.id === 'longnose');
+  let updateMs = 0;
+  const lurkFrames = new Map<Fish, number>();
   for (let n = 0; n < frames; n++) {
     if (probeAt.includes(n)) { console.log('PROBE t', n / STEPS_PER_SECOND); probe(world); }
     if (n % STEPS_PER_SECOND === 0) shoals.sample(world.fish);
+    const t0 = performance.now();
     world.update(DT);
+    if (ln && n % 3 === 0) {
+      const b = ln.brain, sh = b.shelter;
+      const g = sh ? b.shelterGoal(sh, ln.pos, world) : null;
+      const stations = [ln.body.nose, 0, ln.body.fin].map((s) => world.rockDist(new THREE.Vector3().copy(ln.pos).addScaledVector(ln.dir, s)).toFixed(2));
+      const mid = sh ? Math.max(sh.floor + ln.size * 0.15, Math.min(sh.top - ln.size * 0.25, g!.y)) : 0;
+      console.log('LN', n, 'y', ln.pos.y.toFixed(2), 'vy', ln.vel.y.toFixed(2), 'dirY', ln.dir.y.toFixed(2), 'spd', ln.speed.toFixed(2),
+        'mode', b.mode, 'sh', b.sheltered ? 1 : 0, 'goalY', g ? g.y.toFixed(2) : '-', 'mid', mid.toFixed(2), 'fl', sh ? sh.floor.toFixed(2) : '-', 'top', sh ? sh.top.toFixed(2) : '-',
+        'rd', stations.join(','));
+    }
+    updateMs += performance.now() - t0;
     for (const c of aq.critters) c.update(DT, world);
     cleaning?.step(DT);
+    overlaps.step();
+    truth?.step(world);
+    for (const s of drawn) trackClimb(s, n, s.f.model.position.y);
     for (const s of stats) {
       trackClimb(s, n);
       const f = s.f;
@@ -93,6 +121,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
       s.last.copy(f.pos);
       if (!f.spine && world.rockDist(f.pos) < -IN_ROCK_DEPTH * f.size) s.inRock++;
       eels.get(f)?.step(f, world);
+      if (f.spine && f.brain.mode === 'lurk' && f.pos.distanceTo(f.brain.home) < CAVE_RANGE) lurkFrames.set(f, (lurkFrames.get(f) ?? 0) + 1);
     }
   }
 
@@ -100,7 +129,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const rows = stats.map((s) => {
     const eel = eels.get(s.f);
     return {
-      fish: s.f.name || s.f.sp.id, species: s.f.sp.id, riseBLs: +s.rise.toFixed(2), jitterPerMin: +(s.jitter / minutes).toFixed(1), inRockFrames: s.inRock,
+      fish: s.f.name || s.f.sp.id, species: s.f.sp.id, riseBLs: +s.rise.toFixed(2), jitterPerMin: +(s.jitter / minutes).toFixed(1), jitterBy: s.jitterBy, inRockFrames: s.inRock,
       maxStepBLs: +s.maxStep.toFixed(2), burstBLs: s.f.sp.swim.burstBL, limitedSteps: s.f.limitedSteps,
       ...(eel ? eel.row() : {}),
     };
@@ -111,14 +140,24 @@ export async function main(aq: AquariumHandle): Promise<void> {
     fish: rows.length,
     maxRiseBLs: Math.max(...rows.map((r) => r.riseBLs)),
     meanJitterPerMin: +(rows.reduce((a, r) => a + r.jitterPerMin, 0) / rows.length).toFixed(2),
+    // The same on the drawn position, which is what shows.
+    drawnJitterPerMin: +(drawn.reduce((a, s) => a + s.jitter, 0) / drawn.length / minutes).toFixed(2),
     inRockFrames: rows.reduce((a, r) => a + r.inRockFrames, 0),
     // Fastest step relative to the fish's burst speed (over 1 means it moved faster than it can swim),
     // and the steps the global step limit cut short.
     maxStepOverBurst: Math.max(...rows.map((r) => r.maxStepBLs / r.burstBLs)),
     limitedSteps: rows.reduce((a, r) => a + r.limitedSteps, 0),
     eelRoofFrames: eelRows.map((e) => e.roof),
+    // Share of frames each eel spent lurking in its cave (target 0.9 by day, 0.6 at night: brain/caveClock.ts).
+    eelCaveShare: [...eels.keys()].map((f) => +((lurkFrames.get(f) ?? 0) / frames).toFixed(2)),
     // Eel body nodes inside the rock field (any node > 0.08 deep), of all frames.
     eelBodyInRock: eelRows.map((e) => e.summary()),
+    // Fish bodies (axis + elliptical section) into each other, cleaner and client excepted.
+    // Mean wall time of one world step (fish, brains, collision), ms: compare runs interleaved.
+    updateMs: +(updateMs / frames).toFixed(3),
+    fishOverlap: overlaps.summary(minutes),
+    // Snout, middle and peduncle against the rock as drawn (BVH), and the field's error there.
+    rockTruth: truth?.summary() ?? null,
     // Fear passed on by a neighbour's flight (brain _perceive), per simulated minute.
     contagionPerMin: perMinute((f) => f.brain.contagions),
     firstHandPerMin: perMinute((f) => f.brain.firstHand),

@@ -23,9 +23,12 @@ export interface SwimUniforms {
   uBendTail: Uniform<number>;
   uFold: Uniform<number>;
   uCup: Uniform<number>;
-  uSpineOn: Uniform<number>;
-  /** 12 (lateral z, vertical y) chain offsets. */
-  uSpine: Uniform<Float32Array>;
+  /** 1: the body is drawn along uPath (the moray's path, fish/spineChain.ts) instead of the straight axis. */
+  uPathOn: Uniform<number>;
+  /** PATH_POINTS stations (x, y, z) in the model's frame, head to tail, evenly along the body. */
+  uPath: Uniform<Float32Array>;
+  /** Each station's up (x, y, z), carried down the body without flipping. */
+  uPathUp: Uniform<Float32Array>;
   uGape?: Uniform<number>;
   uHinge?: Uniform<THREE.Vector2>;
   uNight?: Uniform<number>;
@@ -53,20 +56,36 @@ export interface Tissue {
   pect?: boolean;
 }
 
-/** Spine chain points (uSpine) at x = 0.5 .. -0.5. */
-const SPINE_POINTS = 12;
+/** Path stations (uPath) at x = 0.5 .. -0.5: must match SPINE_NODES (fish/spineChain.ts) and SWIM_GLSL. */
+export const PATH_POINTS = 24;
+
+/** A straight body along the axis (uPath when nothing has set it yet). */
+function straightPath(): Float32Array {
+  const a = new Float32Array(PATH_POINTS * 3);
+  for (let i = 0; i < PATH_POINTS; i++) a[i * 3] = 0.5 - i / (PATH_POINTS - 1);
+  return a;
+}
+
+function pathUps(): Float32Array {
+  const a = new Float32Array(PATH_POINTS * 3);
+  for (let i = 0; i < PATH_POINTS; i++) a[i * 3 + 1] = 1;
+  return a;
+}
 
 // The fish is submerged: its mucus (n ~1.38) meets water (n ~1.33), a relative index of ~1.04, so the
 // surface reflects ~0.04% at normal incidence instead of the 4% three.js assumes for air. No clearcoat
 // or sheen either; the visible shine of a fish in water comes from the guanine iridophores (iridescence).
 export const IN_WATER_IOR = 1.04;
 
+/** Brightest linear radiance a fish fragment may write (legit highlights are < ~10). */
+const HDR_CLAMP = '16.0';
+
 // The swim shader's uniforms (SWIM_GLSL) with their resting values; every swim material needs the full set.
 export function swimUniforms(over: Partial<SwimUniforms> = {}): SwimUniforms {
   return {
     uPhase: { value: 0 }, uAmp: { value: 1 }, uFlutter: { value: 1 }, uFinH: { value: 1 }, uBend: { value: 0 }, uFinPhase: { value: 0 },
     uXPed: { value: -0.3 }, uVent: { value: 0 }, uAnguil: { value: 0 }, uLift: { value: 0 },
-    uBendTail: { value: 0 }, uFold: { value: 0 }, uCup: { value: 0 }, uSpineOn: { value: 0 }, uSpine: { value: new Float32Array(SPINE_POINTS * 2) },
+    uBendTail: { value: 0 }, uFold: { value: 0 }, uCup: { value: 0 }, uPathOn: { value: 0 }, uPath: { value: straightPath() }, uPathUp: { value: pathUps() },
     ...over,
   };
 }
@@ -89,12 +108,23 @@ uniform float uLift;    // front of the body raised (an eel resting with its hea
 uniform float uBendTail; // the rear half's turn bend: a damped spring behind uBend, so the tail lags into a turn and overshoots out of it
 uniform float uFold;    // dorsal and anal fins fold down and back (0 erect .. 1 folded at speed)
 uniform float uCup;     // extra caudal lag when the tail works hard (the blade flexes more)
-uniform float uSpineOn; // 1: the midline also follows uSpine, a simulated chain (the moray's body)
-uniform vec2 uSpine[12]; // chain offsets (lateral z, vertical y) at x = 0.5 .. -0.5 in 11 equal steps
-vec2 spineAt(float x) {
-  float f = clamp((0.5 - x) * 11.0, 0.0, 10.999);
+uniform float uPathOn;  // 1: the body is drawn along uPath (the moray), not bent about the straight axis
+uniform vec3 uPath[24];   // stations (model space, body lengths) at x = 0.5 .. -0.5 in 23 equal steps
+uniform vec3 uPathUp[24]; // each station's up
+// The frame at body position x along the path: a Catmull-Rom curve through the stations (P), its
+// tangent towards the head (T), and the up carried with it, square to T (U).
+void pathFrame(float x, out vec3 P, out vec3 T, out vec3 U) {
+  float f = clamp((0.5 - x) * 23.0, 0.0, 22.999);
   int i = int(f);
-  return mix(uSpine[i], uSpine[i + 1], f - float(i));
+  float t = f - float(i);
+  vec3 p1 = uPath[i], p2 = uPath[i + 1];
+  vec3 p0 = i > 0 ? uPath[i - 1] : 2.0 * p1 - p2;
+  vec3 p3 = i < 22 ? uPath[i + 2] : 2.0 * p2 - p1;
+  vec3 c1 = p2 - p0, c2 = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3, c3 = 3.0 * (p1 - p2) + p3 - p0;
+  P = p1 + 0.5 * t * (c1 + t * (c2 + t * c3));
+  T = -normalize(c1 + t * (2.0 * c2 + 3.0 * t * c3) + vec3(1e-6, 0.0, 0.0));
+  U = mix(uPathUp[i], uPathUp[i + 1], t);
+  U = normalize(U - T * dot(U, T) + vec3(0.0, 1e-6, 0.0));
 }
 // Lateral offset of the spine (the body midline) at x; x runs from +0.5 (snout) to -0.5 (tail tip).
 // Body wave h = A(s) sin(wt + kx): wavelength ~0.95 BL (carangiform-like), amplitude from a small head
@@ -108,10 +138,10 @@ float spineH(float x) {
   float env = mix(0.02 - 0.06 * s + 0.2 * s * s, 0.03 + 0.07 * s, uAnguil);
   float lag = (0.8 + uCup) * (1.0 - uAnguil) * (1.0 - smoothstep(uXPed - 0.12, uXPed + 0.02, x));
   float bend = mix(uBendTail, uBend, smoothstep(-0.3, 0.2, x));
-  return uAmp * env * sin(uPhase + x * mix(6.6, 10.5, uAnguil) - lag) + bend * (x - 0.05) * (x - 0.05) * 2.0 + uSpineOn * spineAt(x).x;
+  return uAmp * env * sin(uPhase + x * mix(6.6, 10.5, uAnguil) - lag) + bend * (x - 0.05) * (x - 0.05) * 2.0;
 }
 // Raise the front of the body, bending up ahead of x = 0.1.
-float liftY(float x) { float d = max(0.0, x - 0.1); return uLift * d * d * 2.5 + uSpineOn * spineAt(x).y; }
+float liftY(float x) { float d = max(0.0, x - 0.1); return uLift * d * d * 2.5; }
 // Travelling wave along the dorsal/anal fins (head to tail), confined to the fins.
 float finFlutter(vec3 p) {
   float fin = smoothstep(uFinH, uFinH + 0.15, abs(p.y));
@@ -255,9 +285,18 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
             objectNormal = vec3(objectNormal.x - wx * objectNormal.z, objectNormal.y - wy * objectNormal.z, objectNormal.z);
           }
         #endif
-        objectNormal = vec3(objectNormal.x * swC - objectNormal.z * swS, objectNormal.y, objectNormal.x * swS + objectNormal.z * swC);
+        vec3 paP, paT, paU, paS;
+        if (uPathOn > 0.5) {
+          // Along the path: each cross-section turned into its station's frame.
+          pathFrame(position.x, paP, paT, paU);
+          paS = cross(paT, paU);
+          objectNormal = paT * objectNormal.x + paU * objectNormal.y + paS * objectNormal.z;
+        } else {
+          objectNormal = vec3(objectNormal.x * swC - objectNormal.z * swS, objectNormal.y, objectNormal.x * swS + objectNormal.z * swC);
+        }
         #ifdef USE_TANGENT
           vec3 objectTangent = vec3(tangent.xyz);
+          if (uPathOn > 0.5) objectTangent = paT * objectTangent.x + paU * objectTangent.y + paS * objectTangent.z;
         #endif`)
       .replace('#include <begin_vertex>', `
         vec3 p0 = position;
@@ -289,9 +328,32 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
         #endif
         vec3 transformed = p0;
         float swZ = p0.z * ventScale(p0) + finFlutter(p0);
-        transformed.x = p0.x - swZ * swS;
-        transformed.y = p0.y + liftY(p0.x);
-        transformed.z = swH + swZ * swC;`);
+        if (uPathOn > 0.5) {
+          // The point at its own station on the path (past either end, straight on along the end's tangent).
+          float xc = clamp(p0.x, -0.5, 0.5);
+          pathFrame(xc, paP, paT, paU);
+          transformed = paP + paT * (p0.x - xc) + paU * p0.y + cross(paT, paU) * swZ;
+        } else {
+          transformed.x = p0.x - swZ * swS;
+          transformed.y = p0.y + liftY(p0.x);
+          transformed.z = swH + swZ * swC;
+        }`);
+    // Specular anti-aliasing for the shading normal (scale-lattice normal map, ray relief): three's own
+    // widening reads only the geometric normal, so a minified normal map's glints crawl as isolated
+    // bright pixels. Widen the lobe by the pixel-footprint variance of the perturbed normal (Tokuyoshi &
+    // Kaplanyan 2019: alpha'^2 = alpha^2 + variance, variance capped), which is zero where the normal is smooth.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+      { vec3 ndx = dFdx( normal ), ndy = dFdy( normal );
+        float nVar = min( 0.5 * ( dot( ndx, ndx ) + dot( ndy, ndy ) ) * 0.25, 0.18 );
+        float a2 = material.roughness * material.roughness;
+        material.roughness = min( sqrt( sqrt( a2 * a2 + nVar ) ), 1.0 ); }`);
+    // HDR guard: a thin-film or grazing specular can overflow the half-float scene target (Inf / NaN, or
+    // 1e4+) in a single pixel, which MSAA resolve, motion blur and the depth-of-field gather then smear
+    // into a sparkle. Real fish radiance stays below ~10, so clamp well above that and zero NaNs.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      if (any(isnan(outgoingLight)) || any(isinf(outgoingLight))) outgoingLight = vec3(0.0);
+      outgoingLight = clamp(outgoingLight, vec3(0.0), vec3(${HDR_CLAMP}));
+      #include <opaque_fragment>`);
     if (tissue?.kind === 'fin') shader.defines = withDefine(shader.defines, 'FISH_FIN');
     if (tissue?.erect) shader.defines = withDefine(shader.defines, 'FISH_ERECT');
     if (tissue?.pect) shader.defines = withDefine(shader.defines, 'FISH_PECT');

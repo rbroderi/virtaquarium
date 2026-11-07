@@ -5,6 +5,7 @@
 // actual swimming.
 import * as THREE from 'three';
 import { clamp, range, type Rng } from './util.js';
+import { CAVE_RANGE, newCaveClock, tickCaveClock, type CaveClock } from './brain/caveClock.js';
 import type { Fish } from './fish.js';
 import type { Shelter } from './reef/types.js';
 import type { SwimWorld } from './world/ports.js';
@@ -25,6 +26,13 @@ const TRAIT_JITTER = 0.3;
 /** Decision noise amplitude, and the bonus for staying in the current mode (hysteresis). */
 const DECISION_NOISE = 0.08;
 const STAY_BONUS = 0.15;
+/** The share of its pace a fish keeps when touching the fish ahead of it. */
+const CROWD_SLOW = 0.35;
+/** A fish's own spot in a shelter: this share of its radius from the centre, plus up to SPREAD more. */
+const OWN_SPOT_NEAR = 0.25;
+const OWN_SPOT_SPREAD = 0.5;
+/** Room from the rock (body lengths) a spot needs, or the fish takes the centre. */
+const OWN_SPOT_ROOM = 0.4;
 /** A mode is held at least this long unless the new one is urgent (flee, feed). */
 const MIN_MODE_SECONDS = 1.5;
 
@@ -90,8 +98,12 @@ export class Brain {
   sheltered: Shelter | null = null;
   /** An eel's cave direction (unit, facing out), or null. */
   lurkDir: THREE.Vector3 | null = null;
+  /** How close the nearest body ahead is (reflexes avoidBody): 0 clear, 1 touching. The fish slows. */
+  crowding = 0;
   /** Reverse swimming speed (units/s), set while an eel backs into its cave. */
   backing = 0;
+  /** An eel's cave clock: when it should be in its cave and when out on a foray (brain/caveClock.ts). */
+  readonly cave: CaveClock | null;
   /** Remembered reef top ahead (reflexes). */
   reefSeen: number | undefined = undefined;
   /** The rock-avoidance turn, smoothed over time (reflexes), so a flipping surface normal can't jerk the fish. */
@@ -138,6 +150,7 @@ export class Brain {
     };
     this.thinkClock = rng() * THINK_INTERVAL;
     this.orbit = rng() * Math.PI * 2;
+    this.cave = b.lurker ? newCaveClock(rng) : null;
   }
 
   /** Something scary happened nearby (a chase, a predator, a sudden splash). */
@@ -152,6 +165,7 @@ export class Brain {
   update(dt: number, world: SwimWorld): void {
     this.updateDrives(dt, world);
     this.modeTime += dt;
+    if (this.cave) tickCaveClock(this.cave, dt, 1 - world.light, this.fish.pos.distanceTo(this.home) < CAVE_RANGE, this.rng);
     this.thinkClock -= dt;
     if (this.thinkClock <= 0) {
       this.thinkClock = THINK_INTERVAL;
@@ -353,12 +367,28 @@ export class Brain {
    * Where to swim to reach shelter sh: a ledge is entered from its open front (+z, towards the glass),
    * level with the gap; the coral from above.
    */
-  shelterGoal(sh: Shelter, pos: THREE.Vector3): THREE.Vector3 {
+  shelterGoal(sh: Shelter, pos: THREE.Vector3, world: SwimWorld): THREE.Vector3 {
     const g = this.shelterTarget;
     const inside = Math.hypot(pos.x - sh.pos.x, pos.z - sh.pos.z) < sh.r;
-    if (sh.kind === 'coral') return inside || pos.y < sh.top ? g.copy(sh.pos) : g.copy(sh.pos).setY(sh.top + 0.3);
-    if (inside || (pos.z > sh.pos.z && Math.abs(pos.y - sh.pos.y) < 0.25 && Math.abs(pos.x - sh.pos.x) < 0.5)) return g.copy(sh.pos);
+    if (sh.kind === 'coral') return inside || pos.y < sh.top ? this.ownSpot(sh, world) : g.copy(sh.pos).setY(sh.top + 0.3);
+    if (inside || (pos.z > sh.pos.z && Math.abs(pos.y - sh.pos.y) < 0.25 && Math.abs(pos.x - sh.pos.x) < 0.5)) return this.ownSpot(sh, world);
     return g.set(sh.pos.x, sh.pos.y, sh.pos.z + 0.9);
+  }
+
+  /**
+   * This fish's own spot in a shelter, so a shoal sheltering together spreads through it instead of
+   * all crowding its centre (they shoved each other and jittered there): a fixed bearing and distance
+   * from the centre (from orbit, drawn once per fish) and, in coral, a height between its base and
+   * top. Falls back to the centre when the spot is in or against the rock.
+   */
+  private ownSpot(sh: Shelter, world: SwimWorld): THREE.Vector3 {
+    const g = this.shelterTarget, a = this.orbit;
+    const frac = (v: number): number => v - Math.floor(v);
+    const r = sh.r * (OWN_SPOT_NEAR + OWN_SPOT_SPREAD * frac(a * 7.31));
+    g.set(sh.pos.x + Math.cos(a) * r, sh.pos.y, sh.pos.z + Math.sin(a) * r);
+    if (sh.kind === 'coral' && sh.top > sh.pos.y) g.y = sh.pos.y + (sh.top - sh.pos.y) * (0.2 + 0.6 * frac(a * 3.17));
+    if (world.rockDist(g) < this.fish.size * OWN_SPOT_ROOM) g.copy(sh.pos);
+    return g;
   }
 
   /** A random point in the species' depth zone, above the reef. */
@@ -392,7 +422,8 @@ export class Brain {
     };
     behaviourFor(this.mode).steer(ctx);
     applyReflexes(this, me, world, dt, dir, out.clearance);
-    return out.speed;
+    // Close behind another fish it slows, down to CROWD_SLOW of its pace; a fleeing fish doesn't.
+    return this.mode === 'flee' ? out.speed : out.speed * (1 - (1 - CROWD_SLOW) * this.crowding);
   }
 }
 

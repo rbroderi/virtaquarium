@@ -7,11 +7,11 @@
 // along the fin base and a pale belly; when hunting, dark "passing clouds" sweep forward over the back,
 // and resting on the sand it turns mottled.
 import * as THREE from 'three';
-import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
+import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js';
 import { mantleR } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, type ShaderHook, type SpringState } from './shared.js';
-import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
+import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
 import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
 export type CuttlefishMode = 'hover' | 'cruise' | 'rest' | 'hunt' | 'jet';
@@ -25,6 +25,7 @@ interface CuttleUniforms {
 const ARM_COUNT = 8;
 const TENTACLE_ARMS: ReadonlySet<number> = new Set([1, 3]);
 const ARM_LENGTH = 0.27;
+const ARM_SEED = 0xa2b5;
 const TENTACLE_LENGTH_SHARE = 0.85;
 const FIN_SEGMENTS = 48;
 const STRIKE_SECONDS = 0.4;
@@ -158,9 +159,12 @@ export class Cuttlefish implements Critter {
     }, { ...CEPH_SSS, thin: 'attr' });
     this.crown.position.set(0.19 * ML, -0.03 * ML, 0);
     this.model.add(this.crown);
+    // Each arm is a little different (length, girth, curl, kinks, tip); a stream of its own, seeded from
+    // this animal's mantle length, so the animal's rng draws are unchanged.
+    const vary = mulberry32(Math.round(ML * 1e6) ^ ARM_SEED);
     for (let i = 0; i < ARM_COUNT; i++) {
-      const tentacle = TENTACLE_ARMS.has(i);
-      const arm = new THREE.Mesh(cuttleArmGeometry((i / ARM_COUNT) * Math.PI * 2, ARM_LENGTH * (tentacle ? TENTACLE_LENGTH_SHARE : 1), tentacle), armMat);
+      const tentacle = TENTACLE_ARMS.has(i), v = armVariation(vary), len = range(vary, 0.86, 1.1);
+      const arm = new THREE.Mesh(cuttleArmGeometry((i / ARM_COUNT) * Math.PI * 2, ARM_LENGTH * len * (tentacle ? TENTACLE_LENGTH_SHARE : 1), tentacle, v), armMat);
       arm.scale.setScalar(ML);   // (built for ML = 1)
       arm.frustumCulled = false;   // a strike reaches well past the rest pose's bounds
       arm.name = `arm${i}`;

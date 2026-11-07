@@ -48,7 +48,8 @@ export function parseAppOptions(params: URLSearchParams): AppOptions {
     generatedScenery: params.get('tripo') !== '0',
     rig: params.get('rig') ?? 'sun',
     tone: toneFor(params),
-    view: viewOptions(params),
+    // The live view pans by default; checks hold still so their frames stay comparable.
+    view: viewOptions(params, check === null),
     capture: params.has('capture'),
     profile: params.get('profile') === '1',
     check: isCheckName(check) ? check : null,

@@ -84,14 +84,20 @@ const BUNDLE_RING = 3.4;   // the ring of arms about the bundle's line, in arm r
 export const CUTTLE_ARM_GLSL = /* glsl */`
 attribute vec4 aSec;
 attribute vec3 aArm, aNrm;
+attribute vec3 aVar;
 uniform float uExt;
+// The bend at q along the arm: the curl, plus this arm's own slight kink (a sine, fading out as a tentacle straightens).
+float cuttleBend(float q, float curl, float straight) {
+  return curl * q * q + (1.0 - straight) * aVar.y * sin(aVar.z + 6.0 * q) * q;
+}
 void cuttleArm(out vec3 P, out vec3 Nrm) {
   float tent = aArm.z, L = aArm.y, ext = 1.0 + tent * (uExt - 1.0), s = aSec.x * L * ext;
-  float curl = 0.7 * (1.0 - tent * clamp((ext - 1.0) / 0.4, 0.0, 1.0));
+  float straight = tent * clamp((ext - 1.0) / 0.4, 0.0, 1.0);
+  float curl = ${ARM_CURL} * aVar.x * (1.0 - straight);
   vec2 c = vec2(0.0);
   float du = s / ${ARM_STEPS}.0;
-  for (int i = 0; i < ${ARM_STEPS}; i++) { float q = min((float(i) + 0.5) * du, L) / L, th = curl * q * q; c += vec2(cos(th), -sin(th)) * du; }
-  float q = min(s, L) / L, th = curl * q * q;
+  for (int i = 0; i < ${ARM_STEPS}; i++) { float q = min((float(i) + 0.5) * du, L) / L, th = cuttleBend(q, curl, straight); c += vec2(cos(th), -sin(th)) * du; }
+  float q = min(s, L) / L, th = cuttleBend(q, curl, straight);
   vec3 T = vec3(cos(th), -sin(th), 0.0), N = vec3(sin(th), cos(th), 0.0), Z = vec3(0.0, 0.0, 1.0);
   float rho = 3.4 * mix(${ARM_R0}, ${ARM_R1}, q);
   P = vec3(c, 0.0) + N * (rho * sin(aArm.x) + aSec.z) + Z * (rho * cos(aArm.x) + aSec.w) + T * aSec.y;
@@ -102,12 +108,42 @@ void cuttleArm(out vec3 P, out vec3 Nrm) {
 type Vec3Tuple = readonly [number, number, number];
 interface ArmFrame { readonly P: Vec3Tuple; readonly T: Vec3Tuple; readonly N: Vec3Tuple }
 
+/**
+ * One arm's own character, so the eight are not copies: its curl, the slight kink in its line (amplitude
+ * and phase), its girth, how fast it tapers, how its tip ends and how its girth wanders along it.
+ */
+export interface ArmVariation {
+  readonly curl: number;
+  readonly kink: number;
+  readonly kinkPhase: number;
+  readonly girth: number;
+  readonly taper: number;
+  /** The tip's slide along the arm and its flattening, as fractions of the tip radius. */
+  readonly tipSlide: number;
+  readonly tipFlat: number;
+  readonly wobblePhase: number;
+}
+
+/** The arm as it was before any variation. */
+export const PLAIN_ARM: ArmVariation = { curl: 1, kink: 0, kinkPhase: 0, girth: 1, taper: 1.4, tipSlide: 0, tipFlat: 1, wobblePhase: 0 };
+
+/** A variation for one arm from a stream of its own (the arms draw nothing from the animal's rng). */
+export function armVariation(rng: Rng): ArmVariation {
+  const sign = rng() < 0.5 ? -1 : 1;
+  return {
+    curl: range(rng, 0.8, 1.25), kink: sign * range(rng, 0.05, 0.2), kinkPhase: range(rng, 0, 6.28), girth: range(rng, 0.9, 1.1),
+    taper: range(rng, 1.15, 1.9), tipSlide: range(rng, -0.4, 0.9), tipFlat: range(rng, 0.75, 1.15), wobblePhase: range(rng, 0, 6.28),
+  };
+}
+
+const armBend = (q: number, v: ArmVariation): number => ARM_CURL * v.curl * q * q + v.kink * Math.sin(v.kinkPhase + 6 * q) * q;
+
 /** The same line on the CPU (ext 1), for the rest pose the geometry is built in. */
-function cuttleArmFrame(f: number, L: number, a: number): ArmFrame {
+function cuttleArmFrame(f: number, L: number, a: number, v: ArmVariation): ArmFrame {
   const s = f * L, du = s / ARM_STEPS;
   let cx = 0, cy = 0;
-  for (let i = 0; i < ARM_STEPS; i++) { const q = Math.min((i + 0.5) * du, L) / L, th = ARM_CURL * q * q; cx += Math.cos(th) * du; cy -= Math.sin(th) * du; }
-  const q = Math.min(s, L) / L, th = ARM_CURL * q * q, rho = BUNDLE_RING * lerp(ARM_R0, ARM_R1, q);
+  for (let i = 0; i < ARM_STEPS; i++) { const q = Math.min((i + 0.5) * du, L) / L, th = armBend(q, v); cx += Math.cos(th) * du; cy -= Math.sin(th) * du; }
+  const q = Math.min(s, L) / L, th = armBend(q, v), rho = BUNDLE_RING * lerp(ARM_R0, ARM_R1, q);
   const T: Vec3Tuple = [Math.cos(th), -Math.sin(th), 0], N: Vec3Tuple = [Math.sin(th), Math.cos(th), 0];
   return { P: [cx + N[0] * rho * Math.sin(a), cy + N[1] * rho * Math.sin(a), rho * Math.cos(a)], T, N };
 }
@@ -115,28 +151,34 @@ function cuttleArmFrame(f: number, L: number, a: number): ArmFrame {
 const ARM_RINGS = 20, ARM_RING_VERTICES = 12;
 type Ring = readonly [fraction: number, tangentOffset: number, radius: number];
 
-function armRings(): Ring[] {
+function armRings(v: ArmVariation): Ring[] {
   // Rings along a curved taper (quick thinning near the root, long and slender after), a closed base
-  // (inside the head) and a rounded tip cap.
-  const rings: Ring[] = [[0, -0.6 * ARM_R0, 0]];
-  for (let k = 0; k <= ARM_RINGS; k++) { const f = k / ARM_RINGS; rings.push([f, 0, ARM_R1 + (ARM_R0 - ARM_R1) * (1 - f) ** 1.4]); }
-  for (const ph of [0.6, 1.1, 1.45]) rings.push([1, ARM_R1 * Math.sin(ph), ARM_R1 * Math.cos(ph)]);
-  rings.push([1, ARM_R1, 0]);
+  // (inside the head) and a rounded tip cap. The girth swells and thins along the arm, and the tip
+  // may slide on past its last ring (a blunt, a pointed or a drawn-out end).
+  const rings: Ring[] = [[0, -0.6 * ARM_R0, 0]], tip = ARM_R1 * v.girth, slide = 1 + v.tipSlide;
+  for (let k = 0; k <= ARM_RINGS; k++) {
+    const f = k / ARM_RINGS, wob = 1 + (0.09 * Math.sin(9 * f + v.wobblePhase) + 0.05 * Math.sin(23 * f + 2 * v.wobblePhase)) * (1 - f * f);
+    rings.push([f, 0, (tip + (ARM_R0 * v.girth - tip) * (1 - f) ** v.taper) * wob]);
+  }
+  for (const ph of [0.6, 1.1, 1.45]) rings.push([1, tip * slide * Math.sin(ph), tip * Math.cos(ph)]);
+  rings.push([1, tip * slide, 0]);
   return rings;
 }
 
 const verticesInRing = (r: number): number => (r > 0 ? ARM_RING_VERTICES : 1);
 
 /** One arm of the bundle at angle a, length L (ML = 1). */
-export function cuttleArmGeometry(a: number, L: number, tentacle: boolean): THREE.BufferGeometry {
-  const RAD = ARM_RING_VERTICES, rings = armRings();
-  const pos: number[] = [], sec: number[] = [], arm: number[] = [], thin: number[] = [], idx: number[] = [];
+export function cuttleArmGeometry(a: number, L: number, tentacle: boolean, v: ArmVariation = PLAIN_ARM): THREE.BufferGeometry {
+  const RAD = ARM_RING_VERTICES, rings = armRings(v);
+  const pos: number[] = [], sec: number[] = [], arm: number[] = [], thin: number[] = [], vary: number[] = [], idx: number[] = [];
   for (const [f, tOff, r] of rings) {
-    const { P, T, N } = cuttleArmFrame(f, L, a), n = verticesInRing(r);
+    const { P, T, N } = cuttleArmFrame(f, L, a, v), n = verticesInRing(r);
+    // The section is slightly oval, flattening towards the tip by the arm's own amount.
+    const flat = lerp(1, v.tipFlat, clamp((f - 0.5) / 0.5, 0, 1));
     for (let j = 0; j < n; j++) {
-      const b = (j / RAD) * Math.PI * 2, nO = r * Math.cos(b), zO = r * Math.sin(b);
+      const b = (j / RAD) * Math.PI * 2, nO = r * Math.cos(b), zO = r * Math.sin(b) * flat;
       pos.push(P[0] + T[0] * tOff + N[0] * nO, P[1] + T[1] * tOff + N[1] * nO, P[2] + zO);
-      sec.push(f, tOff, nO, zO); arm.push(a, L, tentacle ? 1 : 0); thin.push(0.2 + 0.8 * f);
+      sec.push(f, tOff, nO, zO); arm.push(a, L, tentacle ? 1 : 0); thin.push(0.2 + 0.8 * f); vary.push(v.curl, v.kink, v.kinkPhase);
     }
   }
   // indices: the base point, NS + 4 rings of RAD, the tip point
@@ -152,18 +194,19 @@ export function cuttleArmGeometry(a: number, L: number, tentacle: boolean): THRE
   g.setIndex(idx);
   g.computeVertexNormals();
   const nrm = g.getAttribute('normal'), an = new Float32Array(nrm.count * 3);
-  let v = 0;
+  let vi = 0;
   for (const [f, , r] of rings) {
-    const { T, N } = cuttleArmFrame(f, L, a);
-    for (let j = 0; j < verticesInRing(r); j++, v++) {
-      const x = nrm.getX(v), y = nrm.getY(v), z = nrm.getZ(v);
-      an[3 * v] = x * T[0] + y * T[1]; an[3 * v + 1] = x * N[0] + y * N[1]; an[3 * v + 2] = z;
+    const { T, N } = cuttleArmFrame(f, L, a, v);
+    for (let j = 0; j < verticesInRing(r); j++, vi++) {
+      const x = nrm.getX(vi), y = nrm.getY(vi), z = nrm.getZ(vi);
+      an[3 * vi] = x * T[0] + y * T[1]; an[3 * vi + 1] = x * N[0] + y * N[1]; an[3 * vi + 2] = z;
     }
   }
   g.setAttribute('aNrm', new THREE.BufferAttribute(an, 3));
   g.setAttribute('aSec', new THREE.Float32BufferAttribute(sec, 4));
   g.setAttribute('aArm', new THREE.Float32BufferAttribute(arm, 3));
   g.setAttribute('aThin', new THREE.Float32BufferAttribute(thin, 1));
+  g.setAttribute('aVar', new THREE.Float32BufferAttribute(vary, 3));
   g.computeBoundingSphere();
   return g;
 }

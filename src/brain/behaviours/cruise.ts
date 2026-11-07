@@ -13,9 +13,9 @@ const ARRIVED = 0.8;
 export const cruise: Behaviour = {
   mode: 'cruise',
 
-  // Eels keep to the crevice by day and roam at night.
-  score: ({ species: sp, personality: t, dark }) =>
-    sp.lurker ? 0.2 + dark * 0.9 : 0.3 + 0.25 * t.activity + (sp.nocturnal ? dark * 0.5 : 0),
+  // An eel roams only on a foray out of its cave (brain/caveClock.ts).
+  score: ({ brain, species: sp, personality: t, dark }) =>
+    sp.lurker ? (brain.cave?.inCave ? 0 : 0.9) : 0.3 + 0.25 * t.activity + (sp.nocturnal ? dark * 0.5 : 0),
 
   steer({ brain, world, dir, pos, species: sp, pace, out }) {
     if (brain.targetTimer <= 0 || pos.distanceTo(brain.target) < ARRIVED) {

@@ -50,6 +50,15 @@ export const smooth01 = (t: number): number => { const c = clamp(t, 0, 1); retur
 export function makeProfile(body: Body): Profile {
   const snout = body.snout || 0, snoutH = body.snoutH || 0;
   const m = body.m, ped = body.ped, H = body.depth / 2;
+  // A moray head: a smooth bump (0 at u0 and u2, 1 at u1) that deepens the head over the jaw muscles,
+  // carries most of the extra depth above the midline, and flattens the section laterally.
+  const head = body.head;
+  const headBump = (u: number): number => {
+    if (!head) return 0;
+    const rise = smooth01((u - head.u0) / (head.u1 - head.u0));
+    const fall = 1 - smooth01((u - head.u1) / (head.u2 - head.u1));
+    return rise * fall;
+  };
   // snoutTip: the tube's height at the mouth as a share of its height at the base (a butterflyfish beak
   // barely tapers; a tang's snout is a cone). snoutBlend: the fillet (body units) where the tube runs
   // into the face, instead of a sharp step.
@@ -66,6 +75,7 @@ export function makeProfile(body: Body): Profile {
     // Convex head that ends in a blunt terminal mouth (snouted species end in their tube instead).
     if (uu < m) f = (snout ? 0 : 0.17) + (snout ? 1 : 0.83) * Math.pow(Math.sin((Math.PI / 2) * (uu / m)), body.headP);
     else f = ped + (1 - ped) * Math.pow(Math.cos((Math.PI / 2) * ((uu - m) / (1 - m))), body.tailP);
+    f += head ? head.depth * headBump(u) : 0;
     return snout ? smax(H * f, snoutH, blend) : Math.max(H * f, MIN_HALF_DEPTH);
   };
   const x = (u: number): number => 0.5 - u * body.len;
@@ -74,14 +84,14 @@ export function makeProfile(body: Body): Profile {
   // headW: the head's width at the snout relative to the usual, easing back to 1 by the deepest point:
   // strongly compressed fish narrow to a wedge at the front rather than carrying their width forward.
   const headW = body.headW ?? 1;
-  const width = (u: number): number => Math.max(half(u) * body.width * (1.15 - 0.55 * u) * lerp(headW, 1, smooth01(u / mEnd)),
+  const width = (u: number): number => Math.max(half(u) * body.width * (1.15 - 0.55 * u) * lerp(headW, 1, smooth01(u / mEnd)) * (head ? 1 - (1 - head.width) * headBump(u) : 1),
     snout && u < snout ? (body.snoutTip != null ? half(u) : snoutH) * (body.snoutW ?? DEFAULT_SNOUT_WIDTH) : MIN_HALF_WIDTH);   // a tapered snout narrows too
   // The back arches above the midline (epaxial muscle) while the mouth and tail stay on it.
   const hump = body.hump ?? DEFAULT_HUMP;
   // mouth: the snout's height off the midline (in H; negative is below). Tangs and butterflyfish carry
   // the mouth low under a steep forehead; the midline eases back to level by the deepest point.
   const mouth = body.mouth ?? 0;
-  const centre = (u: number): number => hump * H * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 1.5 + mouth * H * (1 - smooth01(u / mEnd));
+  const centre = (u: number): number => hump * H * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 1.5 + mouth * H * (1 - smooth01(u / mEnd)) + (head ? head.top * head.depth * H * headBump(u) : 0);
   const top = (u: number): number => centre(u) + half(u), bot = (u: number): number => centre(u) - half(u);
   return { half, x, width, centre, top, bot, H, xPed: x(1) };
 }

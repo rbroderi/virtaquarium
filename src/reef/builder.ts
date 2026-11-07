@@ -16,6 +16,7 @@ import { addSway, stdMat } from './materials.js';
 import { brainCoral, color, domeCluster, leatherPlate, rockGeometry, ruffledFan, scratch, staghorn, type DomeShape } from './geometry.js';
 import { grainTexture, poreTexture, rockDetailTexture, seaFanTexture } from './textures.js';
 import { anemone } from './anemone.js';
+import { bladeGeometry, grassMaterial, tuftedShoot } from './seagrass.js';
 import { swapCoral } from './scenery.js';
 import { inNoHeightSubtree, isMesh, isSolid, markNoHeight, markSolid, naturalSize } from './flags.js';
 import {
@@ -27,6 +28,10 @@ import type { Anemone, Cave, PlantedCounts, Reef, Scenery, Shelter, ShoalCoral }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const EIGHT_DIRECTIONS = 8;
+/** Sand brightness falls from full at z = SAND_SHADE_FROM to SAND_SHADE_MIN at SAND_SHADE_TO (towards the back). */
+const SAND_SHADE_FROM = -1.0;
+const SAND_SHADE_TO = -4.2;
+const SAND_SHADE_MIN = 0.22;
 
 export interface ReefBuildParams {
   readonly scene: THREE.Object3D;
@@ -233,7 +238,17 @@ export class ReefBuilder {
       p.setY(i, y);
     }
     geo.computeVertexNormals();
-    const sand = new THREE.Mesh(geo, stdMat({ map: sandTex, bumpMap: sandTex, bumpScale: 1.5, roughness: 1 }));
+    // The sand under and behind the rockwork is in shade and silted over, so it falls away to dark
+    // towards the back. Without this, bare sand showing through gaps in the back wall lit up as a pale
+    // blue patch against the dark rear rock and deep water.
+    const shade = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const t = Math.min(1, Math.max(0, (SAND_SHADE_FROM - p.getZ(i)) / (SAND_SHADE_FROM - SAND_SHADE_TO)));
+      const k = 1 - (1 - SAND_SHADE_MIN) * t * t * (3 - 2 * t);
+      shade.set([k, k, k], i * 3);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(shade, 3));
+    const sand = new THREE.Mesh(geo, stdMat({ map: sandTex, bumpMap: sandTex, bumpScale: 1.5, roughness: 1, vertexColors: true }));
     sand.receiveShadow = true;
     markNoHeight(sand);
     sand.name = 'sand';
@@ -541,19 +556,7 @@ export class ReefBuilder {
    * from a buried rhizome; green, browning and speckled with epiphytes towards the tips.
    */
   private addSeaGrass(grng: Rng, spots: SandSpot[]): void {
-    const blade = new THREE.PlaneGeometry(1, 1, 1, 10);
-    blade.translate(0, 0.5, 0);
-    {
-      const p = blade.getAttribute('position'), col = new Float32Array(p.count * 3), c = new THREE.Color();
-      const base = color('#3b5a2a'), mid = color('#5a7a36'), tip = color('#8a8248');   // olive, as in field photos
-      for (let i = 0; i < p.count; i++) {
-        const h = p.getY(i);
-        c.copy(base).lerp(mid, clamp(h * 2, 0, 1)).lerp(tip, clamp((h - 0.7) / 0.3, 0, 1) * 0.8);
-        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-      }
-      blade.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    }
-    const grassMat = addSway(stdMat({ vertexColors: true, roughness: 0.55, side: THREE.DoubleSide }), 'seagrass', { ax: 0, az: 0.16, hz: 0.7 });
+    const blade = bladeGeometry(), grassMat = grassMaterial();
     const { m, q, s, p } = scratch;
     for (let patch = 0; patch < 3; patch++) {
       const at = this.findSpot(grng, spots, 0.3, -0.4, 1.8, 1.2);
@@ -561,11 +564,19 @@ export class ReefBuilder {
       const [cx, cz] = at, shoots = Math.floor(range(grng, 45, 65)), blades: Blade[] = [];
       for (let sh = 0; sh < shoots; sh++) {
         const a = grng() * Math.PI * 2, r = Math.sqrt(grng()) * 0.6;
-        const x = Math.cos(a) * r * 1.4, z = Math.sin(a) * r * 0.8, yaw = grng() * Math.PI * 2;
-        if (this.hf.sample(cx + x, cz + z) > OPEN_SAND_LEVEL) { grng(); grng(); continue; }   // grass grows in sand, not on rock
+        const yaw = grng() * Math.PI * 2;
+        if (this.hf.sample(cx + Math.cos(a) * r * 1.4, cz + Math.sin(a) * r * 0.8) > OPEN_SAND_LEVEL) { grng(); grng(); continue; }   // grass grows in sand, not on rock
+        // The draws above and below are as they were; the layout is then bunched into uneven tufts
+        // with a lobed edge, so shoots do not fill a neat ellipse.
+        const [x, z] = tuftedShoot(patch, a, r);
         const n = 2 + Math.floor(grng() * 4), L = range(grng, 0.8, 1.8) * (1 - r * 0.5);   // shorter at the edge
         const y = this.groundAt(cx + x, cz + z) - 0.04;   // the sand undulates and isn't in the height field
-        for (let b = 0; b < n; b++) blades.push({ x, y, z, yaw: yaw + range(grng, -0.35, 0.35), lean: range(grng, 0.08, 0.4), w: range(grng, 0.04, 0.085), L: L * range(grng, 0.7, 1.05) });
+        for (let b = 0; b < n; b++) {
+          // Widths, lean and length are spread wider than the draws' ranges (a squared draw: many narrow
+          // blades, a few broad; some short, some nearly upright, some flopped).
+          const wu = (range(grng, 0.04, 0.085) - 0.04) / 0.045, lu = (range(grng, 0.08, 0.4) - 0.08) / 0.32, ku = (range(grng, 0.7, 1.05) - 0.7) / 0.35;
+          blades.push({ x, y, z, yaw: yaw + range(grng, -0.35, 0.35), lean: 0.05 + 0.5 * lu * lu + 0.1 * lu, w: 0.028 + 0.075 * wu * wu + 0.01 * wu, L: L * (0.5 + 0.6 * ku) });
+        }
       }
       const mesh = new THREE.InstancedMesh(blade, grassMat, blades.length);
       const e = new THREE.Euler(), tint = new THREE.Color();

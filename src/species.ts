@@ -374,8 +374,8 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // Anguilliform: no pectoral or pelvic fins, one continuous fin fold (dorsal from just ahead of the gill
     // opening, anal from the vent at mid-body) running round the tail; scaleless, mucus-covered skin.
     // Proportions from the side-on references (web/ref/moray): depth ~6.5% TL, head ~12% TL.
-    body: { len: 0.97, depth: 0.065, width: 0.9, flank: 1, m: 0.3, headP: 0.32, tailP: 1.4, ped: 0.18 },
-    eye: { u: 0.035, v: -0.4, r: 0.0065, iris: '#e8c020', irisR: 0.98, pupil: 0.5 },
+    body: { len: 0.97, depth: 0.065, width: 0.9, flank: 1, m: 0.3, headP: 0.32, tailP: 1.4, ped: 0.18, head: { u0: 0.01, u1: 0.075, u2: 0.16, depth: 0.28, top: 0.85, width: 0.6 } },
+    eye: { u: 0.035, v: -0.55, r: 0.0065, iris: '#e8c020', irisR: 0.98, pupil: 0.5 },
     gill: false,
     // The gape runs back past the eye; the lower jaw hinges at its corner (fishModel jaw, fish.js breathing).
     mouth: { u: 0.065, v: 0.12, v0: 0.0, lining: 0.08 },

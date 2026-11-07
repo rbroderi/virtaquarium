@@ -12,25 +12,21 @@ export interface FishStats {
   ext: { y: number; n: number } | null;
   rise: number;
   jitter: number;
+  /** The wobbles by what the fish was doing (mode, /sheltered, /crowded). */
+  jitterBy?: Record<string, number>;
   inRock: number;
   /** Position at the previous step, and the largest step taken, as a speed in body lengths per second. */
   readonly last: THREE.Vector3;
   maxStep: number;
 }
 
-/**
- * The eel's chain nodes (head first), read from its spine chain. SpineChain keeps them private; the
- * check reads them through TypeScript's element-access escape hatch rather than widening the chain's
- * public API for a diagnostic.
- */
+/** The eel's body as drawn (head first, world space, with the head lift): its path's stations. */
 export function spineNodes(f: Fish): readonly THREE.Vector3[] | null {
   return f.spine ? f.spine.nodes : null;
 }
 
 // The eel's burrow (as fish inBurrow, repeated here so the measure doesn't depend on the code it checks).
 const BURROW_AHEAD = 0.25, BURROW_BEHIND = 0.55, BURROW_RADIUS = 0.35;
-/** The shader lifts the head: lift * max(0, x - 0.1)^2 * 2.5 body lengths at node x. */
-const LIFT_START = 0.1, LIFT_SCALE = 2.5;
 /** A node in the roof band: from this share of a body length under the roof's underside. */
 const ROOF_TOLERANCE = 0.02;
 /** A node more than a voxel of the rock field inside solid scenery is clipping. */
@@ -43,8 +39,6 @@ function inBurrow(f: Fish, p: THREE.Vector3): boolean {
   const s = Math.min(BURROW_AHEAD * L, Math.max(-BURROW_BEHIND * L, dx * D.x + dy * D.y + dz * D.z));
   return (dx - D.x * s) ** 2 + (dy - D.y * s) ** 2 + (dz - D.z * s) ** 2 < BURROW_RADIUS * BURROW_RADIUS;
 }
-
-const headLift = (lift: number, x: number): number => lift * Math.max(0, x - LIFT_START) ** 2 * LIFT_SCALE;
 
 /** Per-eel counts of roof hits and body nodes in rock. */
 export class EelTally {
@@ -61,28 +55,26 @@ export class EelTally {
   step(f: Fish, world: World): void {
     const nodes = spineNodes(f);
     if (!nodes) return;
-    const lift = f.model.uniforms.uLift.value, N = nodes.length, L = f.size;
-    this.roof += nodes.some((p, i) => {
-      const r = world.roofAt(p.x, p.z), x = 0.5 - i / (N - 1);
-      const y = p.y + headLift(lift, x) * L;
-      return r && y > r.y - ROOF_TOLERANCE * L && y < r.top;
+    const L = f.size;
+    this.roof += nodes.some((p) => {
+      const r = world.roofAt(p.x, p.z);
+      return r && p.y > r.y - ROOF_TOLERANCE * L && p.y < r.top;
     }) ? 1 : 0;
-    this.stepBody(f, world, lift, N);
+    this.stepBody(f, world, nodes);
   }
 
   /**
-   * The whole body in the rock field, where the shader draws it: each midline node (the chain's offsets
-   * as clamped into uSpine, plus the head lift) in the model's frame. Nodes in the eel's burrow (the
-   * crevice behind its cave, meant to be out of sight in the rock) are counted apart, with how many are
-   * shallow enough to show through the surface.
+   * The whole body in the rock field, where the shader draws it: each midline station of the path (as
+   * written to uPath, read back through the model's frame). Nodes in the eel's burrow (the crevice behind
+   * its cave, meant to be out of sight in the rock) are counted apart, with how many are shallow enough
+   * to show through the surface.
    */
-  private stepBody(f: Fish, world: World, lift: number, N: number): void {
-    const spine = f.model.uniforms.uSpine.value, P = this.node;
+  private stepBody(f: Fish, world: World, nodes: readonly THREE.Vector3[]): void {
+    const path = f.model.uniforms.uPath.value, P = this.node, N = nodes.length;
     f.model.updateMatrixWorld();
     let clipped = false;
     for (let i = 0; i < N; i++) {
-      const x = 0.5 - i / (N - 1);
-      f.model.localToWorld(P.set(x, (spine[2 * i + 1] ?? 0) + headLift(lift, x), spine[2 * i] ?? 0));
+      f.model.localToWorld(P.set(path[3 * i] ?? 0, path[3 * i + 1] ?? 0, path[3 * i + 2] ?? 0));
       const d = world.rockDist(P);
       if (inBurrow(f, P)) {
         if (d < 0) {

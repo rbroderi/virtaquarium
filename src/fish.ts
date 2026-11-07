@@ -21,13 +21,14 @@
 import * as THREE from 'three';
 import { Brain } from './brain.js';
 import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, FAN_POSE, type FishModel } from './fishModel.js';
-import { limitStep, STEP_CRAWL_BL } from './world/stepLimit.js';
+import { limitStep, STEP_CRAWL_BL, STEP_SLACK } from './world/stepLimit.js';
 import { clamp, lerp, range, wrapAngle, type Rng } from './util.js';
 import type { Species } from './species.js';
 import type { SwimWorld } from './world/ports.js';
 import type { SwimUniforms } from './fishModel/swimShader.js';
 import { SpineChain, spineClearance, type SpineBody } from './fish/spineChain.js';
 import { spring, springState, smoothstep, type SpringState } from './fish/spring.js';
+import { bodyDims, radiusToward, type BodyDims } from './fish/bodyShape.js';
 
 export type { SwimUniforms } from './fishModel/swimShader.js';
 
@@ -48,10 +49,34 @@ const SIZE_SPREAD: readonly [number, number] = [0.85, 1.12];
 /** Opercular breathing rate at rest (Hz). */
 const VENT_HZ: readonly [number, number] = [1.0, 1.5];
 const VENT_AMPLITUDE = 0.035;
+/**
+ * Drawn position damping (present): the drawn fish follows its own velocity and eases to pos at this
+ * rate (1/s), so the push-backs from rock and other fish (fish.ts, world/separation.ts), which move pos
+ * without the fish swimming there, are smoothed instead of shown as a shudder. It never lags pos by
+ * more than SHOW_MAX_LAG body lengths, so bodies that only touch don't look as if they intersect.
+ */
+const SHOW_RATE = 10;
+const SHOW_MAX_LAG = 0.06;
+/**
+ * Body stations kept off the rock, snout (0) to the caudal fin's tip (1), about every 0.13 L; the
+ * snout's tip is a sliver, so the first is just behind it.
+ */
+const ROCK_STATIONS = [0.05, 0.18, 0.31, 0.44, 0.57, 0.7, 0.85, 1] as const;
+/**
+ * Share of the body's section kept clear of the rock field. The field reads the rock ~0.05 units
+ * nearer than the drawn surface (it is built from voxels the triangles touch), so the skin can graze it.
+ */
+const ROCK_CLEARANCE = 0.8;
+const MIN_ROCK_CLEARANCE = 0.03;
+/** Rock pushes a body station out at least this fast (body lengths/s), as the step limit's crawl. */
+const ROCK_CRAWL_BL = 0.5;
 
 const _d = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vector3();
 const _lat = new THREE.Vector3(), _flow = new THREE.Vector3(), _gaze = new THREE.Vector3(), _n = new THREE.Vector3();
-const _c = new THREE.Vector3(), _t = new THREE.Vector3(), _prev = new THREE.Vector3();
+const _c = new THREE.Vector3(), _t = new THREE.Vector3(), _prev = new THREE.Vector3(), _dir0 = new THREE.Vector3();
+const _turn = new THREE.Vector3();
+/** An eel lurking this close to home is braced in its cave (fish/spineChain.ts holds its body there). */
+const EEL_BRACED_RANGE = 0.6;
 const _basis = new THREE.Matrix4();
 
 /** Eye saccade state: the gaze target held between jumps, and the eased current gaze. */
@@ -75,11 +100,16 @@ export class Fish implements SpineBody {
   readonly sp: Species;
   readonly name: string;
   readonly size: number;
+  /** The body's axis and section for collision (fish/bodyShape.ts). */
+  readonly body: BodyDims;
   readonly model: FishModel;
   readonly pos = new THREE.Vector3();
   readonly dir: THREE.Vector3;
   /** Relative to the water. */
   readonly vel = new THREE.Vector3();
+  /** Where the model is drawn: pos with the collision pushes' jerks smoothed out (present). */
+  private readonly shown = new THREE.Vector3();
+  private shownSet = false;
   /** Forward speed relative to water. */
   speed = 0;
   thrust = 0;
@@ -114,6 +144,8 @@ export class Fish implements SpineBody {
   private readonly pectSprings: PectoralSprings[];
   /** Speed of the water carrying the fish this step (units/s). */
   private drift = 0;
+  /** Heading at the start of this step (the turn sweeps the snout and tail into or out of rock). */
+  private readonly dirBefore = new THREE.Vector3();
   /** Steps the global step limit cut short (world/stepLimit.ts), for the motion check. */
   limitedSteps = 0;
   /** Fan pectorals swept back at speed (lionfish), 0..1. */
@@ -126,6 +158,7 @@ export class Fish implements SpineBody {
     this.size = sp.size * range(rng, SIZE_SPREAD[0], SIZE_SPREAD[1]);
     this.model = buildFishModel(sp);
     this.model.scale.setScalar(this.size);
+    this.body = bodyDims(this);
     // Receive too, so fins shade the flank (and other fish) as they do in photos.
     this.model.traverse((o) => {
       if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
@@ -140,6 +173,8 @@ export class Fish implements SpineBody {
     this.ventHz = range(rng, VENT_HZ[0], VENT_HZ[1]);
     this.yaw = Math.atan2(this.dir.z, this.dir.x);
     this.spine = sp.swim.mode === 'anguilliform' ? new SpineChain() : null;
+    // The eel's body is drawn along its path (uPath), which reaches well outside the straight body's bounds.
+    if (this.spine) this.model.traverse((o) => { o.frustumCulled = false; });
     this.brain = new Brain(this, rng);
   }
 
@@ -151,7 +186,7 @@ export class Fish implements SpineBody {
     return this.model.uniforms;
   }
 
-  /** The shader's head lift (uLift), for the spine chain. */
+  /** The head lift (uLift), for the eel's body path. */
   get lift(): number {
     return this.model.uniforms.uLift.value;
   }
@@ -205,8 +240,11 @@ export class Fish implements SpineBody {
 
     const s: StepState = { want, U: Math.max(0, this.speed), burst: want > 1, omegaMax: 0, T: 0, kf: 0, af: 0 };
     _prev.copy(this.pos);
+    _dir0.copy(this.dir);
+    this.dirBefore.copy(this.dir);
     const v0 = this.vel.length();
     this.turnTowards(dt, s);
+    if (this.spine) this.turnAboutHead();
     this.controlThrust(s);
     this.integrate(dt, world, s);
     this.enforceLimits(dt, world, s.U);
@@ -246,6 +284,20 @@ export class Fish implements SpineBody {
     const cp = Math.cos(this.pitch);
     this.dir.set(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
     this.turnRate = this.yawRate;
+  }
+
+  /**
+   * An eel steers with its head and the body follows its path (fish/spineChain.ts), so it turns about
+   * its head, not its middle (pos): turning about the middle would swing the head through an arc half a
+   * body length across, which the body would then follow. Not braced in its cave, where it turns its
+   * head on its neck instead.
+   */
+  private turnAboutHead(): void {
+    const b = this.brain;
+    if (b.mode === 'lurk' && b.lurkDir && this.pos.distanceTo(b.home) < EEL_BRACED_RANGE) return;
+    _dir0.sub(this.dir).multiplyScalar(0.5 * this.size);
+    this.pos.add(_dir0);
+    _prev.add(_dir0);   // a turn, not a step: the step limit measures the swim from here
   }
 
   /** Thrust controller: towards the speed the brain wants, within sustained / burst capacity. */
@@ -310,7 +362,7 @@ export class Fish implements SpineBody {
     const ease = (0.5 * L + U) * dt;
     if (sh && this.pos.y > sh.top - 0.1 * L) this.pos.y = Math.max(sh.top - 0.1 * L, this.pos.y - ease);
     if (sh && this.pos.y < sh.floor) this.pos.y = Math.min(sh.floor, this.pos.y + ease);
-    if (!this.spine) this.pushOutOfRock(dt, world, U);
+    if (!this.spine) this.pushOutOfRock(dt, world);
     else this.pushEelHeadOutOfRock(dt, world, U);
     this.pos.y = clamp(this.pos.y, B.y0, B.y1);
   }
@@ -320,23 +372,34 @@ export class Fish implements SpineBody {
    * of a rock slides along it instead of being lifted to the top of the height field's column. At most
    * as fast as it can have gone in, plus a little: no jumps.
    */
-  private pushOutOfRock(dt: number, world: SwimWorld, U: number): void {
-    const L = this.size;
-    const r = Math.max(0.03, 0.35 * this.sp.body.depth * L);
-    const d = world.rockDist(this.pos);
-    if (d < r) {
-      world.rockNormal(this.pos, _n);
-      this.pos.addScaledVector(_n, Math.min(r - d, (0.5 * L + 1.2 * U) * dt));
+  private pushOutOfRock(dt: number, world: SwimWorld): void {
+    const L = this.size, d = this.body;
+    // Stations from the snout to the tail fin's tip each keep their own radius (the body's section towards the rock)
+    // off it: testing the centre alone let the head, half a body length ahead, go into the rock. Each
+    // is pushed out no faster than it was moving into the rock (the body's speed plus the turn's sweep at
+    // that station), plus a slow crawl: a fish turning its head into a wall is not thrown off it.
+    _turn.subVectors(this.dir, this.dirBefore).multiplyScalar(1 / dt);
+    for (const k of ROCK_STATIONS) {
+      const s = d.nose + (d.fin - d.nose) * k;
+      _c.copy(this.pos).addScaledVector(this.dir, s);
+      const dist = world.rockDist(_c);
+      if (dist >= d.halfDepth) continue;   // no section is deeper than this: clear
+      world.rockNormal(_c, _n);
+      const r = Math.max(MIN_ROCK_CLEARANCE, ROCK_CLEARANCE * radiusToward(this, d, s, _n));
+      if (dist >= r) continue;
+      const inward = Math.max(0, -(this.vel.dot(_n) + s * _turn.dot(_n)));
+      const push = Math.min(r - dist, (ROCK_CRAWL_BL * L + STEP_SLACK * inward) * dt);
+      this.pos.addScaledVector(_n, push);
       const vn = this.vel.dot(_n);
       if (vn < 0) this.vel.addScaledVector(_n, -vn);
     }
   }
 
   /**
-   * The eel: pos is the middle of a straight body axis, not a point on the body (SpineChain carries the
-   * body along the path the head took), and lurking it lies in the rock behind the cave. So the head is
-   * what meets the rock, pushed out along the surface normal; the chain keeps the rest of the body off
-   * it. Not in its burrow (inBurrow), where it backs in.
+   * The eel: pos is half a body length behind the head along dir, not a point on the body (SpineChain
+   * lays the body along the path the head took), and lurking it lies in the rock behind the cave. So the
+   * head is what meets the rock, pushed out along the surface normal; the path keeps the rest of the body
+   * off it. Not in its burrow (inBurrow), where it backs in.
    */
   private pushEelHeadOutOfRock(dt: number, world: SwimWorld, U: number): void {
     const L = this.size, B = world.bounds;
@@ -366,7 +429,23 @@ export class Fish implements SpineBody {
     _side.crossVectors(this.dir, _up);
     _basis.makeBasis(this.dir, _up, _side);
     this.model.quaternion.setFromRotationMatrix(_basis);
-    this.model.position.copy(this.pos);
+  }
+
+  /**
+   * Place the model, after the world has moved every fish and pushed overlapping ones apart
+   * (world.ts update). The eel's chain is laid out from pos, so it is drawn there exactly.
+   */
+  present(dt: number): void {
+    const shown = this.shown;
+    if (this.spine || !this.shownSet) {
+      shown.copy(this.pos);
+      this.shownSet = true;
+    } else {
+      shown.addScaledVector(this.vel, dt).lerp(this.pos, 1 - Math.exp(-dt * SHOW_RATE));
+      const lag = shown.distanceTo(this.pos), max = SHOW_MAX_LAG * this.size;
+      if (lag > max) shown.lerp(this.pos, 1 - max / lag);
+    }
+    this.model.position.copy(shown);
   }
 
   /** Propulsors and expression driven by the thrust: tail, bend, fins, gills, colour, eyes, pectorals. */
@@ -449,10 +528,11 @@ export class Fish implements SpineBody {
       if (u.uErect) u.uErect.value = this.erect;
     }
     if (this.spine) {
-      // The moray's chain does the bending; the analytic bend is off. Braced in its crevice, the body is stiff.
-      this.spine.update(dt, this, world, brain.mode === 'lurk' ? 0.5 : 0.12, _up, _side);
-      this.spine.write(u.uSpine.value, this, _up, _side);
-      u.uSpineOn.value = 1;
+      // The moray's body follows its head's path with the travelling wave on it (fish/spineChain.ts); the
+      // shader draws it along that path, so the analytic bend and wave are off.
+      this.spine.update(dt, this, world, { phase: this.phase, amp: u.uAmp.value }, _up);
+      this.spine.write(u.uPath.value, u.uPathUp.value, this, _up, _side);
+      u.uPathOn.value = 1;
       u.uBend.value = u.uBendTail.value = 0;
     } else {
       u.uBend.value = this.bend;
