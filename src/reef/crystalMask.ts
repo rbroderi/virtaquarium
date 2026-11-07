@@ -91,6 +91,21 @@ export function renderMask(canvas: HTMLCanvasElement, lines: readonly string[], 
   const blockH = wrapped.length * lineH + (label ? labelSize * 1.7 : 0);
   let y = (H - blockH) / 2 + lineH / 2;
 
+  // A slightly frosted plate behind the text, so the letters read against any background.
+  const platePad = size * 0.4;
+  const plateW = Math.min(maxW, Math.max(...wrapped.map((l) => measure(l, size))) + platePad * 2);
+  const plateH = blockH + platePad * 2;
+  const plateX = (W - plateW) / 2, plateY = (H - plateH) / 2;
+  g.save();
+  g.shadowColor = 'rgba(150,110,0,0.85)';
+  g.shadowBlur = size * 0.3;
+  g.fillStyle = 'rgb(150,110,0)';
+  roundRect(g, plateX, plateY, plateW, plateH, size * 0.18);
+  g.fill();
+  g.restore();
+  g.shadowColor = 'transparent';
+  g.shadowBlur = 0;
+
   const etch = (text: string, cy: number, fontPx: number): void => {
     const font = `600 ${Math.round(fontPx)}px ${FONT}`;
     g.font = font;
@@ -109,4 +124,20 @@ export function renderMask(canvas: HTMLCanvasElement, lines: readonly string[], 
     y += lineH;
   }
   if (label) etch(label.toUpperCase(), y + labelSize * 0.35, labelSize);
+}
+
+/** Rounds a rect path (ctx.roundRect isn't present in every runtime). */
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const radius = Math.min(r, w / 2, h / 2);
+  g.beginPath();
+  g.moveTo(x + radius, y);
+  g.lineTo(x + w - radius, y);
+  g.arcTo(x + w, y, x + w, y + radius, radius);
+  g.lineTo(x + w, y + h - radius);
+  g.arcTo(x + w, y + h, x + w - radius, y + h, radius);
+  g.lineTo(x + radius, y + h);
+  g.arcTo(x, y + h, x, y + h - radius, radius);
+  g.lineTo(x, y + radius);
+  g.arcTo(x, y, x + radius, y, radius);
+  g.closePath();
 }

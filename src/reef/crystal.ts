@@ -25,6 +25,9 @@ export interface CrystalFaceInfo {
   readonly center: readonly [number, number, number];
   readonly extentU: number;
   readonly extentV: number;
+  /** Minimum projected u/v of the face's vertices: UV 0..1 maps the face's bounding box. */
+  readonly u0: number;
+  readonly v0: number;
 }
 
 const FACE_INFO_KEY = 'crystalFace';
@@ -248,6 +251,7 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
     info: {
       n: [fn.x, fn.y, fn.z], u: [fu.x, fu.y, fu.z], v: [fv.x, fv.y, fv.z],
       center: [centre.x, centre.y, centre.z], extentU: maxU - minU, extentV: maxV - minV,
+      u0: minU, v0: minV,
     },
   };
 }
@@ -318,6 +322,7 @@ function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShade
       uCrystalIor: { value: 1.54 },
       uCrystalThickness: { value: options.thickness },
       uCrystalTint: { value: options.tint },
+      uCrystalEmissive: { value: new THREE.Color(0.92, 0.96, 1.0) },
     });
     if (options.face) {
       shader.uniforms['uEtchTex'] = { value: mat.userData['crystalMask'] as THREE.Texture };
@@ -334,6 +339,7 @@ uniform float uCrystalTransmission;
 uniform float uCrystalIor;
 uniform float uCrystalThickness;
 uniform vec3 uCrystalTint;
+uniform vec3 uCrystalEmissive;
 ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
 `;
     shader.fragmentShader = head + shader.fragmentShader;
@@ -352,6 +358,7 @@ ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
 
     const mixCode = `
   {
+    ${options.face ? '' : 'float crystalEtch = 0.0;'}
     vec3 crystalV = normalize( cameraPosition - vCW );
     vec3 crystalN = normalize( normal );
     vec3 crystalR = refract( -crystalV, crystalN, 1.0 / uCrystalIor );
@@ -361,6 +368,7 @@ ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
     vec3 crystalTransmitted = texture2D( uCrystalBg, crystalUv ).rgb * uCrystalTint;
     float crystalMix = uCrystalTransmission${options.face ? ' * ( 1.0 - crystalEtch )' : ''};
     outgoingLight = mix( outgoingLight, crystalTransmitted, crystalMix );
+    outgoingLight += crystalEtch * uCrystalEmissive;
   }
 `;
     shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', mixCode + '#include <opaque_fragment>');
@@ -387,10 +395,9 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
     if (split) {
       const aspect = split.info.extentV > 1e-6 ? split.info.extentU / split.info.extentV : 1;
       const fn = new THREE.Vector3(...split.info.n), fu = new THREE.Vector3(...split.info.u), fv = new THREE.Vector3(...split.info.v);
-      const cx = split.info.center[0], cy = split.info.center[1], cz = split.info.center[2];
       const margin = 0.06;
 
-      // Face geometry: planar UVs over the face rectangle, flat normals.
+      // Face geometry: planar UVs over the face's bounding box (0..1 = its visual centre), flat normals.
       const remap = new Int32Array(geo.pos.length / 3).fill(-1);
       const fpos: number[] = [], fuv: number[] = [], fnrm: number[] = [];
       const faceIdx = new Uint32Array(split.faceIdx.length);
@@ -403,8 +410,8 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
           const p = new THREE.Vector3(geo.pos[vi * 3] as number, geo.pos[vi * 3 + 1] as number, geo.pos[vi * 3 + 2] as number);
           fpos.push(p.x, p.y, p.z);
           fnrm.push(fn.x, fn.y, fn.z);
-          const u = (p.dot(fu) - (cx * fu.x + cy * fu.y + cz * fu.z)) / split.info.extentU + 0.5;
-          const v = (p.dot(fv) - (cx * fv.x + cy * fv.y + cz * fv.z)) / split.info.extentV + 0.5;
+          const u = (p.dot(fu) - split.info.u0) / split.info.extentU;
+          const v = (p.dot(fv) - split.info.v0) / split.info.extentV;
           fuv.push(margin + (1 - 2 * margin) * Math.min(1, Math.max(0, u)), margin + (1 - 2 * margin) * Math.min(1, Math.max(0, v)));
         }
         faceIdx[i] = mapped;
