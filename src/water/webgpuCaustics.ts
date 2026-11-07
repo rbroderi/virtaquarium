@@ -26,7 +26,7 @@ const GRID = 288;
 const GRID_MARGIN = 1.5;
 
 /** What the caustic lookup (the light node) reads; set when a WebGpuCaustics is built. */
-interface GpuCausticState {
+export interface GpuCausticState {
   readonly textures: readonly [THREE.Texture, THREE.Texture, THREE.Texture];
   readonly uCauR0: Vec3UniformNode;
   readonly uCauDepth: Vec3UniformNode;
@@ -36,6 +36,11 @@ interface GpuCausticState {
 }
 
 let gpuCausticState: GpuCausticState | null = null;
+
+/** The live caustic lookup state (set when a WebGpuCaustics is built), shared with the shaft pass. */
+export function getGpuCausticState(): GpuCausticState | null {
+  return gpuCausticState;
+}
 
 /** Twice the signed area of the triangle (0, a, b). */
 function area2(a: NodeObject, b: NodeObject): NodeObject {
@@ -65,7 +70,7 @@ export function waveGradNode(t: Tsl): (p: NodeObject) => NodeObject {
 }
 
 /** The caustic factor (vec3, mean ~1) at a world point, sampled from the three simulated depth layers. */
-function causticAtNode(t: Tsl, s: GpuCausticState): (p: NodeObject) => NodeObject {
+function causticAtNode(t: Tsl, s: GpuCausticState, lodBias = 0): (p: NodeObject) => NodeObject {
   const [texA, texB, texC] = s.textures;
   const depth = s.uCauDepth;
   const r0 = s.uCauR0;
@@ -76,7 +81,7 @@ function causticAtNode(t: Tsl, s: GpuCausticState): (p: NodeObject) => NodeObjec
     // surface, and blur by the light source's angular size in proportion to depth (via the mip chain).
     const D = t.max(t.float(0), t.float(SURFACE_Y).sub(p.y));
     const uv = p.xz.sub(r0.xz.mul(D.div(r0.y.negate()))).div(tile);
-    const lod = t.log2(t.max(t.float(1), D.mul(blur).div(tile).mul(t.float(CAUSTIC_RES))));
+    const lod = t.log2(t.max(t.float(1), D.mul(blur).div(tile).mul(t.float(CAUSTIC_RES)))).add(t.float(lodBias));
     const a = t.texture(texA, uv, lod).xyz;
     const b = t.texture(texB, uv, lod).xyz;
     const c = t.texture(texC, uv, lod).xyz;
@@ -88,6 +93,13 @@ function causticAtNode(t: Tsl, s: GpuCausticState): (p: NodeObject) => NodeObjec
     return t.mix(t.vec3(1), k, t.clamp(D.div(depth.x), t.float(0), t.float(1)));
   });
   return (p) => f(p);
+}
+
+/** The caustic lookup the shaft pass uses (lodBias 2, as causticAt(p, 2.0) in the WebGL shaft shader). */
+export function shaftCausticNode(t: Tsl): (p: NodeObject) => NodeObject {
+  const s = gpuCausticState;
+  if (!s) return (p) => t.vec3(1);
+  return causticAtNode(t, s, 2);
 }
 
 /** The sun light node with the caustic irradiance multiplier (registered in app/stage.ts). */

@@ -100,9 +100,15 @@ export class TankLoop {
   step(dt: number): void {
     const { stage, world, jellies, critters, snow, bubbles } = this.parts;
     // Motion blur (water.ts): poses before this step are the previous ones.
-    if (this.parts.motionBlur && stage.water) {
-      stage.water.markPrev(world.fish.map((f) => f.model), stage.camera);
-      stage.water.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
+    if (this.parts.motionBlur) {
+      if (stage.water) {
+        stage.water.markPrev(world.fish.map((f) => f.model), stage.camera);
+        stage.water.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
+      }
+      if (stage.post) {
+        stage.post.track(world.fish.map((f) => f.model));
+        stage.post.blurScale = Math.min(1, SHUTTER / Math.max(dt, MIN_DT));
+      }
     }
     this.time += dt;
     waterUniforms.uTime.value = this.time;
@@ -125,7 +131,11 @@ export class TankLoop {
   present(): void | Promise<void> {
     const { stage, ao } = this.parts;
     if (stage.gpu) {
-      // WebGPU: no water post pass yet, draw the scene straight to the screen (async on the backend).
+      if (stage.post) {
+        stage.post.setSun(stage.sun);
+        return stage.post.render(stage.camera, this.time);
+      }
+      // No post yet: draw the scene straight to the screen (async on the backend).
       return stage.renderer.render(stage.scene, stage.camera);
     }
     const water = stage.water;

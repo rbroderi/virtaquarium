@@ -144,7 +144,7 @@ async function main(): Promise<void> {
   await paintLoading();
   const stage = await new StageBuilder(requireElement('tank', HTMLCanvasElement), options).build();
   // Fish materials are built during stocking, so the backend flag must be set before the world is built.
-  fishRender.finDepth = options.photo;
+  fishRender.finDepth = options.photo && !stage.gpu;
   fishRender.gpu = stage.gpu;
   if (stage.gpu) console.info('WebGPU renderer active (?renderer=webgpu)');
   timer.stage('renderer, environment, caustics');

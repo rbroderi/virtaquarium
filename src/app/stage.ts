@@ -7,7 +7,9 @@ import {
   Caustics, WaterRenderer, type WaterBackdrop,
 } from '../water.js';
 import { underwaterBackgroundNode, underwaterFogNode } from '../water/webgpuMedium.js';
+import { makeGpuEnvironment } from '../water/webgpuBackdrop.js';
 import { causticDirectionalLightNode, WebGpuCaustics } from '../water/webgpuCaustics.js';
+import { WebGpuWaterPost } from '../water/webgpuPost.js';
 import { loadTsl } from '../webgpu/tsl.js';
 import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
 import { setView, panAt } from '../view.js';
@@ -60,6 +62,8 @@ export interface Stage {
   readonly rig: LightRig;
   readonly caustics: Caustics | WebGpuCaustics | null;
   readonly water: WaterRenderer | null;
+  /** The WebGPU scene pass + shaft/motion-blur composite (null on the WebGL path). */
+  readonly post: WebGpuWaterPost | null;
   readonly photo: PhotoCamera | null;
   /** Re-aim the camera's zoomed window for time t (view.ts pan). */
   frameView(t: number): void;
@@ -90,13 +94,17 @@ export class StageBuilder {
     if (!gpu) setSunDirection(sun.position);
     const caustics = gpu ? new WebGpuCaustics(renderer as WebGPURenderer) : new Caustics(renderer as THREE.WebGLRenderer);
     const water = gpu ? null : new WaterRenderer(renderer as THREE.WebGLRenderer);
+    // The shaft + motion-blur composite on the WebGPU path (the WebGL path is WaterRenderer above).
+    const post = gpu
+      ? new WebGpuWaterPost(renderer as WebGPURenderer, scene, camera, { motionBlur: this.options.motionBlur })
+      : null;
     const hemi = new THREE.HemisphereLight(HEMI_SKY, HEMI_GROUND, 1.0);
     scene.add(hemi);
     const rig = new LightRig(scene, sun, this.options.rig);
     const photo = !gpu && this.options.photo
       ? new PhotoCamera(renderer as THREE.WebGLRenderer, { fNumber: this.options.fNumber, iso: PHOTO_ISO, glass: this.options.glass })
       : null;
-    return { canvas: this.canvas, renderer, gpu, scene, fog, backdrop, camera, tankWidth, sun, hemi, rig, caustics, water, photo, frameView };
+    return { canvas: this.canvas, renderer, gpu, scene, fog, backdrop, camera, tankWidth, sun, hemi, rig, caustics, water, post, photo, frameView };
   }
 
   private async renderer(): Promise<{ renderer: RendererLike; gpu: boolean }> {
@@ -159,11 +167,14 @@ export class StageBuilder {
     scene.fog = fog;
     if (gpu) {
       // The backdrop and PMREM environment are ShaderMaterial GLSL; the WebGPU path uses TSL nodes for
-      // the graded open-water backdrop and the per-channel Beer-Lambert fog (see notes/webgpu-plan.md).
+      // the graded open-water backdrop and the per-channel Beer-Lambert fog (see notes/webgpu-plan.md),
+      // and the same Snell's-window radiance field as a PMREM texture for scene.environment.
       scene.background = INSCATTER_DAY.clone();
       const gpuScene = scene as typeof scene & { backgroundNode: unknown; fogNode: unknown };
       gpuScene.backgroundNode = underwaterBackgroundNode();
       gpuScene.fogNode = underwaterFogNode();
+      scene.environment = makeGpuEnvironment(renderer as WebGPURenderer);
+      scene.environmentIntensity = ENVIRONMENT_INTENSITY;
       return { scene, fog, backdrop: null };
     }
     const backdrop = makeWaterBackdrop();
