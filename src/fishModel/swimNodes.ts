@@ -248,6 +248,18 @@ export function makeSwimNodeMaterial(
   const mat = new t.MeshPhysicalNodeMaterial(params as object);
   mat.positionNode = swimPositionNode(uniforms, tissue);
   if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, nodesFor(uniforms).uNight!, tissue.night);
+  // Packed body maps' second channels (swimShader.ts's `packed`): the film thickness is the iridescence
+  // map's G (three's native iridescenceMap already reads its R as the strength), and the cavity under
+  // each scale's free margin is the roughness map's R, applied as ambient occlusion. Roughness itself is
+  // the roughness map's G, which three's standard material already reads.
+  if (tissue?.packed) {
+    const range = params.iridescenceThicknessRange as [number, number] | undefined;
+    if (params.iridescenceMap && range) {
+      mat.iridescenceThicknessNode = t.float(range[1]).sub(t.float(range[0]))
+        .mul(t.texture(params.iridescenceMap).g).add(t.float(range[0]));
+    }
+    if (params.roughnessMap) mat.aoNode = t.texture(params.roughnessMap).r;
+  }
   return mat;
 }
 
