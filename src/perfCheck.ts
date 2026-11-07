@@ -178,10 +178,13 @@ async function lum(aq: AquariumHandle): Promise<void> {
       step(STEP);
       present();
       const w = renderer.domElement.width, h = renderer.domElement.height;
-      gl.readPixels(Math.max(0, (w - RW) >> 1), Math.max(0, (h - RH) >> 1), RW, RH, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      const full = q.get('lumfull') === '1';   // the whole frame, not just the centre patch
+      const fw = full ? w : RW, fh = full ? h : RH;
+      const px = full ? new Uint8Array(fw * fh * 4) : buf;
+      gl.readPixels(full ? 0 : Math.max(0, (w - RW) >> 1), full ? 0 : Math.max(0, (h - RH) >> 1), fw, fh, gl.RGBA, gl.UNSIGNED_BYTE, px);
       let sum = 0;
-      for (let i = 0; i < buf.length; i += 4) sum += 0.2126 * (buf[i] ?? 0) + 0.7152 * (buf[i + 1] ?? 0) + 0.0722 * (buf[i + 2] ?? 0);
-      samples.push({ t, lum: sum / (RW * RH) / 255, light: world.light, exposure: renderer.toneMappingExposure, pending: pendingVariantCount() });
+      for (let i = 0; i < px.length; i += 4) sum += 0.2126 * (px[i] ?? 0) + 0.7152 * (px[i + 1] ?? 0) + 0.0722 * (px[i + 2] ?? 0);
+      samples.push({ t, lum: sum / (fw * fh) / 255, light: world.light, exposure: renderer.toneMappingExposure, pending: pendingVariantCount() });
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -201,5 +204,9 @@ async function lum(aq: AquariumHandle): Promise<void> {
     series: samples,
   };
   console.info('perf lum', JSON.stringify(report));
+  const bins: number[][] = [];
+  for (const s of samples) (bins[Math.floor(s.t * 2)] ??= []).push(s.lum);
+  console.info('lumbins', bins.map((b) => (b.reduce((a, x) => a + x, 0) / b.length).toFixed(3)).join(' '),
+    'min', lums[0]?.toFixed(3), 'max', lums[lums.length - 1]?.toFixed(3), 'n', samples.length);
   await fetch('/__done', { method: 'POST', body: JSON.stringify(report, null, 1) }).catch(() => undefined);
 }
