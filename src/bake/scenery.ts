@@ -9,7 +9,8 @@ import {
 } from '../water.js';
 import { World, type TankBounds } from '../world.js';
 import { mulberry32 } from '../util.js';
-import { isNoHeight } from '../reef/flags.js';
+import { isNoHeight, inBackdropOnlySubtree } from '../reef/flags.js';
+import { renderCrystalBgScene } from '../reef/crystalBg.js';
 import { bakeReefLight, reefLightUniforms } from '../reefLight.js';
 import { windowTopY } from '../view.js';
 import { LIGHTS } from '../rig.js';
@@ -126,7 +127,7 @@ function foregroundToggle(scene: THREE.Scene, reef: Reef): (on: boolean) => void
     const inReef = !!reef.group.getObjectById(o.id);
     const geometry: unknown = o.geometry;
     const sand = isNoHeight(o) && geometry instanceof THREE.BufferGeometry && geometry.type === 'PlaneGeometry';
-    if (!inReef || sand || o.getWorldPosition(new THREE.Vector3()).z < FOREGROUND_Z) hidden.push(o);
+    if (!inReef || sand || inBackdropOnlySubtree(o) || o.getWorldPosition(new THREE.Vector3()).z < FOREGROUND_Z) hidden.push(o);
   });
   return (on) => { for (const o of hidden) o.visible = !on; };
 }
@@ -209,6 +210,7 @@ export async function bakeScenery(renderer: THREE.WebGLRenderer, config: BakeCon
   const key = `${scenery}-${seed}`;
   const out = blankCanvas(strip.w, strip.h);
   const g = readbackContext(out);
+  renderCrystalBgScene(renderer, scene, camera, []);
   waterRenderer.render(scene, camera, sun);
   g.drawImage(renderer.domElement, 0, 0, strip.w, strip.h);
   const backdrop = await saveBackdropTiles(out, strip, key);

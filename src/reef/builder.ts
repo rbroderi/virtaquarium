@@ -19,6 +19,7 @@ import { anemone } from './anemone.js';
 import { bladeGeometry, grassMaterial, tuftedShoot } from './seagrass.js';
 import { setFishPushReactors, type FishPushReactor } from './fishPush.js';
 import { swapCoral } from './scenery.js';
+import { orientCrystal, readCrystalFace, registerCrystalPiece } from './crystal.js';
 import { inNoHeightSubtree, isMesh, isSolid, markNoHeight, markSolid, naturalSize } from './flags.js';
 import {
   ANEMONE_SPOT, BUBBLER, CAVE_STONE_GROWTH, CM_PER_UNIT, DESIGN_WIDTH, FOREGROUND_ROCK_X, GENERATED_ROCK_GROWTH,
@@ -119,6 +120,7 @@ export class ReefBuilder {
     this.addAnemone();
     this.addShellProps();
     this.addGeneratedCorals();
+    this.addCrystal();
     this.hf.splatObject(this.corals);
     this.addPlants();
     this.addCaves();
@@ -525,6 +527,34 @@ export class ReefBuilder {
     // Plating Montipora on the right pile's front; the branching finger Montipora on the left pile.
     put(coral['montipora'], 1.6, 4.9, -0.9, { sink: 0.03 });
     put(coral['digitata'], 1.1, -6.3, -0.2);
+  }
+
+  /**
+   * The crystal rock: a clear glass sign standing on the open sand at the front, its flat cleavage
+   * face turned to the viewer for the etched text. Its own stream leaves the seeded layout as it was.
+   */
+  private addCrystal(): void {
+    const crng = mulberry32(this.seed + STREAM.crystal);
+    const model = this.scenery.props['crystal_rock'];
+    const faceWidth = 1.1 + (crng() - 0.5) * 0.08;   // drawn before the model check, as the other steps do
+    if (!model) return;
+    const info = readCrystalFace(model);
+    if (!info) return;
+    const m = model.clone();
+    m.scale.setScalar(faceWidth / info.extentU);
+    // A small sign on the open sand, left of centre: clear of the starfish (front-right) and the
+    // anemone's tentacles (far right), and inside the always-visible band of the camera pan.
+    const x = -1.6, z = 1.5;
+    const ground = this.restingHeight(x, z, 0.2 * faceWidth);
+    m.position.set(x, 0, z);
+    orientCrystal(m, info, this.view);
+    m.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(m);
+    m.position.y = ground - box.min.y - 0.02 * faceWidth;   // stand on the sand, face to the glass
+    m.traverse((o) => { if (isMesh(o)) o.castShadow = o.receiveShadow = true; });
+    m.name = 'crystal';
+    this.corals.add(m);
+    registerCrystalPiece(m);
   }
 
   // ---------- plants and rubble ----------

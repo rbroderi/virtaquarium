@@ -64,9 +64,10 @@ function resolveStatic(urlPath: string): string | null {
 const PUBLIC_PATHS: readonly RegExp[] = [
   /^$/, /^index\.html$/,
   /^build\//,                                   // the bundle, its chunks and source-hash.json
-  /^models\/[^/]+\.json$/,                      // models.json, scenery.json
+  /^models\/[^/]+\.json$/,                      // models.json, scenery.json, crystal.json
   /^models\/critters\/[^/]+\.glb$/,             // soft-body meshes
   /^models\/(skins|cache)\//,                   // generated caches (absent on a deploy unless baked in)
+  /^brand\/logo\.webp$/,                        // the processed loading-screen logo (not the original)
 ];
 
 /**

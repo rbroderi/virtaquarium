@@ -6,6 +6,7 @@ import { isRecord } from '../util.js';
 import { addParallax } from '../parallax.js';
 import { addSway, firstMaterial, stdMat } from './materials.js';
 import { hasPomHeight, isMesh, naturalSize, setNaturalSize } from './flags.js';
+import { makeCrystal } from './crystal.js';
 import type { Scenery } from './types.js';
 
 export type SceneryKind = 'rock' | 'coral' | 'prop' | 'plant';
@@ -27,6 +28,8 @@ export interface SceneryEntry {
   readonly sway: number;
   /** Plants: 0 (soft Caulerpa) .. 1 (calcified Halimeda). */
   readonly stiff: number | undefined;
+  /** Re-materialled as clear crystal with an etched face (the crystal rock). */
+  readonly glass: boolean;
 }
 
 const MIN_ROUGHNESS = 0.6;
@@ -75,6 +78,7 @@ export function parseSceneryManifest(raw: unknown): [string, SceneryEntry][] {
       grade: parseGrade(cfg['grade']),
       sway: num(cfg['sway']) ?? 0,
       stiff: num(cfg['stiff']),
+      glass: Boolean(cfg['glass']),
     }]);
   }
   return entries;
@@ -209,7 +213,7 @@ export async function loadScenery(base = './models/'): Promise<Scenery> {
       }
       const obj = normaliseScenery(gltf.scene, cfg.kind !== 'rock', cfg.grade);
       obj.name = id;   // GLB scene names repeat ("Scene"), so sort by the manifest id below
-      fileModel(out, id, cfg, obj);
+      fileModel(out, id, cfg, cfg.glass ? makeCrystal(obj) : obj);
     } catch (e) {
       console.warn(`Scenery ${id} failed to load, using procedural`, e);
     }
