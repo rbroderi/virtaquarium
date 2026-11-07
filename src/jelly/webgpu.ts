@@ -143,19 +143,25 @@ function bellFragmentNode(t: Tsl, n: JellyNodes, uInner: number): Node {
   const line = lineFn(t);
   return t.Fn(() => {
     const uv = t.uv() as unknown as NodeObject;
-    const V = t.positionViewDirection as unknown as NodeObject;
+    // World-space view vector (shaders.ts vView = cameraPosition - w): the normal is world-space too.
+    const V = t.cameraPosition.sub(t.positionWorld).normalize() as unknown as NodeObject;
     const N = t.normalLocal.transformDirection(t.modelWorldMatrix).normalize() as unknown as NodeObject;
     const dist = t.length(t.positionView) as unknown as NodeObject;
     const s = uv.y, a = uv.x;
-    const f = t.float(1).sub(N.dot(V).abs()).pow(t.float(2.2));
+    // pow() of a negative base is NaN in WGSL; |N.V| can exceed 1 by an ulp where the dome faces the
+    // eye, which painted the whole subumbrella black under additive blending.
+    const f = t.float(1).sub(N.dot(V).abs()).clamp(t.float(0), t.float(1)).pow(t.float(2.2));
     if (uInner === 1) {
       const col = n.uTint.mul(t.float(0.35).mul(f).add(t.float(0.12).mul(throughLight(V)).mul(t.float(1).sub(s))));
       return t.vec4(waterFade(col, dist).mul(n.uLight), 1);
     }
-    // Rhopalia: bright points in each notch, just inside the margin.
+    // Rhopalia: bright points in each notch, just inside the margin. Never use pow() to square a
+    // signed value here: WGSL pow(negative, 2.0) is NaN, which under additive blending paints the
+    // whole bell black (s - 0.965 is negative over almost all of it).
     const qn = t.fract(a.mul(t.float(8)));
-    const rho = t.exp(t.min(qn, t.float(1).sub(qn)).div(t.float(0.012)).pow(2).negate())
-      .mul(t.exp(s.sub(t.float(0.965)).div(t.float(0.012)).pow(2).negate()));
+    const qnIn = t.min(qn, t.float(1).sub(qn)).div(t.float(0.012));
+    const sOut = s.sub(t.float(0.965)).div(t.float(0.012));
+    const rho = t.exp(qnIn.mul(qnIn).negate()).mul(t.exp(sOut.mul(sOut).negate()));
     // Radial canals and the ring canal.
     const canal = line(a.mul(t.float(16)), t.float(0.06)).mul(t.smoothstep(t.float(0.15), t.float(0.3), s))
       .add(line(a.mul(t.float(32)).add(t.float(0.5)), t.float(0.05)).mul(t.smoothstep(t.float(0.55), t.float(0.8), s)).mul(t.float(0.8)));
@@ -253,7 +259,7 @@ function armFragmentNode(t: Tsl, n: JellyNodes): Node {
     const s = uv.y, x = uv.x.mul(t.float(2)).sub(t.float(1));
     const vEdge = x.abs();
     const dist = t.length(t.positionView) as unknown as NodeObject;
-    const V = t.positionViewDirection as unknown as NodeObject;
+    const V = t.cameraPosition.sub(t.positionWorld).normalize() as unknown as NodeObject;
     const frill = t.smoothstep(t.float(0.7), t.float(1), vEdge).mul(t.float(0.7).add(t.float(0.3).mul(t.sin(s.mul(t.float(140))))));
     const col = n.uTint.mul(t.float(0.05).add(t.float(0.26).mul(frill)).add(t.float(0.08).mul(throughLight(V))))
       .mul(t.float(1).sub(t.float(0.6).mul(s)));
@@ -295,7 +301,9 @@ export function makeGpuJellyBackdrop(t: Tsl): THREE.Mesh<THREE.SphereGeometry, I
   });
   const mat = new t.NodeMaterial();
   mat.fragmentNode = t.Fn(() => {
-    const d = t.cameraPosition.sub(t.positionWorld).normalize() as unknown as NodeObject;
+    // d points from the eye to the dome (shaders.ts: normalize(vW - cameraPosition)), so the glow sits
+    // behind and above the tank rather than mirrored and below.
+    const d = t.positionWorld.sub(t.cameraPosition).normalize() as unknown as NodeObject;
     const glow = t.exp(t.length(t.vec2(d.x.mul(t.float(1.1)), d.y.sub(t.float(0.12)))).div(t.float(0.42)).pow(2).negate());
     const halo = t.exp(t.length(t.vec2(d.x.mul(t.float(0.8)), d.y.sub(t.float(0.05)))).div(t.float(0.9)).pow(2).negate());
     const col = t.vec3(0.006, 0.13, 0.75).mul(glow).add(t.vec3(0, 0.025, 0.16).mul(halo)).add(t.vec3(0, 0.003, 0.016));
