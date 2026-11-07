@@ -11,7 +11,9 @@
 // compared over time without opening the pictures.
 import * as THREE from 'three';
 import type { AquariumHandle } from './app/handle.js';
+import type { Fish } from './fish.js';
 import { context2d } from './util.js';
+import { paintPendingVariants } from './fishModel.js';
 import { canvasToBlob, postDone, saveFile, CHECK_OUT_DIR } from './checks/report.js';
 
 const DT = 1 / 30;
@@ -23,6 +25,14 @@ const WORM_MIN_Z = -0.5;
 const MEASURE_DOWNSCALE = 8;
 const LUMA = [0.2126, 0.7152, 0.0722] as const;
 const STATS_DIGITS = 3;
+/** How many fish of one species the variant strip shows side by side (one per distinct variant). */
+const VARIANTS_COUNT = 6;
+/** Cell size (px) of each fish in the variant strip. */
+const VARIANT_CELL_PX = 320;
+/** Crop fraction of frame height for each variant cell (tight: one fish nearly fills its cell). */
+const VARIANT_CROP_FRACTION = 0.09;
+/** Seconds the tank runs before the variant strip is captured (fish settle into a natural pose). */
+const VARIANT_SETTLE_S = 5;
 
 interface FrameStats { t: number; lum: number; sat: number }
 
@@ -36,9 +46,16 @@ export async function main(aq: AquariumHandle): Promise<void> {
   if (q.has('light')) aq.setLight(Number(q.get('light')));   // e.g. 0.35: dusk
   if (q.has('hour')) {
     const hour = Number(q.get('hour'));
-    if (Number.isFinite(hour)) aq.daylight.jumpTo(hour);   // e.g. 19: golden dusk with the real sun colour
+    if (Number.isFinite(hour)) {
+      aq.daylight.jumpTo(hour);   // e.g. 19: golden dusk with the real sun colour
+      // Jump the light level too: the loop eases the level towards the clock over ~30 s, so an early
+      // frame would still be mid-transition. An explicit --light/--night keeps its override.
+      if (!q.has('light') && q.get('night') !== '1') aq.setLight(aq.daylight.level());
+    }
   }
   aq.fitCanvas();
+  const variantSpeciesId = q.get('variants');
+  if (variantSpeciesId) return variants(aq, variantSpeciesId);
   if (q.get('series')) return series(aq, Number(q.get('series')), Number(q.get('dt') || DT));
   const canvas = renderer.domElement, files: string[] = [], stats: FrameStats[] = [];
   let t = 0;
@@ -79,16 +96,59 @@ function closeUpTarget(aq: AquariumHandle, what: string): { pos: THREE.Vector3; 
   return { pos: box.getCenter(new THREE.Vector3()).setZ(box.max.z), worm: false };
 }
 
+/** A square crop of the rendered frame centred on a world point, scaled to `size` px. */
+function cropSquare(aq: AquariumHandle, pos: THREE.Vector3, canvas: HTMLCanvasElement, size: number, fraction: number): HTMLCanvasElement {
+  const v = pos.clone().project(aq.camera), W = canvas.width, H = canvas.height;
+  const s = Math.round(H * fraction);
+  const x = Math.round(((v.x + 1) / 2) * W - s / 2), y = Math.round(((1 - v.y) / 2) * H - s / 2);
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  context2d(c).drawImage(canvas, Math.max(0, Math.min(W - s, x)), Math.max(0, Math.min(H - s, y)), s, s, 0, 0, size, size);
+  return c;
+}
+
 function closeUp(aq: AquariumHandle, what: string, canvas: HTMLCanvasElement): HTMLCanvasElement | null {
   const target = closeUpTarget(aq, what);
   if (!target) return null;
-  const v = target.pos.clone().project(aq.camera), W = canvas.width, H = canvas.height;
-  const s = Math.round(H * (target.worm ? WORM_CLOSE_UP_FRACTION : CLOSE_UP_FRACTION));
-  const x = Math.round(((v.x + 1) / 2) * W - s / 2), y = Math.round(((1 - v.y) / 2) * H - s / 2);
-  const c = document.createElement('canvas');
-  c.width = c.height = CLOSE_UP_PX;
-  context2d(c).drawImage(canvas, Math.max(0, Math.min(W - s, x)), Math.max(0, Math.min(H - s, y)), s, s, 0, 0, CLOSE_UP_PX, CLOSE_UP_PX);
-  return c;
+  return cropSquare(aq, target.pos, canvas, CLOSE_UP_PX, target.worm ? WORM_CLOSE_UP_FRACTION : CLOSE_UP_FRACTION);
+}
+
+/** A row of close-ups of one species: each distinct variant first, then further fish up to VARIANTS_COUNT. */
+function variantStrip(aq: AquariumHandle, species: string, canvas: HTMLCanvasElement): HTMLCanvasElement | null {
+  const seen = new Set<number>(), fish: Fish[] = [];
+  for (const f of aq.world.fish) if (f.sp.id === species && !seen.has(f.variant)) { seen.add(f.variant); fish.push(f); }
+  for (const f of aq.world.fish) {
+    if (fish.length >= VARIANTS_COUNT) break;
+    if (f.sp.id === species && !fish.includes(f)) fish.push(f);
+  }
+  const chosen = fish.slice(0, VARIANTS_COUNT);
+  if (!chosen.length) return null;
+  const out = document.createElement('canvas');
+  out.width = VARIANT_CELL_PX * chosen.length;
+  out.height = VARIANT_CELL_PX;
+  const g = context2d(out);
+  chosen.forEach((f, i) => g.drawImage(cropSquare(aq, f.pos, canvas, VARIANT_CELL_PX, VARIANT_CROP_FRACTION), i * VARIANT_CELL_PX, 0));
+  return out;
+}
+
+/** ?variants=<species>: one side-by-side strip of that shoaling species' individuals, out/look-variants.png. */
+async function variants(aq: AquariumHandle, species: string): Promise<void> {
+  const canvas = aq.renderer.domElement;
+  for (let t = 0; t < VARIANT_SETTLE_S; t += DT) aq.step(DT);
+  const paintStart = performance.now();
+  paintPendingVariants();   // a check steps the tank itself, so paint and swap any variant still pending
+  const swapMs = Math.round(performance.now() - paintStart);
+  aq.present();
+  const strip = variantStrip(aq, species, canvas);
+  if (!strip) {
+    console.log('look check variants', JSON.stringify({ error: `no fish of species ${species}` }));
+    await postDone(JSON.stringify({ error: `no fish of species ${species}` }));
+    return;
+  }
+  const path = `${CHECK_OUT_DIR}look-variants.png`;
+  await saveFile(path, await canvasToBlob(strip));
+  console.log('look check variants', JSON.stringify({ file: path, fish: strip.width / VARIANT_CELL_PX, swapMs }));
+  await postDone(JSON.stringify({ files: [path], stats: [] }));
 }
 
 /** Mean luminance and HSV saturation of the frame (0..1), from a 1/8-size copy. */

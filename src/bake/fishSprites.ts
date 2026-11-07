@@ -2,7 +2,7 @@
 // viewing angle holding that angle's swim cycle, so the Roku can load and unload angles independently
 // under its texture budget.
 import * as THREE from 'three';
-import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, type FishModel } from '../fishModel.js';
+import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, bakeVariant, type FishModel } from '../fishModel.js';
 import { installUnderwaterMedium, INSCATTER_DAY, makeEnvironment } from '../water.js';
 import { windowTopY } from '../view.js';
 import { LIGHTS } from '../rig.js';
@@ -116,7 +116,7 @@ async function bakeAngle(
 export async function bakeFish(renderer: THREE.WebGLRenderer, config: BakeConfig, sp: Species, fishScene: FishScene): Promise<FishEntry> {
   const { scene, fishY, eyeZ } = fishScene;
   const px = config.pxPerUnit;
-  const model = buildFishModel(sp);
+  const model = buildFishModel(sp, { variant: bakeVariant(0) });
   model.scale.setScalar(sp.size);
   model.position.set(0, fishY, 0);
   scene.add(model);

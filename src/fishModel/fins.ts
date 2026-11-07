@@ -33,6 +33,8 @@ const BAND_OVERHANG_SPAN = 1.15;
 const RAY_THICKNESS_SPREAD = 0.5;
 const RAY_BOW = 0.08;
 const BRANCH_BOW = 0.04;
+/** Each ray's relief height in the normal map varies by +- this fraction, independent of its paint. */
+const FIN_RAY_RELIEF_SPREAD = 0.35;
 /** Points along a drawn ray curve. */
 const RAY_CURVE_POINTS = 7;
 /** The pigmented margin's width varies by up to this fraction, about once per this length (TL). */
@@ -325,30 +327,31 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
       const dx = b[0] - a[0], dy = b[1] - a[1], o = bow * Math.sin(Math.PI * s);
       return [a[0] + dx * s - dy * o, a[1] + dy * s + dx * o];
     };
-    const line = (P: (s: number) => P2, s0: number, s1: number, w: number, col: string): void => {
+    const line = (P: (s: number) => P2, s0: number, s1: number, w: number, col: string, relief = 1): void => {
       const pts = Array.from({ length: RAY_CURVE_POINTS }, (_, k) => P(lerp(s0, s1, k / (RAY_CURVE_POINTS - 1))));
       g.strokeStyle = col; g.lineWidth = w; g.beginPath(); for (const p of pts) g.lineTo(p[0], p[1]); g.stroke();
       if (spec.solid) return;   // a moray's skin-covered fin fold: smooth
-      hg.lineWidth = w * 1.3; hg.globalAlpha = Math.min(1, g.globalAlpha * 1.4); hg.setLineDash(g.getLineDash());
+      hg.lineWidth = w * 1.3; hg.globalAlpha = Math.min(1, g.globalAlpha * 1.4) * relief; hg.setLineDash(g.getLineDash());
       hg.beginPath(); for (const p of pts) hg.lineTo(p[0], p[1]); hg.stroke();
     };
     for (let i = 0; i <= n; i++) {
       // Each ray its own thickness (~±25%) and bow (up to ~4% of its length either way).
       const t = i / n, [a, b] = rays(t), wk = 1 + RAY_THICKNESS_SPREAD * organicWarp * (rng() - 0.5);
       const P = bowed(a, b, RAY_BOW * organicWarp * (rng() - 0.5));
+      const rk = 1 + FIN_RAY_RELIEF_SPREAD * organicWarp * (rng() - 0.5);
       if (i < spines) {
         g.setLineDash([]);
-        line(P, 0, 1, 0.0045 * wk, rayCol);
+        line(P, 0, 1, 0.0045 * wk, rayCol, rk);
         continue;
       }
       g.setLineDash([0.035, 0.0012]);   // soft-ray joints
       const simple = mer.simpleEnds && (i === 0 || i === n), sm = simple ? 1 : 0.55;
       g.globalAlpha = 0.35;   // rays crowd together at the base; they read fainter there
-      line(P, 0, 0.2, 0.0026 * wk, rayCol);
+      line(P, 0, 0.2, 0.0026 * wk, rayCol, rk);
       g.globalAlpha = 1;
-      line(P, 0.2, sm, 0.0026 * wk, rayCol);
+      line(P, 0.2, sm, 0.0026 * wk, rayCol, rk);
       if (!simple) {
-        for (const s of [-1, 1]) line(bowed(P(sm), rays(clamp(t + (s * 0.22) / n, 0, 1))[1], BRANCH_BOW * organicWarp * (rng() - 0.5)), 0, 1, 0.0018 * wk, rayCol);
+        for (const s of [-1, 1]) line(bowed(P(sm), rays(clamp(t + (s * 0.22) / n, 0, 1))[1], BRANCH_BOW * organicWarp * (rng() - 0.5)), 0, 1, 0.0018 * wk, rayCol, rk);
       }
     }
     g.setLineDash([]); hg.setLineDash([]); hg.globalAlpha = 1;

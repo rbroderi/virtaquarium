@@ -63,9 +63,16 @@ export function skinKey(sp: Species): string {
 class SkinCache {
   private readonly hits = new Map<string, SkinCacheHit>();
   private saveBase: string | null = null;
+  /** Chain of saves in flight (headless checks wait for it so nothing is dropped on exit). */
+  private current: Promise<void> = Promise.resolve();
 
   get(id: string): SkinCacheHit | undefined {
     return this.hits.get(id);
+  }
+
+  /** Resolves when every skin save issued so far has finished (at once when none). */
+  get pending(): Promise<void> {
+    return this.current;
   }
 
   async load(species: readonly Species[], base: string): Promise<void> {
@@ -96,11 +103,15 @@ class SkinCache {
     if (!base) return;
     const post = (path: string, body: BodyInit | null): Promise<unknown> =>
       fetch(`/__save?path=${base}${path}`, { method: 'POST', body }).catch(() => undefined);
-    void Promise.all(SKIN_MAPS.map((n) => new Promise<Blob | null>((ok) => canvases[n].toBlob(ok, 'image/png')).then((b) => post(`${sp.id}-${n}.png`, b))))
-      .then(() => post(`${sp.id}.json`, JSON.stringify({ key })));   // last, so a half-written set never matches
+    const done = Promise.all(SKIN_MAPS.map((n) => new Promise<Blob | null>((ok) => canvases[n].toBlob(ok, 'image/png')).then((b) => post(`${sp.id}-${n}.png`, b))))
+      .then(() => post(`${sp.id}.json`, JSON.stringify({ key })))   // last, so a half-written set never matches
+      .then(() => undefined);
+    this.current = this.current.then(() => done);
   }
 }
 
 export const skinCache = new SkinCache();
+
+export const pendingSkinSave = (): Promise<void> => skinCache.pending;
 
 export const loadSkinCache = (species: readonly Species[], base = './models/skins/'): Promise<void> => skinCache.load(species, base);

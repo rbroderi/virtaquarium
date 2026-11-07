@@ -13,6 +13,7 @@ import { eyeGeometry, paintEye, paintEyeRing } from './eye.js';
 import { bodyGeometry } from './bodyGeometry.js';
 import { detailFor, type SkinDetail } from './detail.js';
 import { skinCache, skinKey } from './skinCache.js';
+import { variantSpecies } from './variant.js';
 
 /** The painted canvases a species' textures were made from (the Roku bake and lab read them). */
 export interface SpeciesCanvases { skin: TexImage; fins: HTMLCanvasElement; pect: HTMLCanvasElement }
@@ -80,43 +81,48 @@ function mergedTubes(list: TubeSpec[]): THREE.BufferGeometry | null {
 
 const cache = new Map<string, SpeciesAssets>();
 
-export function speciesAssets(sp: Species): SpeciesAssets {
-  const cached = cache.get(sp.id);
+export function speciesAssets(sp: Species, variant = 0): SpeciesAssets {
+  const cacheKey = `${sp.id}:${variant}`;
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
-  const prof = makeProfile(sp.body);
-  const hit = skinCache.get(sp.id), key = hit ? hit.key : skinKey(sp);
-  const fins = paintFins(sp, prof, !!hit);
+  const vsp = variantSpecies(sp, variant);
+  const prof = makeProfile(vsp.body);
+  // Only variant 0 reads/writes the saved skin cache (its keys and files are unchanged); other variants
+  // are painted live and share textures through this module's in-memory cache.
+  const hit = variant === 0 ? skinCache.get(sp.id) : undefined;
+  const key = hit ? hit.key : variant === 0 ? skinKey(vsp) : '';
+  const fins = paintFins(vsp, prof, !!hit);
   let skin: Record<'map' | 'normal' | 'irid' | 'cr', TexImage>;
   if (hit) {
     skin = { map: hit.img.skin, normal: hit.img.normal, irid: hit.img.irid, cr: hit.img.cr };
     fins.normal = hit.img.finNormal; fins.data = hit.img.finData;
   } else {
-    const painted = paintSkin(sp, prof);   // painted live: every map is a canvas
+    const painted = paintSkin(vsp, prof);   // painted live: every map is a canvas
     skin = painted;
-    if (fins.normal instanceof HTMLCanvasElement && fins.data instanceof HTMLCanvasElement) {
-      skinCache.save(sp, key, { skin: painted.map, normal: painted.normal, irid: painted.irid, cr: painted.cr, finNormal: fins.normal, finData: fins.data });
+    if (variant === 0 && fins.normal instanceof HTMLCanvasElement && fins.data instanceof HTMLCanvasElement) {
+      skinCache.save(vsp, key, { skin: painted.map, normal: painted.normal, irid: painted.irid, cr: painted.cr, finNormal: fins.normal, finData: fins.data });
     }
   }
   const finNormal = fins.normal, finData = fins.data;
   if (!finNormal || !finData) throw new Error(`${sp.id}: fin relief maps missing`);
   const avg = meanColour(skin.map);
-  const pect = sp.pectoral ? paintPectoral(sp) : makeCanvas(4, 4);
-  const eye = paintEye(sp);
+  const pect = vsp.pectoral ? paintPectoral(vsp) : makeCanvas(4, 4);
+  const eye = paintEye(vsp);
   const finGeo = mergeGeometries(fins.meshes.flatMap((m) => {
     const geo = finMesh(m, fins);
     return m.xforms ? m.xforms.map((x) => geo.clone().applyMatrix4(x)) : [geo];
   }));
-  const pectGeo = sp.pectoral ? pectoralGeometry(sp) : null;
+  const pectGeo = vsp.pectoral ? pectoralGeometry(vsp) : null;
   const assets: SpeciesAssets = {
     prof,
-    bodyGeo: bodyGeometry(prof, sp),
+    bodyGeo: bodyGeometry(prof, vsp),
     finGeo, pectGeo,
-    tubeGeo: mergedTubes([...fins.tubes, ...appendageTubes(sp, prof)]), pectTubeGeo: mergedTubes(sp.pectoral ? pectoralTubes(sp) : []),
-    skinTex: texture(skin.map), normalTex: texture(skin.normal, false), iridTex: texture(skin.irid, false), crTex: texture(skin.cr, false), skinAvg: avg, detail: detailFor(sp, prof),
-    eyeRingTex: texture(paintEyeRing(sp), false), finTex: texture(fins.canvas), finNormalTex: texture(finNormal, false), finDataTex: texture(finData, false), pectTex: texture(pect), eyeTex: texture(eye),
-    eyeGeos: [1, -1].map((side) => eyeGeometry(prof, sp, side)),
+    tubeGeo: mergedTubes([...fins.tubes, ...appendageTubes(vsp, prof)]), pectTubeGeo: mergedTubes(vsp.pectoral ? pectoralTubes(vsp) : []),
+    skinTex: texture(skin.map), normalTex: texture(skin.normal, false), iridTex: texture(skin.irid, false), crTex: texture(skin.cr, false), skinAvg: avg, detail: detailFor(vsp, prof),
+    eyeRingTex: texture(paintEyeRing(vsp), false), finTex: texture(fins.canvas), finNormalTex: texture(finNormal, false), finDataTex: texture(finData, false), pectTex: texture(pect), eyeTex: texture(eye),
+    eyeGeos: [1, -1].map((side) => eyeGeometry(prof, vsp, side)),
     canvases: { skin: skin.map, fins: fins.canvas, pect },
   };
-  cache.set(sp.id, assets);
+  cache.set(cacheKey, assets);
   return assets;
 }
