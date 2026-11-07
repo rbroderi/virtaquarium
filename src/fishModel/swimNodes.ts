@@ -1,18 +1,21 @@
 // WebGPU (TSL) counterparts of the fish swim material. The WebGL path stays in swimShader.ts; these
 // node materials only exist so fish swim under WebGPURenderer, which does not run onBeforeCompile GLSL.
 //
-// Scope: the body wave / tail bend / median-fin flutter vertex deformation, plus the night/stress
-// colour patch. Not ported yet (documented in notes/webgpu-plan.md): the moray path (uPathOn), tissue
-// light transport, jaw/gape, erectile spines, pectoral ray bending and ripple, packed-map second
-// channels, specular AA and the HDR clamp. Normals are left geometric, so lighting does not quite
-// follow the bend of the caudal blade.
+// Ported: the whole vertex deformation from SWIM_GLSL's begin_vertex branch (body wave / tail bend /
+// median-fin flutter and fold, jaw shear, erectile spines, pectoral ray bending and ripple, the moray
+// path) plus the night/stress colour patch. Not ported yet (documented in notes/webgpu-plan.md):
+// bend-corrected normals (left geometric), tissue light transport, packed-map second channels, specular
+// AA and the HDR clamp.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
+import type { Node, ShaderNodeObject, UniformArrayNode, UniformNode } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
-import { makeSwimMaterial, type SwimUniforms, type Tissue } from './swimShader.js';
+import { makeSwimMaterial, PATH_POINTS, type SwimUniforms, type Tissue } from './swimShader.js';
 
 type NodeObject = ShaderNodeObject<Node>;
 type FloatUniformNode = ShaderNodeObject<UniformNode<number>>;
+type Vec2UniformNode = ShaderNodeObject<UniformNode<THREE.Vector2>>;
+type Vec3UniformNode = ShaderNodeObject<UniformNode<THREE.Vector3>>;
+type PathArrayNode = ShaderNodeObject<UniformArrayNode>;
 
 /** TSL uniform nodes shared by every material of one fish (they all read the same SwimUniforms). */
 interface SwimNodes {
@@ -23,11 +26,21 @@ interface SwimNodes {
   uBend: FloatUniformNode;
   uFinPhase: FloatUniformNode;
   uXPed: FloatUniformNode;
+  uVent: FloatUniformNode;
   uAnguil: FloatUniformNode;
   uLift: FloatUniformNode;
   uBendTail: FloatUniformNode;
+  uFold: FloatUniformNode;
   uCup: FloatUniformNode;
+  uPathOn: FloatUniformNode;
   uNight: FloatUniformNode | undefined;
+  uGape: FloatUniformNode | undefined;
+  uErect: FloatUniformNode | undefined;
+  uHinge: Vec2UniformNode | undefined;
+  uPBend: Vec3UniformNode | undefined;
+  uPWave: Vec2UniformNode | undefined;
+  uPath: PathArrayNode;
+  uPathUp: PathArrayNode;
 }
 
 const nodesByUniforms = new WeakMap<SwimUniforms, SwimNodes>();
@@ -48,6 +61,26 @@ function scalar(t: Tsl, entry: THREE.IUniform<number>): FloatUniformNode {
   return node;
 }
 
+/** A Vector2 uniform, read by reference (fish.ts mutates its .x/.y in place). */
+function vec2Uniform(t: Tsl, entry: THREE.IUniform<THREE.Vector2>): Vec2UniformNode {
+  return t.uniform(entry.value, 'vec2') as Vec2UniformNode;
+}
+
+/** A Vector3 uniform, read by reference (fish.ts mutates its .x/.y/.z in place). */
+function vec3Uniform(t: Tsl, entry: THREE.IUniform<THREE.Vector3>): Vec3UniformNode {
+  return t.uniform(entry.value, 'vec3') as Vec3UniformNode;
+}
+
+/** The path stations/ups as a uniform array of vec3 (24 elements, indexed by the shader). */
+function vec3Path(t: Tsl, entry: THREE.IUniform<Float32Array>): PathArrayNode {
+  const arr: { readonly x: number; readonly y: number; readonly z: number }[] = Array.from({ length: PATH_POINTS }, (_, i) => ({
+    get x(): number { return entry.value[i * 3] ?? 0; },
+    get y(): number { return entry.value[i * 3 + 1] ?? 0; },
+    get z(): number { return entry.value[i * 3 + 2] ?? 0; },
+  }));
+  return t.uniformArray(arr as unknown as THREE.Vector3[], 'vec3');
+}
+
 function nodesFor(uniforms: SwimUniforms): SwimNodes {
   const known = nodesByUniforms.get(uniforms);
   if (known) return known;
@@ -60,18 +93,28 @@ function nodesFor(uniforms: SwimUniforms): SwimNodes {
     uBend: scalar(t, uniforms.uBend),
     uFinPhase: scalar(t, uniforms.uFinPhase),
     uXPed: scalar(t, uniforms.uXPed),
+    uVent: scalar(t, uniforms.uVent),
     uAnguil: scalar(t, uniforms.uAnguil),
     uLift: scalar(t, uniforms.uLift),
     uBendTail: scalar(t, uniforms.uBendTail),
+    uFold: scalar(t, uniforms.uFold),
     uCup: scalar(t, uniforms.uCup),
+    uPathOn: scalar(t, uniforms.uPathOn),
     uNight: uniforms.uNight ? scalar(t, uniforms.uNight) : undefined,
+    uGape: uniforms.uGape ? scalar(t, uniforms.uGape) : undefined,
+    uErect: uniforms.uErect ? scalar(t, uniforms.uErect) : undefined,
+    uHinge: uniforms.uHinge ? vec2Uniform(t, uniforms.uHinge) : undefined,
+    uPBend: uniforms.uPBend ? vec3Uniform(t, uniforms.uPBend) : undefined,
+    uPWave: uniforms.uPWave ? vec2Uniform(t, uniforms.uPWave) : undefined,
+    uPath: vec3Path(t, uniforms.uPath),
+    uPathUp: vec3Path(t, uniforms.uPathUp),
   };
   nodesByUniforms.set(uniforms, nodes);
   return nodes;
 }
 
-/** The displaced local position for the swim wave (the non-path, non-fin branch of SWIM_GLSL). */
-export function swimPositionNode(uniforms: SwimUniforms): Node {
+/** The displaced local position for the swim wave (SWIM_GLSL's begin_vertex branch). */
+export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null = null): Node {
   const t = tsl();
   const u = nodesFor(uniforms);
 
@@ -100,15 +143,98 @@ export function swimPositionNode(uniforms: SwimUniforms): Node {
     const fin = t.smoothstep(u.uFinH, u.uFinH.add(0.15), t.abs(p.y));
     return u.uFlutter.mul(fin).mul(0.018).mul(t.sin(u.uFinPhase.add(p.x.mul(14)).add(t.abs(p.y).mul(6))));
   };
+  // Pectoral ray bending and the fan ripple (FISH_PECT), in the fin's own space (x out along the rays).
+  const pectFlex = (y: NodeObject, pBend: Vec3UniformNode): NodeObject =>
+    t.float(1).sub(t.float(0.45).mul(t.clamp(y.div(t.float(0.5).mul(pBend.z)), -1, 1)));
+  const PECT_WAVE_K = 2.6;
+  const pectWave = (q: NodeObject, pBend: Vec3UniformNode, pWave: Vec2UniformNode): NodeObject => {
+    const r = t.length(q).div(pBend.z);
+    return pWave.y.mul(pBend.z).mul(r).mul(r)
+      .mul(t.sin(pWave.x.add(t.float(PECT_WAVE_K).mul(t.atan2(q.y, t.max(q.x, 1e-4))))));
+  };
+  // The frame at body position x along the path (swimShader.ts pathFrame): a Catmull-Rom curve.
+  const pathFrame = (x: NodeObject): { P: NodeObject; T: NodeObject; U: NodeObject } => {
+    const f = t.clamp(t.float(0.5).sub(x).mul(23), 0, 22.999);
+    const i = t.int(t.floor(f));
+    const tt = f.sub(t.float(i));
+    const p1 = u.uPath.element(i);
+    const p2 = u.uPath.element(i.add(1));
+    const iPrev = t.max(i.sub(1), 0);
+    const iNext = t.min(i.add(2), PATH_POINTS - 1);
+    const p0 = t.select(t.greaterThan(i, t.int(0)), u.uPath.element(iPrev), p2.mul(2).sub(p1));
+    const p3 = t.select(t.lessThan(i, t.int(PATH_POINTS - 2)), u.uPath.element(iNext), p2.mul(2).sub(p1));
+    const c1 = p2.sub(p0);
+    const c2 = p0.mul(2).sub(p1.mul(5)).add(p2.mul(4)).sub(p3);
+    const c3 = p1.sub(p2).mul(3).add(p3).sub(p0);
+    const P = p1.add(t.float(0.5).mul(tt).mul(c1.add(tt.mul(c2.add(tt.mul(c3))))));
+    const T = t.negate(t.normalize(c1.add(tt.mul(c2.mul(2).add(c3.mul(3).mul(tt)))).add(t.vec3(1e-6, 0, 0))));
+    const up = t.mix(u.uPathUp.element(i), u.uPathUp.element(i.add(1)), tt);
+    const U = t.normalize(up.sub(T.mul(t.dot(up, T))).add(t.vec3(0, 1e-6, 0)));
+    return { P, T, U };
+  };
 
   return t.Fn(() => {
-    const p0 = t.positionLocal;
+    const p0 = t.positionLocal.toVar();
+
+    // Lower jaw shear (FISH_JAW): the chin drops as if turned about the hinge at the mouth corner.
+    if (tissue?.jaw && u.uGape && u.uHinge) {
+      const aJaw = t.attribute('aJaw', 'float');
+      const a = t.negate(u.uGape.mul(aJaw));
+      const dx = p0.x.sub(u.uHinge.x);
+      p0.x.addAssign(dx.mul(t.cos(a).sub(1)));
+      p0.y.addAssign(dx.mul(t.sin(a)));
+    }
+
+    // Erectile spines (FISH_ERECT): each spine (and its web) turns about its base.
+    let erSpine: NodeObject = t.float(0);
+    if (tissue?.erect && u.uErect) {
+      const aErect = t.attribute('aErect', 'vec4');
+      const e = t.min(u.uErect, t.float(2).sub(t.float(1.8).mul(u.uFold)));
+      const a = t.select(t.lessThan(e, 1), aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
+      const c = t.cos(a), s = t.sin(a);
+      const d = p0.xy.sub(aErect.xy);
+      erSpine = t.step(1e-5, t.abs(aErect.z));
+      const nx = aErect.x.add(c.mul(d.x).sub(s.mul(d.y)));
+      const ny = aErect.y.add(s.mul(d.x).add(c.mul(d.y)));
+      p0.x.assign(t.mix(p0.x, nx, erSpine));
+      p0.y.assign(t.mix(p0.y, ny, erSpine));
+    }
+
+    // Pectoral bending along the rays, tips trailing the stroke, plus the fan ripple (FISH_PECT).
+    if (tissue?.pect && u.uPBend && u.uPWave) {
+      const r = t.clamp(p0.x.div(u.uPBend.z), 0, 1);
+      p0.z.addAssign(u.uPBend.x.mul(u.uPBend.z).mul(t.pow(r, 2)).mul(pectFlex(p0.y, u.uPBend)).add(pectWave(p0.xy, u.uPBend, u.uPWave)));
+    }
+
+    // Median fin fold (FISH_FIN): rays above/below the body lower and sweep back at speed.
+    if (tissue?.kind === 'fin') {
+      const over = t.abs(p0.y).sub(u.uFinH);
+      const guard = t.step(0, over).mul(t.step(u.uXPed.add(0.03), p0.x)).mul(t.float(1).sub(erSpine));
+      const k = u.uFold.mul(t.smoothstep(0, 0.05, over));
+      const foldX = p0.x.sub(over.mul(0.35).mul(k));
+      const foldY = t.sign(p0.y).mul(u.uFinH.add(over.mul(t.float(1).sub(t.float(0.55).mul(k)))));
+      p0.x.assign(t.mix(p0.x, foldX, guard));
+      p0.y.assign(t.mix(p0.y, foldY, guard));
+    }
+
     const swH = spineH(p0.x);
     const swT = t.atan(spineH(p0.x.add(0.005)).sub(swH).div(0.005));
-    const swC = t.cos(swT);
-    const swS = t.sin(swT);
-    const swZ = p0.z.add(finFlutter(p0));   // ventScale is skipped (no gill-cover attribute yet)
-    return t.vec3(p0.x.sub(swZ.mul(swS)), p0.y.add(liftY(p0.x)), swH.add(swZ.mul(swC)));
+    const swC = t.cos(swT), swS = t.sin(swT);
+    // Gill-cover flare (FISH_COVER): the rear of the operculum scales its lateral offset.
+    const vent = tissue?.cover
+      ? t.float(1).add(u.uVent.mul(1.5).mul(t.attribute('aCover', 'float')))
+      : t.float(1);
+    const swZ = p0.z.mul(vent).add(finFlutter(p0));
+
+    // Straight body (and non-path fins) versus the moray drawn along its path (uPathOn).
+    const straight = t.vec3(p0.x.sub(swZ.mul(swS)), p0.y.add(liftY(p0.x)), swH.add(swZ.mul(swC)));
+    const frame = pathFrame(p0.x);
+    const xc = t.clamp(p0.x, -0.5, 0.5);
+    const pathP = frame.P
+      .add(frame.T.mul(p0.x.sub(xc)))
+      .add(frame.U.mul(p0.y))
+      .add(t.cross(frame.T, frame.U).mul(swZ));
+    return t.select(t.greaterThan(u.uPathOn, 0.5), pathP, straight);
   })();
 }
 
@@ -120,7 +246,7 @@ export function makeSwimNodeMaterial(
 ): InstanceType<Tsl['MeshPhysicalNodeMaterial']> {
   const t = tsl();
   const mat = new t.MeshPhysicalNodeMaterial(params as object);
-  mat.positionNode = swimPositionNode(uniforms);
+  mat.positionNode = swimPositionNode(uniforms, tissue);
   if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, nodesFor(uniforms).uNight!, tissue.night);
   return mat;
 }
