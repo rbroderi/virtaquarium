@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { addCaustics, waterUniforms } from '../water.js';
 import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishPushBend, fishUniforms } from './fishPush.js';
 import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { installReefLight } from '../reefLight/webgpu.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
 import type { Node } from 'three/webgpu';
 
@@ -14,7 +15,7 @@ const GLSL_DIGITS = 4;
 export function stdMat(params: THREE.MeshStandardMaterialParameters): THREE.Material {
   if (gpuActive()) {
     const t = tsl();
-    return new t.MeshStandardNodeMaterial(params);
+    return installReefLight(new t.MeshStandardNodeMaterial(params));
   }
   return addCaustics(new THREE.MeshStandardMaterial(params));
 }

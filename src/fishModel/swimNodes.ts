@@ -11,6 +11,7 @@ import type {
   LightingModelDirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode, UniformArrayNode, UniformNode,
 } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
+import { installReefLight } from '../reefLight/webgpu.js';
 import { makeSwimMaterial, PATH_POINTS, type SwimUniforms, type Tissue } from './swimShader.js';
 
 type NodeObject = ShaderNodeObject<Node>;
@@ -444,7 +445,7 @@ export function makeSwimNodeMaterial(
     }
     if (params.roughnessMap) mat.aoNode = t.texture(params.roughnessMap).r;
   }
-  return mat;
+  return installReefLight(mat);
 }
 
 /** The night (and stress) colour patch from swimShader.ts, in TSL: chromatophores contract or expand

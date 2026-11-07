@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCaustics, waterUniforms } from './water.js';
 import { addTranslucency } from './softSkin.js';
+import { installReefLight } from './reefLight/webgpu.js';
 import { makeCanvas, context2d, type Rng } from './util.js';
 import { organicPass, type OrganicOptions } from './core/organic.js';
 import type { SolidField } from './rockField.js';
@@ -298,7 +299,7 @@ export class FanWorms {
       map: tex, transparent: true, depthWrite: false, alphaTest: 0.03, side: THREE.DoubleSide, roughness: 0.6,
     });
     mat.positionNode = this.crownPositionNode(uRetract, waterTimeNode());
-    return mat;
+    return installReefLight(mat) as InstanceType<Tsl['MeshStandardNodeMaterial']>;
   }
 
   /** TSL port of the radiole flare/curl/fold in crownMaterial()'s begin_vertex patch. */

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { addCaustics } from '../water.js';
 import { addTranslucency } from '../softSkin.js';
+import { installReefLight } from '../reefLight/webgpu.js';
 import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
 import { gpuActive, tsl, type Tsl } from '../webgpu/tsl.js';
 import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
@@ -95,7 +96,7 @@ export function skin(opts: THREE.MeshStandardMaterialParameters, key: string, ho
       if (n.colorNode) nodeMat.colorNode = n.colorNode;
     }
     if (sss) m = addTranslucency(m, sss);
-    return m;
+    return installReefLight(m);
   }
   const m = new THREE.MeshStandardMaterial(opts);
   if (hook) m.onBeforeCompile = hook;

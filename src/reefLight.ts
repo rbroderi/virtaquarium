@@ -4,7 +4,7 @@
 export { reefLightUniforms, type ReefLightUniforms } from './reefLight/uniforms.js';
 export { REEF_LIGHT_GLSL, REEF_LIGHT_EVAL, REEF_LIGHT_APPLY } from './reefLight/glsl.js';
 export { bakeReefLight } from './reefLight/bake.js';
-export { bakeReefLightCached, pendingReefLightSave } from './reefLight/cache.js';
+export { bakeReefLightCached, bakeReefLightCachedGpu, pendingReefLightSave } from './reefLight/cache.js';
 export { ScreenAO, type ScreenAOOptions } from './reefLight/screenAO.js';
 export type {
   ReefLightTarget, ReefLightSun, ReefLightOptions, ReefLightInfo, ReefLightCacheOptions,

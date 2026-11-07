@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { clamp } from '../util.js';
 import { addSway, stdMat } from './materials.js';
 import { fishPushBend } from './fishPush.js';
+import { installReefLight } from '../reefLight/webgpu.js';
 import { color } from './geometry.js';
 import { gpuActive, tsl, type Tsl } from '../webgpu/tsl.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
@@ -244,5 +245,5 @@ function grassNodeMaterial(): InstanceType<Tsl['MeshStandardNodeMaterial']> {
   const mat = new t.MeshStandardNodeMaterial({ roughness: 0.55, side: THREE.DoubleSide });
   mat.positionNode = grassPositionNode();
   mat.colorNode = grassColorNode();
-  return mat;
+  return installReefLight(mat) as InstanceType<Tsl['MeshStandardNodeMaterial']>;
 }

@@ -255,13 +255,13 @@ function cachePolicy(opts: ReefLightCacheOptions): { base: string; alwaysBake: b
 }
 
 /** bakeReefLight, or its saved result when nothing it reads has changed (see the header comment). */
-export async function bakeReefLightCached(
+async function bakeReefLightCachedPacked(
   renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, cacheOpts: ReefLightCacheOptions,
-): Promise<ReefLightInfo> {
+): Promise<{ info: ReefLightInfo; packed: PackedBake | null }> {
   const policy = cachePolicy(cacheOpts);
   const progress = cacheOpts.onProgress ?? ((): void => undefined);
   const bake = (): Promise<BakeResult> => bakeReefLightPackedAsync(renderer, reef, opts, (done) => progress('bake', done));
-  if (policy.alwaysBake) return (await bake()).info;
+  if (policy.alwaysBake) { const { info, packed } = await bake(); return { info, packed }; }
   progress('cache', 0);
   let key: string | null = null;
   const t0 = performance.now();
@@ -272,7 +272,7 @@ export async function bakeReefLightCached(
       const r = await fetch(`${policy.base}reeflight-${key}.bin`, { cache: 'no-cache' });
       if (r.ok) {
         const info = await loadReefLight(reef, r, key);
-        if (info) { console.info(`Reef light from cache (key ${Math.round(tKey)} ms, total ${Math.round(performance.now() - t0)} ms)`); return info; }
+        if (info) { console.info(`Reef light from cache (key ${Math.round(tKey)} ms, total ${Math.round(performance.now() - t0)} ms)`); return { info, packed: null }; }
       }
     } catch (e) { console.warn('Reef light cache:', errorText(e)); }
   }
@@ -281,6 +281,37 @@ export async function bakeReefLightCached(
   if (key && policy.save) {
     const path = new URL(`${policy.base}reeflight-${key}.bin`, location.href).pathname.replace(/^\//, '');
     pendingSave.set(saveReefLight(renderer, packed, path, key, info).catch((e: unknown) => { console.warn('Reef light cache save:', errorText(e)); }));
+  }
+  return { info, packed };
+}
+
+export async function bakeReefLightCached(
+  renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, cacheOpts: ReefLightCacheOptions,
+): Promise<ReefLightInfo> {
+  return (await bakeReefLightCachedPacked(renderer, reef, opts, cacheOpts)).info;
+}
+
+/** Replaces the baked maps with CPU-backed texture arrays read back from the WebGL bake targets, so a
+ *  WebGPURenderer (which cannot sample the WebGL texture objects) can bind them. The cache path already
+ *  loads CPU halves, so this only runs after a fresh bake. */
+export function cpuFromPacked(renderer: THREE.WebGLRenderer, packed: PackedBake): void {
+  const L = reefLightUniforms;
+  const grid = readLayers(renderer, packed.grid, packed.gw, packed.gh);
+  replaceMap(L.uRLGrid, arrayTexture(grid, packed.gw, packed.gh, packed.grid.depth));
+  if (packed.scr) {
+    const scr = readLayers(renderer, packed.scr, packed.sw, packed.shh);
+    replaceMap(L.uRLScr, arrayTexture(scr, packed.sw, packed.shh, packed.scr.depth));
+  }
+}
+
+/** bakeReefLightCached for the WebGPU display path: the bake runs on a WebGL renderer (the offline
+ *  passes are ShaderMaterials WebGPURenderer never runs) and the maps are re-read as CPU arrays. */
+export async function bakeReefLightCachedGpu(
+  renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: ReefLightOptions, cacheOpts: ReefLightCacheOptions,
+): Promise<ReefLightInfo> {
+  const { info, packed } = await bakeReefLightCachedPacked(renderer, reef, opts, cacheOpts);
+  if (packed) {
+    try { cpuFromPacked(renderer, packed); } catch (e) { console.warn('Reef light CPU read-back:', errorText(e)); }
   }
   return info;
 }

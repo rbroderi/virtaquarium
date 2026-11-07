@@ -9,6 +9,7 @@ import { loadCustomModels, loadSkinCache, fishRender } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { makeGpuSurface } from './water/webgpuSurface.js';
 import { bakeReefLightCached, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
+import type { ReefLightOptions } from './reefLight.js';
 import { JELLY_SPECIES, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES } from './critters.js';
 import { UI } from './ui.js';
@@ -77,17 +78,22 @@ async function buildScenery(stage: Stage, tank: Tank, options: AppOptions, timer
 /** Light the static reef once by ray casting: soft sun shadows, ambient occlusion and bounce light. */
 async function bakeReefLight(stage: Stage, reef: TankScene): Promise<void> {
   stage.rig.apply(1);   // baked at full daylight; the live light level scales it
-  await bakeReefLightCached(stage.renderer as THREE.WebGLRenderer, reef, {
-    sun: { dir: stage.sun.position.clone(), irr: stage.sun.color.clone().multiplyScalar(stage.sun.intensity), cone: SUN_CONE },
-    sky: BAKE_SKY.clone().multiplyScalar(LIGHTS.ambient),
-    ground: stage.hemi.groundColor.clone().multiplyScalar(LIGHTS.ambient),
-    camera: stage.camera,
-  }, {
+  await bakeReefLightCached(stage.renderer as THREE.WebGLRenderer, reef, reefLightRequest(stage), {
     sourceFingerprint: await loadReefLightFingerprint(),
     onProgress: (phase, done) => loading?.progress(done, phase === 'cache'
       ? 'Lighting the reef (from the cache)'
       : `Lighting the reef ${Math.round(done * 100)}% · first start for this layout`),
   });
+}
+
+/** The bake's inputs (the sun/sky/ground at full daylight). */
+function reefLightRequest(stage: Stage): ReefLightOptions {
+  return {
+    sun: { dir: stage.sun.position.clone(), irr: stage.sun.color.clone().multiplyScalar(stage.sun.intensity), cone: SUN_CONE },
+    sky: BAKE_SKY.clone().multiplyScalar(LIGHTS.ambient),
+    ground: stage.hemi.groundColor.clone().multiplyScalar(LIGHTS.ambient),
+    camera: stage.camera,
+  };
 }
 
 function swimBox(stage: Stage): TankBounds {
@@ -138,9 +144,9 @@ async function main(): Promise<void> {
   await paintLoading();
   const stage = await new StageBuilder(requireElement('tank', HTMLCanvasElement), options).build();
   // Fish materials are built during stocking, so the backend flag must be set before the world is built.
-  fishRender.finDepth = options.photo && !stage.gpu;
+  fishRender.finDepth = options.photo;
   fishRender.gpu = stage.gpu;
-  if (stage.gpu) console.info('WebGPU renderer active (?renderer=webgpu; post effects disabled, see notes/webgpu-plan.md)');
+  if (stage.gpu) console.info('WebGPU renderer active (?renderer=webgpu)');
   timer.stage('renderer, environment, caustics');
 
   // Optional Tripo3D / GLB models replace procedural fish species by species.
@@ -149,7 +155,6 @@ async function main(): Promise<void> {
   timer.stage('fish models + skin cache');
 
   const isJellyTank = tank.scenery === 'jelly';
-  if (isJellyTank && stage.gpu) console.warn('Jelly tank shaders are not ported to WebGPU yet; the tank will not render correctly');
   const reef = await buildScenery(stage, tank, options, timer);
   timer.stage('build reef');
 
@@ -201,7 +206,7 @@ async function main(): Promise<void> {
   const daylight = Number.isFinite(lookHour) ? wallClockDaylight() : daylightFor(followClock);
   const loop = new TankLoop({
     stage, world, reef, jellies, critters, snow, bubbles, surface, lighting,
-    daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur && !stage.gpu,
+    daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur,
     afterStep: () => ui.update(),
   });
   bindKeys(loop, daylight, ui, () => toggleReefLight(reef));
