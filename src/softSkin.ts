@@ -8,7 +8,8 @@
 //         a constant or the per-vertex aThin attribute (thin: 'attr').
 // No extra pass and no screen-space history, so the Roku bake renders it as is.
 import type * as THREE from 'three';
-import { gpuActive } from './webgpu/tsl.js';
+import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
+import type { LightingModelDirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode } from 'three/webgpu';
 
 const GLSL_DIGITS = 4;
 const f = (x: number): string => x.toFixed(GLSL_DIGITS);
@@ -29,13 +30,21 @@ export interface TranslucencyOptions {
 const DEFAULTS = { wrap: 0.45, back: 0.6, tint: [1.0, 0.5, 0.4] as TissueTint, thin: 0.2 } as const;
 
 export function addTranslucency<M extends THREE.Material>(mat: M, options: TranslucencyOptions = {}): M {
-  if (gpuActive()) {
-    // The wrap + transmission lobe are per-directional-light lighting terms; the WebGPU standard node
-    // material has no hook for them, so they stay WebGL-only for now (see notes/webgpu-plan.md).
-    return mat;
-  }
   const wrap = options.wrap ?? DEFAULTS.wrap, back = options.back ?? DEFAULTS.back;
   const tint = options.tint ?? DEFAULTS.tint, thin = options.thin ?? DEFAULTS.thin;
+  if (gpuActive()) {
+    // WebGPURenderer never runs onBeforeCompile, so the GLSL below is dead; the same wrap + transmission
+    // lobes go through a per-instance lighting model instead (the node material has no fragment hook).
+    const t = tsl();
+    const nodeMat = mat as unknown as {
+      setupLightingModel: (builder: unknown) => InstanceType<Tsl['PhysicalLightingModel']>;
+      customProgramCacheKey: () => string;
+    };
+    nodeMat.setupLightingModel = () => translucencyLightingModel(t, wrap, back, tint, thin);
+    const prevKey = nodeMat.customProgramCacheKey.bind(mat);
+    nodeMat.customProgramCacheKey = () => prevKey() + `|sss${wrap},${back},${tint.join(',')},${thin}`;
+    return mat;
+  }
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   mat.onBeforeCompile = (shader, renderer) => {
     prev(shader, renderer);
@@ -54,4 +63,32 @@ export function addTranslucency<M extends THREE.Material>(mat: M, options: Trans
   };
   mat.customProgramCacheKey = () => prevKey() + `|sss${wrap},${back},${tint.join(',')},${thin}`;
   return mat;
+}
+
+/** A lighting model that adds the wrap and transmission lobes of addTranslucency to a standard node
+ *  material's direct light (the WebGL GLSL adds them in lights_fragment_end; WebGPURenderer never runs
+ *  that, so the terms live here and run per directional light before the stock Lambert + GGX). */
+function translucencyLightingModel(t: Tsl, wrap: number, back: number, tint: TissueTint, thin: number | 'attr'): InstanceType<Tsl['PhysicalLightingModel']> {
+  const thinNode = thin === 'attr' ? t.attribute('aThin', 'float') : t.float(thin);
+  class TranslucencyLightingModel extends t.PhysicalLightingModel {
+    override direct(input: LightingModelDirectInput, stack: StackNode, builder: NodeBuilder): void {
+      const L = input.lightDirection as unknown as ShaderNodeObject<Node>;
+      const lc = input.lightColor as unknown as ShaderNodeObject<Node>;
+      const N = t.transformedNormalView;
+      const ndl = N.dot(L);
+      // Only the extra light past the terminator is added (the standard Lambert keeps its own N.L).
+      const wrapped = ndl.add(t.float(wrap)).div(t.float(1 + wrap)).max(t.float(0)).sub(ndl.max(t.float(0)));
+      const lobe = t.positionViewDirection.dot(L.negate()).saturate().pow(4)
+        .mul(t.float(0.3).sub(ndl).saturate())
+        .mul(t.float(0.15).add(t.float(0.85).mul(thinNode)));
+      const irr = lc.div(Math.PI);
+      const alb = t.diffuseColor.rgb;
+      (input.reflectedLight.directDiffuse as unknown as ShaderNodeObject<Node>)
+        .addAssign(alb.mul(irr).mul(wrapped));
+      (input.reflectedLight.directDiffuse as unknown as ShaderNodeObject<Node>)
+        .addAssign(alb.mul(irr).mul(lobe).mul(t.float(back)).mul(t.vec3(tint[0], tint[1], tint[2])));
+      super.direct(input, stack, builder);
+    }
+  }
+  return new TranslucencyLightingModel();
 }

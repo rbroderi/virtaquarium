@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { addCaustics } from '../water.js';
 import { addTranslucency } from '../softSkin.js';
 import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
-import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { gpuActive, tsl, type Tsl } from '../webgpu/tsl.js';
+import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
 import type { CritterNeighbour, CritterThreatFish, CritterWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
@@ -44,16 +45,57 @@ export interface TissueOptions {
 
 export type ShaderHook = (shader: THREE.WebGLProgramParametersWithUniforms, renderer: THREE.WebGLRenderer) => void;
 
+/** The TSL counterpart of a ShaderHook: node-material slots a critter can set under WebGPU. */
+export interface SkinNodes {
+  positionNode?: Node | null;
+  normalNode?: Node | null;
+  colorNode?: Node | null;
+}
+
+export type NodeHook = (t: Tsl) => SkinNodes;
+
+const uniformNodes = new WeakMap<THREE.IUniform, ShaderNodeObject<UniformNode<unknown>>>();
+
+/** A scalar uniform bridged to a TSL uniform node exactly once (critters write `u.value = x`). */
+export function scalarNode(t: Tsl, entry: THREE.IUniform<number>): ShaderNodeObject<UniformNode<number>> {
+  const known = uniformNodes.get(entry);
+  if (known) return known as ShaderNodeObject<UniformNode<number>>;
+  const node = t.uniform(entry.value);
+  Object.defineProperty(entry, 'value', {
+    get: (): number => node.value,
+    set: (v: number): void => { node.value = v; },
+    configurable: true,
+    enumerable: true,
+  });
+  uniformNodes.set(entry, node);
+  return node as ShaderNodeObject<UniformNode<number>>;
+}
+
+/** A Vector3 uniform read by reference (critters mutate `u.value.set(...)` in place). */
+export function vec3Node(t: Tsl, entry: THREE.IUniform<THREE.Vector3>): ShaderNodeObject<UniformNode<THREE.Vector3>> {
+  return t.uniform(entry.value, 'vec3') as ShaderNodeObject<UniformNode<THREE.Vector3>>;
+}
+
 /**
  * A reef-lit material with an optional shader hook; key keeps three.js from sharing the program with
  * a plain material of the same parameters. sss: light through the skin for the soft bodies, null for
- * the turtle's horn and scales. Under WebGPU the hook and SSS are WebGL-only, so this is a plain node
- * material (documented in notes/webgpu-plan.md).
+ * the turtle's horn and scales. Under WebGPU the GLSL hook is dead (WebGPURenderer never runs
+ * onBeforeCompile), so the hook's TSL form (nodeHook) takes its place; the SSS goes through a
+ * node-material lighting model (softSkin.ts) so the soft bodies keep their translucent glow.
  */
-export function skin(opts: THREE.MeshStandardMaterialParameters, key: string, hook: ShaderHook | null = null, sss: TissueOptions | null = null): THREE.Material {
+export function skin(opts: THREE.MeshStandardMaterialParameters, key: string, hook: ShaderHook | null = null, sss: TissueOptions | null = null, nodeHook: NodeHook | null = null): THREE.Material {
   if (gpuActive()) {
     const t = tsl();
-    return new t.MeshStandardNodeMaterial(opts);
+    let m: THREE.Material = new t.MeshStandardNodeMaterial(opts);
+    if (nodeHook) {
+      const n = nodeHook(t);
+      const nodeMat = m as unknown as { positionNode: Node | null; normalNode: Node | null; colorNode: Node | null };
+      if (n.positionNode) nodeMat.positionNode = n.positionNode;
+      if (n.normalNode) nodeMat.normalNode = n.normalNode;
+      if (n.colorNode) nodeMat.colorNode = n.colorNode;
+    }
+    if (sss) m = addTranslucency(m, sss);
+    return m;
   }
   const m = new THREE.MeshStandardMaterial(opts);
   if (hook) m.onBeforeCompile = hook;

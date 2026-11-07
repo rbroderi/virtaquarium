@@ -7,7 +7,7 @@ import { addParallax } from '../parallax.js';
 import { addSway, firstMaterial, stdMat } from './materials.js';
 import { hasPomHeight, isMesh, naturalSize, setNaturalSize } from './flags.js';
 import { gpuActive, tsl } from '../webgpu/tsl.js';
-import type { Node } from 'three/webgpu';
+import type { Node, ShaderNodeObject } from 'three/webgpu';
 import type { Scenery } from './types.js';
 
 export type SceneryKind = 'rock' | 'coral' | 'prop' | 'plant';
@@ -102,11 +102,13 @@ function applyGrade(mat: THREE.Material, grade: ColourGrade): void {
   const sat = grade.sat ?? 1, gain = grade.gain ?? 1;
   if (gpuActive()) {
     // The WebGL patch grades material.color * map (after map_fragment, before color_fragment), which is
-    // exactly materialColor in TSL.
+    // exactly materialColor in TSL. Parallax may already have replaced the map with a shifted one via
+    // colorNode, so grade that instead when present (parallax runs first).
     const t = tsl();
-    const c = t.materialColor.rgb;
-    const l = c.dot(t.vec3(0.2126, 0.7152, 0.0722));
-    (mat as unknown as { colorNode: Node | null }).colorNode = t.mix(t.vec3(l), c, t.float(sat)).mul(t.float(gain));
+    const existing = (mat as unknown as { colorNode: Node | null }).colorNode;
+    const c = (existing ?? t.materialColor) as unknown as ShaderNodeObject<Node>;
+    const l = c.rgb.dot(t.vec3(0.2126, 0.7152, 0.0722));
+    (mat as unknown as { colorNode: Node | null }).colorNode = t.mix(t.vec3(l), c.rgb, t.float(sat)).mul(t.float(gain));
     return;
   }
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);

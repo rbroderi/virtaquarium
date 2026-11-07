@@ -13,7 +13,8 @@
 // own UV rate, so differing repeats are fine).
 //   depth: how deep the darkest texel lies below the brightest, in world units (1 unit = 12.5 cm).
 import * as THREE from 'three';
-import { gpuActive } from './webgpu/tsl.js';
+import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
+import type { Node, ShaderNodeObject } from 'three/webgpu';
 
 /** ?pom=0 leaves materials as they were (to compare). Read once, at load. */
 const PARALLAX_DISABLED_BY_URL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pom') === '0';
@@ -119,12 +120,15 @@ function chunksStillMatch(chunks: Readonly<Record<string, string>>): boolean {
 }
 
 export function addParallax<M extends THREE.Material>(mat: M, depth: number, options: ParallaxOptions = {}): M {
-  if (PARALLAX_DISABLED_BY_URL || gpuActive()) {
-    // The POM march shifts every texture lookup (map/bump/normal/roughness) by the found offset; the
-    // standard node material samples its maps internally with no UV hook, so it stays WebGL-only.
+  if (PARALLAX_DISABLED_BY_URL) return mat;
+  const steps = options.steps ?? DEFAULT_STEPS, source = options.source ?? 'bump';
+  if (gpuActive()) {
+    // WebGPURenderer never runs onBeforeCompile, so the chunk rewrites below are dead; instead every
+    // map lookup the standard node material would do is replaced by a shifted copy (map/roughness/
+    // metalness via their *Node slots, normal/bump via the normalNode), all reading one shared pomOff.
+    parallaxNodeMaterial(mat, depth, steps, source);
     return mat;
   }
-  const steps = options.steps ?? DEFAULT_STEPS, source = options.source ?? 'bump';
   const src = HEIGHT_SOURCES[source];
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   mat.onBeforeCompile = (shader, renderer) => {
@@ -141,4 +145,98 @@ export function addParallax<M extends THREE.Material>(mat: M, depth: number, opt
   };
   mat.customProgramCacheKey = () => prevKey() + '-pom' + steps + source;
   return mat;
+}
+
+type NodeObject = ShaderNodeObject<Node>;
+
+/** Calls a TSL Fn once (the type of Fn() doesn't expose the runtime .once(), which caches the call). */
+function once(fn: () => NodeObject): NodeObject {
+  return ((fn as unknown as { once(): () => NodeObject }).once())();
+}
+
+/** The node-material surface the POM port rewrites (the *Node slots and the sampled maps). */
+interface ParallaxNodeMaterial {
+  colorNode: Node | null;
+  roughnessNode: Node | null;
+  metalnessNode: Node | null;
+  normalNode: Node | null;
+  map?: THREE.Texture | null;
+  roughnessMap?: THREE.Texture | null;
+  metalnessMap?: THREE.Texture | null;
+  normalMap?: THREE.Texture | null;
+  bumpMap?: THREE.Texture | null;
+}
+
+/** The march, ported from marchGlsl(): finds where the view ray meets the relief and returns the UV
+ *  offset to the found point (in the height map's UV). Computed once per fragment, shared by every
+ *  shifted lookup. */
+function pomOffNode(t: Tsl, heightTex: THREE.Texture, ch: 'x' | 'a', depth: number, steps: number): NodeObject {
+  const heightAt = (uvNode: NodeObject): NodeObject => {
+    const tex = t.texture(heightTex, uvNode);
+    return t.float(1).sub(ch === 'x' ? tex.x : tex.a);
+  };
+  return once(t.Fn(() => {
+    const uv0 = t.uv();
+    const P = t.positionView, V = t.positionViewDirection;
+    const N = t.normalView.mul(t.faceDirection);
+    const dp1 = P.dFdx(), dp2 = P.dFdy();
+    const du1 = uv0.dFdx(), du2 = uv0.dFdy();
+    const p2 = dp2.cross(N), p1 = N.cross(dp1);
+    const det = dp1.dot(p2);
+    const pxSize = dp1.length().max(dp2.length());
+    const nv0 = N.dot(V).max(0.3);
+    const shiftPx = t.float(depth).mul(V.sub(N.mul(N.dot(V))).length()).div(nv0).div(pxSize.max(1e-6));
+    const fade = t.smoothstep(0.5, 1.5, shiftPx);
+    const pomOff = t.vec2(0).toVar('pomOff');
+    t.If(t.abs(det).greaterThan(1e-12), () => {
+      t.If(fade.greaterThan(0), () => {
+        const gu = p2.mul(du1.x).add(p1.mul(du2.x)).div(det);
+        const gv = p2.mul(du1.y).add(p1.mul(du2.y)).div(det);
+        const across = V.sub(N.mul(N.dot(V))).div(nv0).negate().mul(t.float(depth)).mul(fade);
+        const Sd = t.vec2(across.dot(gu), across.dot(gv));
+        const layer = t.float(0).toVar('pomLayer');
+        const dl = t.float(1).div(t.float(steps));
+        const marchUv = uv0.toVar('pomUv');
+        let h = heightAt(marchUv).toVar('pomH');
+        const prevUv = marchUv.toVar('pomPrevUv');
+        const prevH = h.toVar('pomPrevH');
+        const prevLayer = t.float(0).toVar('pomPrevLayer');
+        t.Loop({ start: 0, end: steps }, () => {
+          t.If(layer.greaterThanEqual(h), () => { t.Break(); });
+          prevUv.assign(marchUv);
+          prevH.assign(h);
+          prevLayer.assign(layer);
+          layer.addAssign(dl);
+          marchUv.assign(uv0.add(Sd.mul(layer)));
+          h.assign(heightAt(marchUv));
+        });
+        const a = layer.sub(h);
+        const b = prevH.sub(prevLayer);
+        const tt = b.div(a.add(b).max(1e-5));
+        pomOff.assign(t.mix(prevUv, marchUv, tt).sub(uv0));
+      });
+    });
+    return pomOff;
+  }));
+}
+/** The POM shift rescaled for a lookup on another UV (pomShift in the GLSL); equal to pomOff when the
+ *  maps share the height map's UV rate. */
+function parallaxNodeMaterial(mat: THREE.Material, depth: number, steps: number, source: HeightSource): void {
+  const t = tsl();
+  const m = mat as unknown as ParallaxNodeMaterial;
+  const heightTex = source === 'bump' ? m.bumpMap : m.normalMap;
+  if (!heightTex) return;
+  const ch: 'x' | 'a' = source === 'bump' ? 'x' : 'a';
+  const pomOff = pomOffNode(t, heightTex, ch, depth, steps);
+  const pomRate = once(t.Fn(() => t.uv().dFdx().length()));
+  const shift = (uvNode: NodeObject): NodeObject => pomOff.mul(uvNode.dFdx().length()).div(pomRate.max(1e-8));
+
+  if (m.map) m.colorNode = t.materialReference('color', 'color').mul(t.texture(m.map, t.uv().add(shift(t.uv()))).rgb);
+  if (m.roughnessMap) m.roughnessNode = t.materialReference('roughness', 'float').mul(t.texture(m.roughnessMap, t.uv().add(shift(t.uv()))).g);
+  if (m.metalnessMap) m.metalnessNode = t.materialReference('metalness', 'float').mul(t.texture(m.metalnessMap, t.uv().add(shift(t.uv()))).b);
+  if (m.normalMap) {
+    m.normalNode = t.normalMap(t.texture(m.normalMap, t.uv().add(shift(t.uv()))), t.materialReference('normalScale', 'vec2'));
+  } else if (m.bumpMap) {
+    m.normalNode = t.bumpMap(t.texture(m.bumpMap, t.uv().add(pomOff)).r, t.materialReference('bumpScale', 'float'));
+  }
 }
