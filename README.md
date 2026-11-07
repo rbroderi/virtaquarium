@@ -8,8 +8,8 @@ a procedurally built reef. Nothing is scripted. Each animal perceives the tank, 
 swims with real biomechanics, and the shoaling, sheltering, cleaning and territorial behaviour of the
 tank comes from those local rules. The water, light and caustics are simulated rather than painted.
 
-Targets: **PC** (three.js / WebGL in any modern browser) and **Roku** (a SceneGraph screensaver that
-plays assets pre-rendered from the PC build; in progress).
+Targets: **PC** (three.js, WebGPU with a WebGL fallback, in any modern browser) and **Roku** (a
+SceneGraph screensaver that plays assets pre-rendered from the PC build; in progress).
 
 ## Quick start
 

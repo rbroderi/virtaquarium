@@ -15,7 +15,7 @@ export const crystalBgUniforms = {
   uCrystalBgProj: { value: new THREE.Matrix4() },
 };
 
-let target: THREE.WebGLRenderTarget | null = null;
+let target: THREE.WebGLRenderTarget | THREE.RenderTarget | null = null;
 const sub = new THREE.PerspectiveCamera(40, 1, 0.1, 120);
 const tmp = { up: new THREE.Vector3(), right: new THREE.Vector3(), forward: new THREE.Vector3(), d: new THREE.Vector3(), c: new THREE.Vector3() };
 
@@ -49,16 +49,24 @@ function frameBox(from: THREE.Vector3, box: THREE.Box3): THREE.Matrix4 {
   return new THREE.Matrix4().multiplyMatrices(sub.projectionMatrix, sub.matrixWorldInverse);
 }
 
+/** Either renderer: the crystal background is a plain setRenderTarget + render on both backends. */
+export type CrystalBgRenderer = THREE.WebGLRenderer & { isWebGPURenderer?: boolean };
+
 /** Renders the crystal's background for the crystal(s) in this scene (found by the builder's name). */
-export function renderCrystalBgScene(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, hide: readonly THREE.Object3D[]): void {
+export function renderCrystalBgScene(renderer: CrystalBgRenderer, scene: THREE.Scene, camera: THREE.Camera, hide: readonly THREE.Object3D[]): void {
   const crystal = scene.getObjectByName('crystal');
   renderCrystalBg(renderer, scene, camera, hide, crystal ? [crystal] : []);
 }
 
 /** Renders the crystal's background and refreshes the shader uniforms; a no-op when no crystal. */
-export function renderCrystalBg(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, hide: readonly THREE.Object3D[], pieces: readonly THREE.Object3D[]): void {
+export function renderCrystalBg(renderer: CrystalBgRenderer, scene: THREE.Scene, camera: THREE.Camera, hide: readonly THREE.Object3D[], pieces: readonly THREE.Object3D[]): void {
   if (!pieces.length) return;
-  if (!target) target = new THREE.WebGLRenderTarget(BG_SIZE, BG_SIZE, { type: THREE.HalfFloatType, depthBuffer: true });
+  if (!target) {
+    // The WebGPU path uses a plain RenderTarget; the WebGL path its WebGLRenderTarget.
+    target = renderer.isWebGPURenderer === true
+      ? new THREE.RenderTarget(BG_SIZE, BG_SIZE, { type: THREE.HalfFloatType, depthBuffer: true })
+      : new THREE.WebGLRenderTarget(BG_SIZE, BG_SIZE, { type: THREE.HalfFloatType, depthBuffer: true });
+  }
   scene.updateMatrixWorld(true);
   const box = new THREE.Box3();
   for (const p of pieces) box.expandByObject(p);
@@ -68,7 +76,7 @@ export function renderCrystalBg(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const saved: [THREE.Object3D, boolean][] = [];
   for (const o of [...pieces, ...hide]) { saved.push([o, o.visible]); o.visible = false; }
   const prev = renderer.getRenderTarget();
-  renderer.setRenderTarget(target);
+  renderer.setRenderTarget(target as THREE.WebGLRenderTarget);
   renderer.render(scene, sub);
   renderer.setRenderTarget(prev);
   for (const [o, v] of saved) o.visible = v;

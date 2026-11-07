@@ -6,7 +6,8 @@
 //   tsx tools/check.ts startup --gpu=1     time each startup stage on the real GPU
 // --reeflight=1 runs the slow reef-light bake first (off by default: minutes in software GL).
 // Several seeds: --seeds=7,42 runs the check once per seed. --keep=1 keeps one browser profile
-// (out/.check-profile) so its GPU shader cache is warm.
+// (out/.check-profile) so its GPU shader cache is warm. The page's renderer is auto (WebGPU when the
+// browser offers it, else WebGL); --renderer=webgl or --renderer=webgpu pins a backend.
 import path from 'node:path';
 import { parseFlags, runHeadless } from './headless.js';
 
@@ -27,8 +28,9 @@ for (const runSeed of (seeds ?? seed ?? DEFAULT_SEED).split(',')) {
     query,
     timeoutMs: TIMEOUT_MS,
     gpu: gpu === '1',
-    // The WebGPU canvas cannot be read back in-page, so the look check asks for a CDP screenshot.
-    shots: name === 'look' && flags['renderer'] === 'webgpu',
+    // The look check captures frames; under WebGPU the canvas cannot be read back in-page, so the
+    // CDP screenshot backend is always attached (the page only uses it when it picked WebGPU).
+    shots: name === 'look',
     ...(keep === '1' ? { keepProfile: path.resolve('out/.check-profile') } : {}),
     echoConsole: true,
     onSaved: (p) => console.log('  wrote', p),

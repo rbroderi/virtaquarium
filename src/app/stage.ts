@@ -123,7 +123,8 @@ export class StageBuilder {
   }
 
   private async renderer(): Promise<{ renderer: RendererLike; gpu: boolean }> {
-    if (this.options.renderer === 'webgpu') {
+    if (this.options.renderer !== 'webgl') {
+      // 'auto' (the default) and 'webgpu' both prefer WebGPU; 'webgl' forces the classic renderer.
       const renderer = await this.webgpuRenderer();
       if (renderer) return { renderer, gpu: true };
     }
