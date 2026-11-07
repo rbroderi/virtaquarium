@@ -61,8 +61,11 @@ export async function loadCustomModels(species: readonly Species[], base = './mo
   } catch { return []; }
   if (!isRecord(manifest)) return [];
   const entries = manifest;
-  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-  const loader = new GLTFLoader();
+  const [{ GLTFLoader }, { MeshoptDecoder }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/libs/meshopt_decoder.module.js'),
+  ]);
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const loaded: string[] = [];
   await Promise.all(species.map(async (sp) => {
     const cfg = parseModelConfig(entries[sp.id]);
@@ -133,6 +136,9 @@ export function buildCustomModel(_sp: Species, model: NormalisedModel): FishMode
 
 // Load one GLB outside models.json (e.g. models/fish/<id>.glb) for side-by-side comparison.
 export async function loadFishModel(url: string, cfg: ModelConfig = {}): Promise<NormalisedModel> {
-  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-  return normaliseModel((await new GLTFLoader().loadAsync(url)).scene, cfg);
+  const [{ GLTFLoader }, { MeshoptDecoder }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/libs/meshopt_decoder.module.js'),
+  ]);
+  return normaliseModel((await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url)).scene, cfg);
 }

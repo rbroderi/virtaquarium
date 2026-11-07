@@ -2,6 +2,7 @@
 // each model to a unit box, and swapping generated corals in for procedural ones.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { isRecord } from '../util.js';
 import { addParallax } from '../parallax.js';
 import { addSway, firstMaterial, stdMat } from './materials.js';
@@ -215,7 +216,7 @@ async function fetchManifest(url: string): Promise<unknown> {
 export async function loadScenery(base = './models/'): Promise<Scenery> {
   const out: MutableScenery = { rocks: [], coral: {}, props: {}, plants: {} };
   const manifest = await fetchManifest(base + 'scenery.json');
-  const loader = new GLTFLoader();
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   await Promise.all(parseSceneryManifest(manifest).map(async ([id, cfg]) => {
     if (cfg.retired) return;
     try {

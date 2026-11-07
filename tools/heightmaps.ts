@@ -20,8 +20,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
 import { NodeIO, type Document, type Material } from '@gltf-transform/core';
-import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { ALL_EXTENSIONS, EXTTextureAVIF } from '@gltf-transform/extensions';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SCENERY_DIR = path.join(ROOT, 'web', 'models', 'scenery');
@@ -114,7 +115,11 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** Writes the parallax height into the normal map's alpha of each textured material; returns how many. */
 export async function addHeight(file: string): Promise<number> {
-  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+  // A served GLB may already be meshopt-compressed when this runs on its own: the read decodes it and
+  // the write re-compresses, so the encoder must be registered too or the write throws.
+  await MeshoptDecoder.ready;
+  await MeshoptEncoder.ready;
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder });
   const doc = await io.read(file);
   let done = 0;
   for (const mat of doc.getRoot().listMaterials()) {
@@ -154,8 +159,10 @@ export async function addHeight(file: string): Promise<number> {
     for (let i = 0; i < FW * FH; i++) {
       rgba[i * 4] = at(rgb, i * 3); rgba[i * 4 + 1] = at(rgb, i * 3 + 1); rgba[i * 4 + 2] = at(rgb, i * 3 + 2); rgba[i * 4 + 3] = at(alphaFull, i);
     }
-    const webp = await sharp(rgba, { raw: { width: FW, height: FH, channels: 4 } }).webp({ quality: 96, alphaQuality: 100 }).toBuffer();
-    tex.setImage(new Uint8Array(webp)).setMimeType('image/webp');
+    // Full-chroma AVIF at high quality: the alpha is relief, so any chroma or detail loss shows as
+    // banding in the parallax. (AVIF has no separate alphaQuality; quality covers the alpha plane.)
+    const avif = await sharp(rgba, { raw: { width: FW, height: FH, channels: 4 } }).avif({ quality: 90, effort: 6, chromaSubsampling: '4:4:4' }).toBuffer();
+    tex.setImage(new Uint8Array(avif)).setMimeType('image/avif');
     mat.setExtras({ ...mat.getExtras(), pomHeight: true });
     let cover = 0;
     for (let i = 0; i < W * H; i++) cover += at(mask, i);
@@ -163,6 +170,9 @@ export async function addHeight(file: string): Promise<number> {
     done++;
   }
   if (done) {
+    // The AVIF images need EXT_texture_avif declared required (optimize-scenery has already added
+    // it; this covers running this tool on its own).
+    doc.createExtension(EXTTextureAVIF).setRequired(true);
     // Through a temporary file: on Windows the server or a browser can hold the GLB open for a moment.
     const tmp = file + '.tmp';
     fs.writeFileSync(tmp, await io.writeBinary(doc));
