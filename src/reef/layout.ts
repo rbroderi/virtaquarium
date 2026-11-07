@@ -13,6 +13,7 @@ export const STREAM = {
   generatedCorals: 21,
   backWallSecondRow: 31,
   caves: 101,
+  crystal: 41,
 } as const;
 
 /** The height field grid: margin beyond the tank's width, z extent, cell size. */

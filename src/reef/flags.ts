@@ -29,6 +29,12 @@ export function inNoHeightSubtree(o: THREE.Object3D): boolean {
   return false;
 }
 
+/** True when the object or any ancestor is baked into the Roku backdrop only (not its foreground). */
+export function inBackdropOnlySubtree(o: THREE.Object3D): boolean {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData['backdropOnly'] === true) return true;
+  return false;
+}
+
 export function setNaturalSize(o: THREE.Object3D, size: THREE.Vector3): void {
   o.userData['natural'] = size;
 }

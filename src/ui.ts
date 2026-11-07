@@ -7,6 +7,8 @@ import { MODES, type Drives, type Personality, type Mode } from './brain.js';
 import { requireElement } from './util.js';
 import { inspectHtml, type Inspectable } from './inspect.js';
 import type { Fish } from './fish.js';
+import { crystalPieces } from './reef/crystal.js';
+import { crystalClickAction, type CrystalSign } from './reef/crystalText.js';
 
 const DRIVE_LABELS: Readonly<Record<keyof Drives, string>> = {
   hunger: 'Hunger', energy: 'Energy', fear: 'Fear', social: 'Social need', boredom: 'Boredom', parasites: 'Parasites',
@@ -43,6 +45,8 @@ export interface UIOptions {
   /** The tank on show, and whether to offer switching to the other one (not during checks). */
   readonly scenery: TankKind;
   readonly switcher: boolean;
+  /** The crystal sign (null when absent, or during checks where clicks are disabled). */
+  readonly crystal: CrystalSign | null;
 }
 
 /** The tanks the switcher offers. */
@@ -80,8 +84,13 @@ export class UI {
   private readonly onFeed: (x: number) => void;
   private readonly scenery: TankKind;
   private readonly switcher: boolean;
+  private readonly crystal: CrystalSign | null;
+  private readonly card: HTMLDivElement;
+  private readonly cardText: HTMLDivElement;
+  private readonly cardHost: HTMLDivElement;
+  private readonly cardGo: HTMLButtonElement;
 
-  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher }: UIOptions) {
+  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher, crystal }: UIOptions) {
     this.scenery = scenery;
     this.switcher = switcher;
     this.world = world;
@@ -89,6 +98,23 @@ export class UI {
     this.camera = camera;
     this.renderer = renderer;
     this.onFeed = onFeed;
+    this.crystal = crystal;
+    this.card = document.createElement('div');
+    this.card.className = 'cc';
+    this.cardText = document.createElement('div');
+    this.cardText.className = 'cc-text';
+    this.cardHost = document.createElement('div');
+    this.cardHost.className = 'cc-host';
+    this.cardGo = document.createElement('button');
+    this.cardGo.className = 'cc-go';
+    this.cardGo.type = 'button';
+    this.card.append(this.cardText, this.cardHost, this.cardGo);
+    document.body.appendChild(this.card);
+    this.cardGo.addEventListener('click', () => this.visitSponsor());
+    document.addEventListener('pointerdown', (e) => {
+      // Close the card on a click anywhere outside it; canvas clicks are decided in click().
+      if (this.card.classList.contains('open') && !this.card.contains(e.target as Node) && e.target !== this.renderer.domElement) this.closeCard();
+    });
     setTimeout(() => this.hint.classList.add('fade'), HINT_FADE_MS);
     for (const f of world.fish) {
       const el = document.createElement('div');
@@ -97,6 +123,7 @@ export class UI {
       this.tagOf.set(f, el);
     }
     renderer.domElement.addEventListener('pointerdown', (e) => this.click(e));
+    renderer.domElement.addEventListener('pointermove', (e) => this.hover(e));
     window.addEventListener('keydown', (e) => this.key(e));
     this.hideIdleCursor();
     if (switcher) this.showSwitcher();
@@ -123,7 +150,7 @@ export class UI {
     }
     if (k === 'h' || k === '?') this.help.classList.toggle('show');
     if (k === 'f') this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD);
-    if (k === 'escape') this.select(null);
+    if (k === 'escape') { this.select(null); this.closeCard(); }
     if (k === 't' && this.switcher) switchTank(this.scenery === 'jelly' ? 'reef' : 'jelly');
     if (k === 'tab') {
       e.preventDefault();
@@ -175,12 +202,56 @@ export class UI {
     }
     if (best) {
       this.select(best);
+      this.closeCard();
       return;
     }
+    // A clickable crystal message beats feeding: the first click opens the sponsor card.
+    const action = crystalClickAction(false, this.crystalHit(), this.crystal?.hasUrl() ?? false);
+    if (action === 'card') {
+      this.openCard(e);
+      return;
+    }
+    this.closeCard();
     // Otherwise sprinkle food where the click ray meets the middle of the tank.
     const { origin, direction } = this.ray.ray;
     const t = (0 - origin.z) / direction.z;
     this.onFeed(origin.x + direction.x * t);
+  }
+
+  private crystalHit(): boolean {
+    return this.ray.intersectObjects([...crystalPieces()], true).length > 0;
+  }
+
+  private hover(e: PointerEvent): void {
+    if (!this.crystal) return;
+    this.ray.setFromCamera(this.ndc(e), this.camera);
+    const hit = this.crystal.hasUrl() && this.crystalHit();
+    this.renderer.domElement.style.cursor = hit ? 'pointer' : '';
+    this.crystal.setHover(hit);
+  }
+
+  private openCard(e: PointerEvent): void {
+    const msg = this.crystal?.current();
+    if (!msg || !msg.url) return;
+    let host = '';
+    try { host = new URL(msg.url).hostname; } catch { /* leave empty */ }
+    const lines = Array.isArray(msg.text) ? msg.text : [msg.text];
+    this.cardText.innerHTML = lines.map((l) => `<div>${l.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))}</div>`).join('');
+    this.cardHost.textContent = host;
+    this.cardGo.textContent = 'Visit sponsor ↗';
+    this.card.style.left = `${Math.min(e.clientX, window.innerWidth - 260)}px`;
+    this.card.style.top = `${Math.min(e.clientY + 12, window.innerHeight - 120)}px`;
+    this.card.classList.add('open');
+  }
+
+  private closeCard(): void {
+    this.card.classList.remove('open');
+  }
+
+  private visitSponsor(): void {
+    const url = this.crystal?.current()?.url;
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    this.closeCard();
   }
 
   private cycle(): void {

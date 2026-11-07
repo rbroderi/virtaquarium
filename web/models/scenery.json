@@ -186,5 +186,10 @@
     "file": "scenery/coral_brain_v1.glb",
     "kind": "coral",
     "retired": true
+  },
+  "crystal_rock": {
+    "file": "scenery/crystal_rock.glb",
+    "kind": "prop",
+    "glass": true
   }
 }

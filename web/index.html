@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Virtual Aquarium</title>
+<link rel="preload" as="image" href="./brand/logo.webp">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0b3a4a; font-family: system-ui, 'Segoe UI', sans-serif; color: #eaf6ff; }
   canvas#tank { display: block; width: 100vw; height: 100vh; }
@@ -39,13 +40,21 @@
   /* Loading screen: over the tank until the first frame is drawn. */
   #loading { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 40%, #145a6e 0%, #0b3a4a 55%, #062431 100%); transition: opacity 0.9s ease; }
   #loading.done { opacity: 0; pointer-events: none; }
-  #loading .box { width: min(420px, 80vw); text-align: center; }
+  #loading .box { width: min(460px, 80vw); text-align: center; }
+  #loading .logo { width: 100%; height: auto; display: block; margin-bottom: 20px; }
   #loading .title { font-size: 26px; letter-spacing: 0.04em; margin-bottom: 18px; color: #eaf6ff; }
   #loading .bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
   #loading .bar i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, #5cc8ff, #9fe8ff); transition: width 0.35s ease; }
   #loading .label { margin-top: 12px; min-height: 1.4em; font-size: 14px; color: #a9c9d8; }
   #loading.failed .bar i { background: #ff7a6a; }
   #loading.failed .label { color: #ffb4a8; }
+  /* Sponsor card on a clickable crystal message. */
+  .cc { position: fixed; z-index: 20; width: 240px; padding: 12px 14px; border-radius: 12px; background: rgba(3, 22, 31, 0.92); color: #eaf6ff; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); display: none; font-size: 14px; line-height: 1.5; }
+  .cc.open { display: block; }
+  .cc-text { font-size: 15px; }
+  .cc-host { margin-top: 6px; font-size: 12px; color: #9fc8dc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cc-go { margin-top: 10px; width: 100%; padding: 8px 0; font: inherit; font-size: 13px; color: #062431; background: #5cc8ff; border: 0; border-radius: 8px; cursor: pointer; }
+  .cc-go:hover { background: #9fe8ff; }
   /* Tank switcher: bottom right, fades out with the cursor when idle. */
   #tanks { position: fixed; right: 20px; bottom: 24px; display: none; gap: 4px; padding: 4px; border-radius: 18px; background: rgba(0, 20, 30, 0.55); transition: opacity 0.6s; }
   #tanks.show { display: flex; }
@@ -62,7 +71,7 @@
 <div id="brain"></div>
 <div id="loading" role="progressbar" aria-label="Loading the aquarium">
   <div class="box">
-    <div class="title">Virtual Aquarium</div>
+    <img class="logo" src="./brand/logo.webp" alt="Virtual Aquarium" width="800" height="276">
     <div class="bar"><i></i></div>
     <div class="label">Starting</div>
   </div>
@@ -75,6 +84,7 @@
 </div>
 <div id="help">
   <div><kbd>click</kbd>drop food (or select a fish or critter)</div>
+  <div><kbd>click</kbd>the crystal sign to visit its sponsor</div>
   <div><kbd>Tab</kbd>inspect next fish's brain</div>
   <div><kbd>B</kbd>show every fish's current thought</div>
   <div><kbd>F</kbd>feed</div>

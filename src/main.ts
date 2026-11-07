@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } from './reef.js';
 import { World, type TankBounds } from './world.js';
+import { crystalSign, bindCrystalSign, JsonCrystalAdSource } from './reef/crystalText.js';
 import { loadCustomModels, loadSkinCache, fishRender, startIdleVariantPainting, pendingSkinSave } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { bakeReefLightCached, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
@@ -144,6 +145,14 @@ async function main(): Promise<void> {
   const reef = await buildScenery(stage, tank, options, timer);
   timer.stage('build reef');
 
+  // The crystal sign's etched text (and any clickable sponsor message) is driven only when the
+  // crystal model is present; checks keep it off so their frames and clicks stay comparable.
+  const crystal = options.check === null ? crystalSign(new JsonCrystalAdSource('./models/crystal.json')) : null;
+  if (crystal) {
+    bindCrystalSign(crystal);
+    void crystal.start();
+  }
+
   const ao = new ScreenAO(stage.renderer);
   const useReefLight = !isJellyTank && options.reefLight;
   if (useReefLight) useSoftFishShadows(stage);
@@ -179,7 +188,7 @@ async function main(): Promise<void> {
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
   const bus = new EventBus<TankEvents>();
   bus.on('feed', ({ x }) => world.dropFood(x));
-  const ui = new UI({ world, inspectables: [...critters, ...jellies], camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null });
+  const ui = new UI({ world, inspectables: [...critters, ...jellies], camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null, crystal });
   trackViewer(stage.canvas, stage.camera, world, bounds);
 
   const lighting = new LightingController({ stage, surface, reef, toneGain: options.tone.gain });
@@ -192,7 +201,7 @@ async function main(): Promise<void> {
   const loop = new TankLoop({
     stage, world, reef, jellies, critters, snow, bubbles, surface, lighting,
     daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur,
-    afterStep: () => ui.update(),
+    afterStep: (dt) => { ui.update(); crystal?.update(dt); },
   });
   bindKeys(loop, daylight, ui, () => toggleReefLight(reef));
 

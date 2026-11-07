@@ -26,6 +26,7 @@ opens the browser for you.
 | Input | Action |
 |---|---|
 | click | drop food (or select a fish or critter) |
+| click | the crystal sign, to see and visit its current sponsor |
 | Tab | inspect the next fish's brain |
 | B | show every fish's current thought |
 | F | feed |

@@ -1,0 +1,16 @@
+[
+  {
+    "text": "Support this reef — visit our sponsor",
+    "url": "https://example.com/",
+    "impressionUrl": "https://example.com/impression",
+    "label": "Sponsored"
+  },
+  {
+    "text": ["Virtual Aquarium", "Relax, watch, unwind"],
+    "label": "House ad"
+  },
+  {
+    "text": ["Coral-safe fishkeeping", "Learn more at your local aquarium"],
+    "label": "Tip"
+  }
+]
