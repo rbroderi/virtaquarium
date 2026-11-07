@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { addCaustics } from '../water.js';
 import { addTranslucency } from '../softSkin.js';
 import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
 import type { CritterNeighbour, CritterThreatFish, CritterWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
@@ -46,9 +47,14 @@ export type ShaderHook = (shader: THREE.WebGLProgramParametersWithUniforms, rend
 /**
  * A reef-lit material with an optional shader hook; key keeps three.js from sharing the program with
  * a plain material of the same parameters. sss: light through the skin for the soft bodies, null for
- * the turtle's horn and scales.
+ * the turtle's horn and scales. Under WebGPU the hook and SSS are WebGL-only, so this is a plain node
+ * material (documented in notes/webgpu-plan.md).
  */
-export function skin(opts: THREE.MeshStandardMaterialParameters, key: string, hook: ShaderHook | null = null, sss: TissueOptions | null = null): THREE.MeshStandardMaterial {
+export function skin(opts: THREE.MeshStandardMaterialParameters, key: string, hook: ShaderHook | null = null, sss: TissueOptions | null = null): THREE.Material {
+  if (gpuActive()) {
+    const t = tsl();
+    return new t.MeshStandardNodeMaterial(opts);
+  }
   const m = new THREE.MeshStandardMaterial(opts);
   if (hook) m.onBeforeCompile = hook;
   m.customProgramCacheKey = () => key;

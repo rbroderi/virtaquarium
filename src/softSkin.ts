@@ -8,6 +8,7 @@
 //         a constant or the per-vertex aThin attribute (thin: 'attr').
 // No extra pass and no screen-space history, so the Roku bake renders it as is.
 import type * as THREE from 'three';
+import { gpuActive } from './webgpu/tsl.js';
 
 const GLSL_DIGITS = 4;
 const f = (x: number): string => x.toFixed(GLSL_DIGITS);
@@ -28,6 +29,11 @@ export interface TranslucencyOptions {
 const DEFAULTS = { wrap: 0.45, back: 0.6, tint: [1.0, 0.5, 0.4] as TissueTint, thin: 0.2 } as const;
 
 export function addTranslucency<M extends THREE.Material>(mat: M, options: TranslucencyOptions = {}): M {
+  if (gpuActive()) {
+    // The wrap + transmission lobe are per-directional-light lighting terms; the WebGPU standard node
+    // material has no hook for them, so they stay WebGL-only for now (see notes/webgpu-plan.md).
+    return mat;
+  }
   const wrap = options.wrap ?? DEFAULTS.wrap, back = options.back ?? DEFAULTS.back;
   const tint = options.tint ?? DEFAULTS.tint, thin = options.thin ?? DEFAULTS.thin;
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);

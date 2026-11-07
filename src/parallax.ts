@@ -13,6 +13,7 @@
 // own UV rate, so differing repeats are fine).
 //   depth: how deep the darkest texel lies below the brightest, in world units (1 unit = 12.5 cm).
 import * as THREE from 'three';
+import { gpuActive } from './webgpu/tsl.js';
 
 /** ?pom=0 leaves materials as they were (to compare). Read once, at load. */
 const PARALLAX_DISABLED_BY_URL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pom') === '0';
@@ -118,7 +119,11 @@ function chunksStillMatch(chunks: Readonly<Record<string, string>>): boolean {
 }
 
 export function addParallax<M extends THREE.Material>(mat: M, depth: number, options: ParallaxOptions = {}): M {
-  if (PARALLAX_DISABLED_BY_URL) return mat;
+  if (PARALLAX_DISABLED_BY_URL || gpuActive()) {
+    // The POM march shifts every texture lookup (map/bump/normal/roughness) by the found offset; the
+    // standard node material samples its maps internally with no UV hook, so it stays WebGL-only.
+    return mat;
+  }
   const steps = options.steps ?? DEFAULT_STEPS, source = options.source ?? 'bump';
   const src = HEIGHT_SOURCES[source];
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
