@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
 import { NodeIO, type Document, type Material } from '@gltf-transform/core';
 import { ALL_EXTENSIONS, EXTTextureAVIF } from '@gltf-transform/extensions';
 
@@ -114,7 +115,11 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** Writes the parallax height into the normal map's alpha of each textured material; returns how many. */
 export async function addHeight(file: string): Promise<number> {
-  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+  // A served GLB may already be meshopt-compressed when this runs on its own: the read decodes it and
+  // the write re-compresses, so the encoder must be registered too or the write throws.
+  await MeshoptDecoder.ready;
+  await MeshoptEncoder.ready;
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder });
   const doc = await io.read(file);
   let done = 0;
   for (const mat of doc.getRoot().listMaterials()) {

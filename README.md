@@ -209,7 +209,8 @@ Put the API key in `tripo3d.ai.key` in the project root or set `TRIPO_API_KEY`; 
 never served. Each model costs API credits. New models are shrunk for real-time use
 (`bun run optimize-scenery`) and get a parallax height map in their normal map's alpha
 (`bun run heightmaps`). Textures are packed as AVIF (`EXT_texture_avif`, decoded by the GLTFLoader
-with no extra setup), which cuts the download without visible loss.
+with no extra setup) and meshes with meshopt (`EXT_meshopt_compression`, whose ~25 KB decoder ships
+inside three.js), which cuts the download without visible loss.
 
 ## Roku
 
