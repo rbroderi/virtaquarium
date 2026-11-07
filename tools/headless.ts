@@ -19,8 +19,9 @@ const BROWSER_CANDIDATES = [
 const WINDOW_SIZE = '--window-size=1920,1080';
 const SOFTWARE_GL = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 const HARDWARE_GL = ['--use-angle=d3d11', '--ignore-gpu-blocklist'];
-/** WebGPU in headless Chrome: enable the (unsafe) API and force the Vulkan backend past the blocklist. */
-const WEBGPU_GL = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan', '--ignore-gpu-blocklist'];
+/** WebGPU in headless Chrome: enable the (unsafe) API; --use-angle=vulkan or --enable-features=Vulkan
+ *  leaves requestAdapter empty on Windows, so keep the default Dawn backend past the blocklist. */
+const WEBGPU_GL = ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'];
 const KILL_GRACE_MS = 500;
 const PROFILE_RM_RETRIES = 5, PROFILE_RM_DELAY_MS = 200;
 const CONSOLE_LINE_LIMIT = 400;

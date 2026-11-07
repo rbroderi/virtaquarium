@@ -22,6 +22,10 @@ const MAX_PIXEL_RATIO = 2;
 const BASE_EXPOSURE = 1.05;
 const ENVIRONMENT_INTENSITY = 0.35;
 const FOG_DENSITY = 1.0;
+/** Stock FogExp2 on the WebGPU path: the WebGL path replaces the fog equation with per-channel
+ *  Beer-Lambert (uwK scales the small beam coefficients), so its nominal density 1.0 is a wash of the
+ *  whole scene under stock FogExp2. A small density approximates the medium until the TSL fog lands. */
+const GPU_FOG_DENSITY = 0.05;
 
 const CAMERA = { fov: 40, near: 0.1, far: 120 } as const;
 /** The camera's rest position and where it looks. */
@@ -125,6 +129,15 @@ export class StageBuilder {
         canvas: this.canvas, antialias: true, powerPreference: 'high-performance',
       });
       await renderer.init();
+      // three/webgpu is a self-contained build, so its node library is keyed by that build's light
+      // classes; register the core-three light classes (the scene graph's) so the lights actually
+      // light the auto-converted node materials instead of being skipped as "not found".
+      renderer.library.addLight(wg.DirectionalLightNode, THREE.DirectionalLight);
+      renderer.library.addLight(wg.HemisphereLightNode, THREE.HemisphereLight);
+      renderer.library.addLight(wg.PointLightNode, THREE.PointLight);
+      renderer.library.addLight(wg.SpotLightNode, THREE.SpotLight);
+      renderer.library.addLight(wg.AmbientLightNode, THREE.AmbientLight);
+      renderer.library.addLight(wg.RectAreaLightNode, THREE.RectAreaLight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
       renderer.toneMapping = this.options.tone.mapping;
@@ -140,7 +153,7 @@ export class StageBuilder {
 
   private scene(renderer: RendererLike, gpu: boolean): { scene: THREE.Scene; fog: THREE.FogExp2; backdrop: WaterBackdrop | null } {
     const scene = new THREE.Scene();
-    const fog = new THREE.FogExp2(INSCATTER_DAY.clone(), FOG_DENSITY);   // colour = inscatter radiance, density = turbidity
+    const fog = new THREE.FogExp2(INSCATTER_DAY.clone(), gpu ? GPU_FOG_DENSITY : FOG_DENSITY);   // colour = inscatter radiance, density = turbidity
     scene.fog = fog;
     if (gpu) {
       // The backdrop and PMREM environment are ShaderMaterial GLSL; the WebGPU path uses a flat

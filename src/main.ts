@@ -165,7 +165,7 @@ async function main(): Promise<void> {
     if (stage.water) stage.renderer.setRenderTarget(null);
     return compiling.then(() => undefined, (e: unknown) => console.warn('compileAsync:', e instanceof Error ? e.message : e));
   };
-  if (options.precompile) void precompile();
+  if (options.precompile && !stage.gpu) void precompile();   // WebGPU pipelines compile lazily; compileAsync corrupts its draw path (see below)
   if (useReefLight) await bakeReefLight(stage, reef);
   timer.stage('reef light bake');
 
@@ -182,7 +182,7 @@ async function main(): Promise<void> {
     catalogue: { fish: SPECIES, critters: CRITTER_SPECIES, jellies: JELLY_SPECIES },
   });
   timer.stage('fish and critters');
-  if (options.precompile) await precompile();
+  if (options.precompile && !stage.gpu) await precompile();
   timer.stage('compile shaders');
 
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
