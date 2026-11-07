@@ -2,16 +2,14 @@
 // document, builds the stage, reef and stock, wires the event bus, and starts the loop. Every module
 // it wires receives its collaborators here; none reaches for a global.
 import * as THREE from 'three';
-import type { WebGPURenderer } from 'three/webgpu';
 import { SPECIES } from './species.js';
 import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } from './reef.js';
 import { World, type TankBounds } from './world.js';
 import { loadCustomModels, loadSkinCache, fishRender } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { makeGpuSurface } from './water/webgpuSurface.js';
-import { bakeReefLightCached, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
+import { bakeReefLightCached, bakeReefLightCachedGpu, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
 import type { ReefLightOptions } from './reefLight.js';
-import { WebGpuScreenAO } from './webgpu/screenAO.js';
 import { JELLY_SPECIES, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES } from './critters.js';
 import { UI } from './ui.js';
@@ -80,12 +78,56 @@ async function buildScenery(stage: Stage, tank: Tank, options: AppOptions, timer
 /** Light the static reef once by ray casting: soft sun shadows, ambient occlusion and bounce light. */
 async function bakeReefLight(stage: Stage, reef: TankScene): Promise<void> {
   stage.rig.apply(1);   // baked at full daylight; the live light level scales it
-  await bakeReefLightCached(stage.renderer as THREE.WebGLRenderer, reef, reefLightRequest(stage), {
+  const cacheOpts = {
     sourceFingerprint: await loadReefLightFingerprint(),
-    onProgress: (phase, done) => loading?.progress(done, phase === 'cache'
+    onProgress: (phase: string, done: number) => loading?.progress(done, phase === 'cache'
       ? 'Lighting the reef (from the cache)'
       : `Lighting the reef ${Math.round(done * 100)}% · first start for this layout`),
+  };
+  if (!stage.gpu) {
+    await bakeReefLightCached(stage.renderer as THREE.WebGLRenderer, reef, reefLightRequest(stage), cacheOpts);
+    return;
+  }
+  // The bake's offline passes are classic ShaderMaterials WebGPURenderer never runs, so it runs on a
+  // hidden WebGL renderer; the maps come back as CPU texture arrays the node materials can bind.
+  let gl: THREE.WebGLRenderer;
+  try {
+    gl = new THREE.WebGLRenderer({ antialias: false });
+  } catch (e) {
+    console.warn('Reef light: no WebGL for the bake, using the live shadow map', e);
+    return;
+  }
+  const restore = classicAlbedoForBake(reef.group);
+  try {
+    await bakeReefLightCachedGpu(gl, reef, reefLightRequest(stage), cacheOpts);
+  } catch (e) {
+    console.warn('Reef light bake (WebGPU path):', e instanceof Error ? e.message : e);
+  } finally {
+    restore();
+    gl.dispose();
+    gl.forceContextLoss();
+  }
+}
+
+/**
+ * The bake's albedo pass renders the reef with its own materials, but under WebGPU those are node
+ * materials a WebGLRenderer cannot draw. Give each mesh a classic basic material for the bake: the
+ * node materials' colour and map parameters never became properties, so their albedo is vertex colour.
+ */
+function classicAlbedoForBake(group: THREE.Object3D): () => void {
+  const saved: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
+  group.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: o.geometry.hasAttribute('color'), side: THREE.DoubleSide });
+    saved.push({ mesh: o, material: o.material });
+    o.material = mat;
   });
+  return () => {
+    for (const { mesh, material } of saved) {
+      (mesh.material as THREE.Material).dispose();
+      mesh.material = material;
+    }
+  };
 }
 
 /** The bake's inputs (the sun/sky/ground at full daylight). */
@@ -118,11 +160,7 @@ function bindKeys(loop: TankLoop, daylight: DaylightSource, ui: UI, toggleReefLi
   });
 }
 
-async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle, gpu: boolean): Promise<void> {
-  if (check === 'perf' && gpu) {
-    console.warn('The perf check is WebGL-only; skipping under WebGPU');
-    return;
-  }
+async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle): Promise<void> {
   const loaders: Record<string, () => Promise<CheckModule>> = {
     critters: () => import('./critterCheck.js'),
     motion: () => import('./motionCheck.js'),
@@ -160,10 +198,11 @@ async function main(): Promise<void> {
   const reef = await buildScenery(stage, tank, options, timer);
   timer.stage('build reef');
 
-  const ao = stage.gpu
-    ? (stage.post ? new WebGpuScreenAO(stage.renderer as WebGPURenderer, stage.post.depthNode) : null)
-    : new ScreenAO(stage.renderer as THREE.WebGLRenderer);
-  const useReefLight = !isJellyTank && options.reefLight && !stage.gpu;
+  // Screen AO stays WebGL-only: the WebGPU pass still wedges the D3D12 device on its first update
+  // (a separate render into two half-res targets after the post). The baked map already carries the
+  // ray-cast AO, so the GPU path keeps that part.
+  const ao = stage.gpu ? null : new ScreenAO(stage.renderer as THREE.WebGLRenderer);
+  const useReefLight = !isJellyTank && options.reefLight;
   if (useReefLight) useSoftFishShadows(stage);
   // Shaders compile in parallel while the rest of startup runs, instead of blocking on first draw. Bound
   // to the target the tank draws into (the water renderer's): a program is specific to its target (an
@@ -226,7 +265,7 @@ async function main(): Promise<void> {
 
   if (!options.checkDrivesLoop) startAnimation(loop, stage, timer, options, profiler);
   else loading?.finish();   // a check steps the tank itself and draws no first frame
-  if (options.check) await runCheck(options.check, aquarium, stage.gpu);
+  if (options.check) await runCheck(options.check, aquarium);
 }
 
 /** L toggles the baked reef light (off: live reef shadows again). */

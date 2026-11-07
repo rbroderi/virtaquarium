@@ -122,41 +122,42 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
       inner.start(input, stack, builder);
       const pw = t.positionWorld as unknown as NodeObject;
       const nw = t.transformedNormalWorld as unknown as NodeObject;
-      const grid = (): void => {
-        const p = pw.add(nw.mul(s.uRLCell.mul(t.float(1.5)))).sub(s.uRLMin).div(s.uRLSize) as unknown as NodeObject;
-        const inside = p.x.greaterThanEqual(t.float(0)).and(p.y.greaterThanEqual(t.float(0))).and(p.z.greaterThanEqual(t.float(0)))
-          .and(p.x.lessThanEqual(t.float(1))).and(p.y.lessThanEqual(t.float(1))).and(p.z.lessThanEqual(t.float(1)));
-        t.If(inside, () => {
-          const A = atlasA(p, s.uRLRes, s.uRLTiles) as unknown as NodeObject;
-          const B = atlasB(p, s.uRLRes, s.uRLTiles) as unknown as NodeObject;
-          const C = atlasC(p, s.uRLRes, s.uRLTiles) as unknown as NodeObject;
-          // L1 projection of max(0, n.d) over the sphere: 1/4 + n.d/2 (open water gives 1).
-          this.rlSky.assign(A.x.add(t.float(2).mul(A.yzw.dot(nw))).clamp(t.float(0), t.float(1)));
-          const cl = C.rgb.dot(t.vec3(RL_Y[0], RL_Y[1], RL_Y[2]));
-          this.rlBounce.assign(t.select(cl.greaterThan(t.float(1e-6)),
-            C.rgb.div(cl).mul(t.max(t.float(0), B.x.add(t.float(2).mul(B.yzw.dot(nw))))),
-            t.vec3(0)));
-          this.rlSun.assign(C.a);
-        });
-      };
-      t.If(s.uRLOn.greaterThan(t.float(0.5)), () => {
-        t.If(s.uRLScrOn.greaterThan(t.float(0.5)), () => {
-          const clip = s.uRLScrVP.mul(t.vec4(pw, t.float(1)));
-          const uv = clip.xy.div(clip.w).mul(t.float(0.5)).add(t.float(0.5));
-          const inside = clip.w.greaterThan(t.float(0))
-            .and(uv.x.greaterThan(t.float(0))).and(uv.x.lessThan(t.float(1)))
-            .and(uv.y.greaterThan(t.float(0))).and(uv.y.lessThan(t.float(1)));
-          t.If(inside, () => {
-            const b = scrSample(uv, 1);
-            const dist = t.length(pw.sub(s.uRLScrEye));
-            t.If(t.abs(b.g.sub(dist)).lessThan(t.float(0.03).add(t.float(0.004).mul(dist))), () => {
-              const a = scrSample(uv, 0);
-              this.rlSky.assign(a.a);
-              this.rlBounce.assign(a.rgb);
-              this.rlSun.assign(b.r);
-            }).Else(() => { grid(); });
-          }).Else(() => { grid(); });
-        }).Else(() => { grid(); });
+      // The on/off gate is uniform (uRLOn), so this branch is fine; inside it WGSL still forbids
+      // textureSample in divergent (per-pixel) control flow, so every sample is taken unconditionally
+      // at clamped coordinates and the branch results are selected afterwards. Sampling outside the
+      // gate with the bake off also wedged the D3D12 device, so keep all of it inside the uniform If.
+      const on = s.uRLOn.greaterThan(t.float(0.5));
+      t.If(on, () => {
+      const p = pw.add(nw.mul(s.uRLCell.mul(t.float(1.5)))).sub(s.uRLMin).div(s.uRLSize) as unknown as NodeObject;
+      const insideBox = p.x.greaterThanEqual(t.float(0)).and(p.y.greaterThanEqual(t.float(0))).and(p.z.greaterThanEqual(t.float(0)))
+        .and(p.x.lessThanEqual(t.float(1))).and(p.y.lessThanEqual(t.float(1))).and(p.z.lessThanEqual(t.float(1)));
+      const pc = p.clamp(t.float(0), t.float(1)) as unknown as NodeObject;
+      const A = atlasA(pc, s.uRLRes, s.uRLTiles) as unknown as NodeObject;
+      const B = atlasB(pc, s.uRLRes, s.uRLTiles) as unknown as NodeObject;
+      const C = atlasC(pc, s.uRLRes, s.uRLTiles) as unknown as NodeObject;
+      // L1 projection of max(0, n.d) over the sphere: 1/4 + n.d/2 (open water gives 1).
+      const skyGrid = A.x.add(t.float(2).mul(A.yzw.dot(nw))).clamp(t.float(0), t.float(1)) as unknown as NodeObject;
+      const cl = C.rgb.dot(t.vec3(RL_Y[0], RL_Y[1], RL_Y[2])) as unknown as NodeObject;
+      const bounceGrid = t.select(cl.greaterThan(t.float(1e-6)),
+        C.rgb.div(cl).mul(t.max(t.float(0), B.x.add(t.float(2).mul(B.yzw.dot(nw))))),
+        t.vec3(0)) as unknown as NodeObject;
+      const sunGrid = C.a as unknown as NodeObject;
+
+      // The screen bake: its pixel by projecting into the rest view, checked against the baked depth.
+      const clip = s.uRLScrVP.mul(t.vec4(pw, t.float(1))) as unknown as NodeObject;
+      const ndcUV = clip.xy.div(clip.w).mul(t.float(0.5)).add(t.float(0.5)) as unknown as NodeObject;
+      const scrUV = ndcUV.clamp(t.float(0), t.float(1)) as unknown as NodeObject;
+      const b = scrSample(scrUV, 1) as unknown as NodeObject;
+      const a = scrSample(scrUV, 0) as unknown as NodeObject;
+      const dist = t.length(pw.sub(s.uRLScrEye)) as unknown as NodeObject;
+      const inScreen = s.uRLScrOn.greaterThan(t.float(0.5)).and(clip.w.greaterThan(t.float(0)))
+        .and(ndcUV.x.greaterThan(t.float(0))).and(ndcUV.x.lessThan(t.float(1)))
+        .and(ndcUV.y.greaterThan(t.float(0))).and(ndcUV.y.lessThan(t.float(1)))
+        .and(t.abs(b.g.sub(dist)).lessThan(t.float(0.03).add(t.float(0.004).mul(dist))));
+      const useGrid = insideBox.and(inScreen.not());
+      this.rlSky.assign(t.select(inScreen, a.a, t.select(useGrid, skyGrid, t.float(1))));
+      this.rlBounce.assign(t.select(inScreen, a.rgb, t.select(useGrid, bounceGrid, t.vec3(0))));
+      this.rlSun.assign(t.select(inScreen, b.r, t.select(useGrid, sunGrid, t.float(1))));
       });
       // Screen AO: off under WebGPU (ScreenAO is WebGL-only), kept for parity.
       t.If(s.uRLAOOn.greaterThan(t.float(0.5)), () => {
