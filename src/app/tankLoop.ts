@@ -11,7 +11,7 @@ import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
 import type { TankScene } from '../reef/types.js';
 import { updateFishPush } from '../reef/fishPush.js';
-import { renderCrystalBgScene } from '../reef/crystalBg.js';
+import { renderCrystalBgScene, type CrystalBgRenderer } from '../reef/crystalBg.js';
 import type { Stage } from './stage.js';
 import { CAMERA_BASE, CAMERA_LOOK } from './stage.js';
 import type { LightingController } from './lighting.js';
@@ -133,6 +133,8 @@ export class TankLoop {
   present(): void | Promise<void> {
     const { stage, ao } = this.parts;
     if (stage.gpu) {
+      // The crystal's sub-frustum transmission background, rendered before the main pass samples it.
+      renderCrystalBgScene(stage.renderer as unknown as CrystalBgRenderer, stage.scene, stage.camera, this.parts.world.fish.map((f) => f.model));
       if (stage.post) {
         stage.post.setSun(stage.sun);
         stage.post.render(stage.camera, this.time);
@@ -145,7 +147,7 @@ export class TankLoop {
     }
     const water = stage.water;
     if (!water) return;
-    // The crystal's sub-frustum transmission background, rendered before the main pass samples it (WebGL only).
+    // The crystal's sub-frustum transmission background, rendered before the main pass samples it.
     renderCrystalBgScene(stage.renderer as THREE.WebGLRenderer, stage.scene, stage.camera, this.parts.world.fish.map((f) => f.model));
     if (!stage.photo) water.render(stage.scene, stage.camera, stage.sun);
     else {

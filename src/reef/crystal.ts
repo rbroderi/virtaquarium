@@ -6,6 +6,8 @@
 // glass); ReefBuilder places and orients it; crystalText.ts drives the etched text on the face.
 import * as THREE from 'three';
 import { addCaustics } from '../water.js';
+import { gpuActive } from '../webgpu/tsl.js';
+import { gpuCrystalMaterial } from './crystalGpu.js';
 import { isMesh } from './flags.js';
 import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
 import { crystalBgUniforms } from './crystalBg.js';
@@ -273,6 +275,16 @@ interface CrystalShaderOptions {
 
 /** The faceted crystal body, caustic-lit like the rest of the reef. */
 function bodyMaterial(thickness: number): THREE.MeshPhysicalMaterial {
+  const options = { face: false, transmission: 0.78, thickness: Math.min(0.16, thickness), tint: ATTENUATION_COLOR.clone() } as const;
+  if (gpuActive()) {
+    return gpuCrystalMaterial({
+      color: 0xffffff, roughness: 0.15, metalness: 0,
+      flatShading: true,
+      iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessRange: [100, 400],
+      specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
+      envMapIntensity: 0.35,
+    }, options);
+  }
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, roughness: 0.15, metalness: 0,
     flatShading: true,
@@ -280,16 +292,11 @@ function bodyMaterial(thickness: number): THREE.MeshPhysicalMaterial {
     specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
     envMapIntensity: 0.35,
   });
-  return addCrystalShader(addCaustics(mat), { face: false, transmission: 0.78, thickness: Math.min(0.16, thickness), tint: ATTENUATION_COLOR.clone() });
+  return addCrystalShader(addCaustics(mat), options);
 }
 
 /** The etched face: the same glass, with the etched mask fading in via uCrystalFade. */
 function makeFaceMaterial(aspect: number): THREE.MeshPhysicalMaterial {
-  const mat = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, roughness: 0.8, metalness: 0,
-    specularIntensity: 0.6, specularColor: new THREE.Color(1, 1, 1),
-    envMapIntensity: 0.25,
-  });
   const canvas = document.createElement('canvas');
   canvas.width = FACE_TEXTURE_W;
   canvas.height = Math.max(1, Math.round(FACE_TEXTURE_W / Math.max(0.1, aspect)));
@@ -300,6 +307,25 @@ function makeFaceMaterial(aspect: number): THREE.MeshPhysicalMaterial {
   mask.generateMipmaps = false;
   mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
   renderMask(canvas, DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL);
+
+  if (gpuActive()) {
+    const fade = { value: 1 };
+    const mat = gpuCrystalMaterial({
+      color: 0xffffff, roughness: 0.8, metalness: 0,
+      specularIntensity: 0.6, specularColor: new THREE.Color(1, 1, 1),
+      envMapIntensity: 0.25,
+    }, { face: true, transmission: 0.9, thickness: 0, tint: new THREE.Color(1, 1, 1), mask, fade });
+    mat.userData['crystalMask'] = mask;
+    mat.userData['crystalAspect'] = aspect;
+    mat.userData['crystalFade'] = fade;
+    return mat;
+  }
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, roughness: 0.8, metalness: 0,
+    specularIntensity: 0.6, specularColor: new THREE.Color(1, 1, 1),
+    envMapIntensity: 0.25,
+  });
   mat.userData['crystalMask'] = mask;
   mat.userData['crystalAspect'] = aspect;
   mat.userData['crystalFade'] = { value: 1 };
