@@ -322,7 +322,7 @@ function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShade
       uCrystalIor: { value: 1.54 },
       uCrystalThickness: { value: options.thickness },
       uCrystalTint: { value: options.tint },
-      uCrystalEmissive: { value: new THREE.Color(0.92, 0.96, 1.0) },
+      uCrystalEmissive: { value: new THREE.Color(1, 1, 1) },
     });
     if (options.face) {
       shader.uniforms['uEtchTex'] = { value: mat.userData['crystalMask'] as THREE.Texture };
@@ -346,7 +346,7 @@ ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
 
     if (options.face) {
       shader.fragmentShader = shader.fragmentShader.replace('void main() {',
-        'void main() {\n\tvec4 crystalMask = texture2D( uEtchTex, vCrystalUv );\n\tfloat crystalEtch = ( 1.0 - crystalMask.r ) * uCrystalFade;');
+        'void main() {\n\tvec4 crystalMask = texture2D( uEtchTex, vCrystalUv );\n\tfloat crystalEtch = ( 1.0 - crystalMask.r ) * uCrystalFade;\n\tfloat crystalHalo = crystalMask.b * uCrystalFade;');
       const roughness = THREE.ShaderChunk['roughnessmap_fragment'];
       if (roughness.includes('roughnessFactor *= texelRoughness.g;')) {
         shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>',
@@ -358,7 +358,7 @@ ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
 
     const mixCode = `
   {
-    ${options.face ? '' : 'float crystalEtch = 0.0;'}
+    ${options.face ? '' : 'float crystalEtch = 0.0;\n    float crystalHalo = 0.0;'}
     vec3 crystalV = normalize( cameraPosition - vCW );
     vec3 crystalN = normalize( normal );
     vec3 crystalR = refract( -crystalV, crystalN, 1.0 / uCrystalIor );
@@ -368,7 +368,9 @@ ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
     vec3 crystalTransmitted = texture2D( uCrystalBg, crystalUv ).rgb * uCrystalTint;
     float crystalMix = uCrystalTransmission${options.face ? ' * ( 1.0 - crystalEtch )' : ''};
     outgoingLight = mix( outgoingLight, crystalTransmitted, crystalMix );
-    outgoingLight += crystalEtch * uCrystalEmissive;
+    float crystalGlow = ${options.face ? 'smoothstep( 0.6, 0.95, crystalEtch )' : '0.0'};
+    outgoingLight += crystalGlow * uCrystalEmissive;
+    outgoingLight *= ( 1.0 - crystalHalo );
   }
 `;
     shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', mixCode + '#include <opaque_fragment>');
