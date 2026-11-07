@@ -21,7 +21,9 @@ interface Comparison { msOn: number; msOff: number; ratio: number; trisOn: numbe
 const median = (a: readonly number[]): number => a.slice().sort((x, y) => x - y)[a.length >> 1] ?? 0;
 
 export async function main(aq: AquariumHandle): Promise<void> {
-  if (new URLSearchParams(location.search).get('hitch') === '1') return hitch(aq);
+  const q = new URLSearchParams(location.search);
+  if (q.get('hitch') === '1') return hitch(aq);
+  if (q.get('lum') === '1') return lum(aq);
   const { renderer, reef, present, step } = aq;
   const gl = renderer.getContext();
   aq.fitCanvas();
@@ -142,5 +144,62 @@ async function hitch(aq: AquariumHandle): Promise<void> {
     pending: pendingVariantCount(),
   };
   console.info('perf hitch', JSON.stringify(report));
+  await fetch('/__done', { method: 'POST', body: JSON.stringify(report, null, 1) }).catch(() => undefined);
+}
+
+/**
+ * ?lum=1: sample the mean frame luminance every frame over ?seconds (default 20), reading a small
+ * centre region of the tone-mapped canvas back (fast enough to catch single-frame flashes). Driven on
+ * rAF (like the live page), so the deferred variant painter can swap its textures while it runs.
+ */
+async function lum(aq: AquariumHandle): Promise<void> {
+  const q = new URLSearchParams(location.search);
+  const seconds = Number(q.get('seconds') || 20);
+  const { renderer, step, present, fitCanvas, world } = aq;
+  const gl = renderer.getContext();
+  fitCanvas();
+  for (let i = 0; i < WARM_UP_FRAMES; i++) { step(STEP); present(); }   // compile and settle
+  // Downscale the drawing buffer so present() runs fast enough to see single-frame flashes.
+  const lumres = Number(q.get('lumres') || 1);
+  if (lumres > 1) {
+    const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+    renderer.setPixelRatio(renderer.getPixelRatio() / lumres);
+    renderer.setSize(w, h, false);
+  }
+  if (q.get('variants') !== '0') startIdleVariantPainting();   // match the live page's periodic variant swaps
+  const RW = 96, RH = 54;
+  const buf = new Uint8Array(RW * RH * 4);
+  const samples: { t: number; lum: number; light: number; exposure: number; pending: number }[] = [];
+  const start = performance.now();
+  await new Promise<void>((resolve) => {
+    const tick = (now: number): void => {
+      if (now - start >= seconds * 1000) { resolve(); return; }
+      const t = +((now - start) / 1000).toFixed(3);
+      step(STEP);
+      present();
+      const w = renderer.domElement.width, h = renderer.domElement.height;
+      gl.readPixels(Math.max(0, (w - RW) >> 1), Math.max(0, (h - RH) >> 1), RW, RH, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i += 4) sum += 0.2126 * (buf[i] ?? 0) + 0.7152 * (buf[i + 1] ?? 0) + 0.0722 * (buf[i + 2] ?? 0);
+      samples.push({ t, lum: sum / (RW * RH) / 255, light: world.light, exposure: renderer.toneMappingExposure, pending: pendingVariantCount() });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const lums = samples.map((s) => s.lum).sort((a, b) => a - b);
+  const median = lums[Math.floor(lums.length / 2)] ?? 0;
+  const report = {
+    seconds,
+    size: [renderer.domElement.width, renderer.domElement.height],
+    region: [RW, RH],
+    count: samples.length,
+    min: lums[0],
+    max: lums[lums.length - 1],
+    median,
+    mean: lums.reduce((a, b) => a + b, 0) / lums.length,
+    spikes: samples.filter((s) => s.lum > median * 1.12 || s.lum < median * 0.88),
+    series: samples,
+  };
+  console.info('perf lum', JSON.stringify(report));
   await fetch('/__done', { method: 'POST', body: JSON.stringify(report, null, 1) }).catch(() => undefined);
 }

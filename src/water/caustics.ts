@@ -48,7 +48,7 @@ export const causticUniforms: CausticUniforms = {
   uCauOn: { value: 0 },                                    // 0 until a simulation runs (lab, bake)
 };
 
-/** Irradiance multiplier for the direct light at world point p (mean 1 over the tile). */
+/** Irradiance multiplier for the direct light at world point p (1 in unfocused light, never below it). */
 export const CAUSTIC_LOOKUP_GLSL = /* glsl */`
 uniform highp sampler2DArray uCau;
 uniform vec3 uCauDepth;
@@ -65,7 +65,7 @@ vec3 causticAt(vec3 p, float lodBias) {
   vec3 a = textureLod(uCau, vec3(uv, 0.0), lod).rgb, b = textureLod(uCau, vec3(uv, 1.0), lod).rgb, c = textureLod(uCau, vec3(uv, 2.0), lod).rgb;
   vec3 k = D < uCauDepth.y ? mix(a, b, clamp((D - uCauDepth.x) / (uCauDepth.y - uCauDepth.x), 0.0, 1.0))
                            : mix(b, c, clamp((D - uCauDepth.y) / (uCauDepth.z - uCauDepth.y), 0.0, 1.0));
-  return mix(vec3(1.0), k, clamp(D / uCauDepth.x, 0.0, 1.0));   // focusing needs some depth
+  return max(mix(vec3(1.0), k, clamp(D / uCauDepth.x, 0.0, 1.0)), vec3(1.0));   // focusing needs some depth; never dim below the unfocused light
 }
 vec3 causticAt(vec3 p) { return causticAt(p, 0.0); }
 `;
