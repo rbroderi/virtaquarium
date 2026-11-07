@@ -151,13 +151,18 @@ export class WebGpuCaustics {
   constructor(private readonly renderer: WebGPURenderer) {
     const t = tsl();
     this.depth = t.uniform(0);
-    // One target per simulated depth layer (caustics.ts causticUniforms.uCauDepth). Half-float with
-    // mipmaps: the WebGPU backend regenerates them after each render into the target, and the lookup
-    // samples the chain with textureLod for the depth-dependent blur.
+    // One target per simulated depth layer (caustics.ts causticUniforms.uCauDepth). These are the
+    // properties the WebGL path's caustic field is ACTUALLY sampled with, not the ones caustics.ts asks
+    // for: three r170's WebGLArrayRenderTarget ignores every texture option it is given and replaces
+    // the texture with a default DataArrayTexture (RGBA8, nearest, clamp-to-edge, no mips), so the WebGL
+    // caustic factor is a clipped, unblurred 8-bit field (mean ~0.68, everything above 1 saturated).
+    // The lookup below divides both frames' sunlight by that factor, so sampling the intended HDR
+    // half-float mip chain here left WebGPU ~0.05 luminance brighter than WebGL. Matching the reference
+    // is the point of the two backends; keep these options in step with what caustics.ts really gets.
     this.targets = Array.from({ length: DEPTH_LAYERS }, () => new THREE.RenderTarget(CAUSTIC_RES, CAUSTIC_RES, {
-      type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true,
-      wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
-      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+      type: THREE.UnsignedByteType, depthBuffer: false, generateMipmaps: false,
+      wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping,
+      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
     }));
 
     this.buildSim(t);

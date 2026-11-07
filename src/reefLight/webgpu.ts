@@ -121,7 +121,13 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
     override start(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
       inner.start(input, stack, builder);
       const pw = t.positionWorld as unknown as NodeObject;
-      const nw = t.transformedNormalWorld as unknown as NodeObject;
+      // Read the world normal HERE, in the function's own flow. transformedNormalWorld is a lazy TSL
+      // var: its declaration lands at the function top but its assignment is emitted at the first
+      // read, and every read below sits inside the uniform gate. With the gate closed (reef light off)
+      // nothing ever initialised it, so the environment IBL's getFace(), the shadow bias term and the
+      // grid lookups all saw (0,0,0): the whole reef went dark under the sun and rendered the env's
+      // seam colour. Reading it before the branch emits the assignment outside it.
+      const nw = (t.transformedNormalWorld as unknown as NodeObject).toVar('rlWorldNormal');
       // The on/off gate is uniform (uRLOn), so this branch is fine; inside it WGSL still forbids
       // textureSample in divergent (per-pixel) control flow, so every sample is taken unconditionally
       // at clamped coordinates and the branch results are selected afterwards. Sampling outside the
