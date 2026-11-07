@@ -1,10 +1,11 @@
 // WebGPU (TSL) counterparts of the fish swim material. The WebGL path stays in swimShader.ts; these
 // node materials only exist so fish swim under WebGPURenderer, which does not run onBeforeCompile GLSL.
 //
-// Scope: the body wave / tail bend / median-fin flutter vertex deformation. Not ported yet (documented
-// in notes/webgpu-plan.md): the moray path (uPathOn), tissue light transport, night colour, jaw/gape,
-// erectile spines, pectoral ray bending and ripple, packed-map second channels, specular AA and the HDR
-// clamp. Normals are left geometric, so lighting does not quite follow the bend of the caudal blade.
+// Scope: the body wave / tail bend / median-fin flutter vertex deformation, plus the night/stress
+// colour patch. Not ported yet (documented in notes/webgpu-plan.md): the moray path (uPathOn), tissue
+// light transport, jaw/gape, erectile spines, pectoral ray bending and ripple, packed-map second
+// channels, specular AA and the HDR clamp. Normals are left geometric, so lighting does not quite
+// follow the bend of the caudal blade.
 import * as THREE from 'three';
 import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
@@ -26,6 +27,7 @@ interface SwimNodes {
   uLift: FloatUniformNode;
   uBendTail: FloatUniformNode;
   uCup: FloatUniformNode;
+  uNight: FloatUniformNode | undefined;
 }
 
 const nodesByUniforms = new WeakMap<SwimUniforms, SwimNodes>();
@@ -62,6 +64,7 @@ function nodesFor(uniforms: SwimUniforms): SwimNodes {
     uLift: scalar(t, uniforms.uLift),
     uBendTail: scalar(t, uniforms.uBendTail),
     uCup: scalar(t, uniforms.uCup),
+    uNight: uniforms.uNight ? scalar(t, uniforms.uNight) : undefined,
   };
   nodesByUniforms.set(uniforms, nodes);
   return nodes;
@@ -113,11 +116,26 @@ export function swimPositionNode(uniforms: SwimUniforms): Node {
 export function makeSwimNodeMaterial(
   params: THREE.MeshPhysicalMaterialParameters,
   uniforms: SwimUniforms,
+  tissue: Tissue | null = null,
 ): InstanceType<Tsl['MeshPhysicalNodeMaterial']> {
   const t = tsl();
   const mat = new t.MeshPhysicalNodeMaterial(params as object);
   mat.positionNode = swimPositionNode(uniforms);
+  if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, nodesFor(uniforms).uNight!, tissue.night);
   return mat;
+}
+
+/** The night (and stress) colour patch from swimShader.ts, in TSL: chromatophores contract or expand
+ *  over minutes at dusk, paling or darkening the fish. uNight 0..1 is written by fish.ts. */
+function nightColourNode(t: Tsl, uNight: FloatUniformNode, kind: 'pale' | 'dark'): Node {
+  const c = t.materialColor.rgb;   // the standard colour incl. map, before the patch
+  const l = c.dot(t.vec3(0.2126, 0.7152, 0.0722));
+  const night: Node = kind === 'pale'
+    ? t.mix(t.vec3(l), t.vec3(t.float(0.75).add(t.float(0.2).mul(
+        t.float(0.5).add(t.float(0.5).mul(t.sin(t.uv().x.mul(23).add(t.sin(t.uv().y.mul(9)).mul(2))))),
+      ))), 0.45)
+    : t.vec3(l).mul(0.45).add(c.mul(0.12));
+  return t.mix(c, night, uNight.mul(0.8));
 }
 
 /**
@@ -130,6 +148,6 @@ export function swimMaterialFor(
   tissue: Tissue | null,
   gpu: boolean,
 ): THREE.Material {
-  if (gpu) return makeSwimNodeMaterial(params, uniforms);
+  if (gpu) return makeSwimNodeMaterial(params, uniforms, tissue);
   return makeSwimMaterial(new THREE.MeshPhysicalMaterial(params), uniforms, tissue);
 }
