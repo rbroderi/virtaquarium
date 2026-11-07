@@ -6,6 +6,8 @@ import { isRecord } from '../util.js';
 import { addParallax } from '../parallax.js';
 import { addSway, firstMaterial, stdMat } from './materials.js';
 import { hasPomHeight, isMesh, naturalSize, setNaturalSize } from './flags.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
+import type { Node } from 'three/webgpu';
 import type { Scenery } from './types.js';
 
 export type SceneryKind = 'rock' | 'coral' | 'prop' | 'plant';
@@ -97,9 +99,18 @@ function roughnessProperty(m: THREE.Material): number {
 
 /** Applies a saturation / gain grade to the albedo (after the colour map; parallax may have replaced map_fragment). */
 function applyGrade(mat: THREE.Material, grade: ColourGrade): void {
+  const sat = grade.sat ?? 1, gain = grade.gain ?? 1;
+  if (gpuActive()) {
+    // The WebGL patch grades material.color * map (after map_fragment, before color_fragment), which is
+    // exactly materialColor in TSL.
+    const t = tsl();
+    const c = t.materialColor.rgb;
+    const l = c.dot(t.vec3(0.2126, 0.7152, 0.0722));
+    (mat as unknown as { colorNode: Node | null }).colorNode = t.mix(t.vec3(l), c, t.float(sat)).mul(t.float(gain));
+    return;
+  }
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   const f = (x: number): string => x.toFixed(GRADE_DIGITS);
-  const sat = grade.sat ?? 1, gain = grade.gain ?? 1;
   mat.onBeforeCompile = (s, r) => {
     prev(s, r);
     s.fragmentShader = s.fragmentShader.replace('#include <color_fragment>', `
@@ -131,7 +142,7 @@ function normaliseScenery(root: THREE.Object3D, uniform: boolean, grade: ColourG
     const mat = stdMat({
       map: textureProperty(src, 'map'), normalMap: textureProperty(src, 'normalMap'), roughnessMap: textureProperty(src, 'roughnessMap'),
       color: colourProperty(src), roughness: Math.max(MIN_ROUGHNESS, roughnessProperty(src)), metalness: 0,
-    });
+    }) as THREE.MeshStandardMaterial;   // (the node material also carries these maps)
     if (mat.normalMap) mat.normalScale.set(NORMAL_SCALE, NORMAL_SCALE);
     // Parallax from the height that tools/heightmaps.ts put in the normal map's alpha.
     if (mat.normalMap && hasPomHeight(src)) addParallax(mat, SCENERY_POM_DEPTH, { source: 'normalAlpha' });
