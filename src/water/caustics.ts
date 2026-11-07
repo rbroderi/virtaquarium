@@ -21,6 +21,15 @@ const DEFAULT_GRID = 288;
 /** The simulated grid covers the tile plus a margin (see Caustics). */
 const GRID_MARGIN = 1.5;
 const LIGHT_SOURCE_RADIUS_DEG = 0.35;
+/**
+ * High-pass cutoff: the pattern is divided by its own blur at this mip level, so the broad component
+ * cancels. 512 texels span one tile (4 units), so level 7 is a 1-unit box: the slow
+ * focusing/defocusing pulse (a broad dim or bright region sweeping the tank) is removed while
+ * the fine ripple network (cells of ~0.1-0.4 units) and its ripple stay.
+ */
+const CAUSTIC_LOW_LOD = 7;
+/** Fixed gain that puts the high-passed pattern back at the level the user preferred (~0.347 frame mean). */
+const CAUSTIC_GAIN = 0.8;
 
 // The three depth layers live in one texture array (layer = depth), so every lit material spends one
 // texture unit on them, not three (fish shaders are at the GPU's 16 with the reef light and their maps).
@@ -48,7 +57,7 @@ export const causticUniforms: CausticUniforms = {
   uCauOn: { value: 0 },                                    // 0 until a simulation runs (lab, bake)
 };
 
-/** Irradiance multiplier for the direct light at world point p (mean 1 over the tile). */
+/** Irradiance multiplier for the direct light at world point p (tile mean is CAUSTIC_GAIN). */
 export const CAUSTIC_LOOKUP_GLSL = /* glsl */`
 uniform highp sampler2DArray uCau;
 uniform vec3 uCauDepth;
@@ -56,16 +65,23 @@ uniform vec3 uCauR0;
 uniform float uCauTile;
 uniform float uCauBlur;
 uniform float uCauOn;
+// The pattern divided by its own 1-unit blur: fine bright lines and dim cells keep their contrast,
+// while the broad dimming and brightening that used to pulse the whole tank cancels (the local mean
+// becomes 1 everywhere). The floor keeps a deep shadow from blowing up.
+vec3 causticDetail(vec2 uv, float l, float lod) {
+  vec3 fine = textureLod(uCau, vec3(uv, l), lod).rgb;
+  return fine / max(textureLod(uCau, vec3(uv, l), ${CAUSTIC_LOW_LOD.toFixed(1)}).rgb, vec3(0.06));
+}
 // lodBias > 0 looks up a softer pattern (used for light scattered in the volume).
 vec3 causticAt(vec3 p, float lodBias) {
   if (uCauOn < 0.5) return vec3(1.0);
   float D = max(${SURFACE_Y.toFixed(2)} - p.y, 0.0);
   vec2 uv = (p.xz - uCauR0.xz * (D / -uCauR0.y)) / uCauTile;
   float lod = log2(max(1.0, D * uCauBlur / uCauTile * ${CAUSTIC_RES.toFixed(1)})) + lodBias;
-  vec3 a = textureLod(uCau, vec3(uv, 0.0), lod).rgb, b = textureLod(uCau, vec3(uv, 1.0), lod).rgb, c = textureLod(uCau, vec3(uv, 2.0), lod).rgb;
+  vec3 a = causticDetail(uv, 0.0, lod), b = causticDetail(uv, 1.0, lod), c = causticDetail(uv, 2.0, lod);
   vec3 k = D < uCauDepth.y ? mix(a, b, clamp((D - uCauDepth.x) / (uCauDepth.y - uCauDepth.x), 0.0, 1.0))
                            : mix(b, c, clamp((D - uCauDepth.y) / (uCauDepth.z - uCauDepth.y), 0.0, 1.0));
-  return mix(vec3(1.0), k, clamp(D / uCauDepth.x, 0.0, 1.0));   // focusing needs some depth
+  return mix(vec3(1.0), k, clamp(D / uCauDepth.x, 0.0, 1.0)) * ${CAUSTIC_GAIN.toFixed(3)};   // focusing needs some depth
 }
 vec3 causticAt(vec3 p) { return causticAt(p, 0.0); }
 `;
@@ -133,6 +149,16 @@ export class Caustics {
       wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
       minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
     });
+    // three r170's WebGLArrayRenderTarget replaces the texture the options were applied to with a
+    // bare DataArrayTexture (8-bit, nearest, clamped, no mips), so apply them to the real one here.
+    // Without this the caustic lookup's filtering, tiling and high-pass reference above are all no-ops.
+    const cau = this.target.texture;
+    cau.type = THREE.HalfFloatType;
+    cau.minFilter = THREE.LinearMipmapLinearFilter;
+    cau.magFilter = THREE.LinearFilter;
+    cau.wrapS = THREE.RepeatWrapping;
+    cau.wrapT = THREE.RepeatWrapping;
+    cau.generateMipmaps = true;
     // The grid covers the tile plus a margin: light refracted in from the neighbouring (periodic)
     // tiles lands inside, and what leaves is counted by its periodic copy entering on the far side.
     const geo = new THREE.PlaneGeometry(WAVE_TILE * GRID_MARGIN, WAVE_TILE * GRID_MARGIN, grid, grid);

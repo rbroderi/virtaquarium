@@ -1,4 +1,5 @@
-// Overlay: click to feed or inspect a fish's brain, optional name tags, help, idle cursor hiding.
+// Overlay: click to feed or inspect a fish's brain, optional name tags, help, idle cursor hiding, and the
+// tank switcher (reef / moon jellies; T or the buttons bottom right reload the page as the other tank).
 // Feeding is injected (onFeed), so the page decides what a feed request does (main publishes it on the
 // tank's event bus).
 import * as THREE from 'three';
@@ -39,6 +40,19 @@ export interface UIOptions {
   readonly renderer: THREE.WebGLRenderer;
   /** Food requested at x (world units). */
   readonly onFeed: (x: number) => void;
+  /** The tank on show, and whether to offer switching to the other one (not during checks). */
+  readonly scenery: TankKind;
+  readonly switcher: boolean;
+}
+
+/** The tanks the switcher offers. */
+export type TankKind = 'reef' | 'jelly';
+
+/** Reloads the page as the given tank, keeping the rest of the URL. */
+function switchTank(to: TankKind): void {
+  const url = new URL(location.href);
+  if (to === 'reef') url.searchParams.delete('scenery'); else url.searchParams.set('scenery', to);
+  location.assign(url.href);
 }
 
 const typedEntries = <K extends string, V>(o: Readonly<Record<K, V>>): [K, V][] => Object.entries(o) as [K, V][];
@@ -64,8 +78,12 @@ export class UI {
   private readonly camera: THREE.Camera;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly onFeed: (x: number) => void;
+  private readonly scenery: TankKind;
+  private readonly switcher: boolean;
 
-  constructor({ world, inspectables, camera, renderer, onFeed }: UIOptions) {
+  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher }: UIOptions) {
+    this.scenery = scenery;
+    this.switcher = switcher;
     this.world = world;
     this.inspectables = inspectables;
     this.camera = camera;
@@ -81,6 +99,20 @@ export class UI {
     renderer.domElement.addEventListener('pointerdown', (e) => this.click(e));
     window.addEventListener('keydown', (e) => this.key(e));
     this.hideIdleCursor();
+    if (switcher) this.showSwitcher();
+  }
+
+  private showSwitcher(): void {
+    const box = requireElement('tanks', HTMLDivElement);
+    for (const b of box.querySelectorAll<HTMLButtonElement>('button[data-scenery]')) {
+      const to = b.dataset['scenery'] === 'jelly' ? 'jelly' : 'reef';
+      b.setAttribute('aria-pressed', String(to === this.scenery));
+      b.addEventListener('click', () => { if (to !== this.scenery) switchTank(to); });
+    }
+    box.classList.add('show');
+    // Shown while the hint is, before the idle cursor hides it, so a visitor sees it's there.
+    document.body.classList.add('fresh');
+    setTimeout(() => document.body.classList.remove('fresh'), HINT_FADE_MS);
   }
 
   private key(e: KeyboardEvent): void {
@@ -92,6 +124,7 @@ export class UI {
     if (k === 'h' || k === '?') this.help.classList.toggle('show');
     if (k === 'f') this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD);
     if (k === 'escape') this.select(null);
+    if (k === 't' && this.switcher) switchTank(this.scenery === 'jelly' ? 'reef' : 'jelly');
     if (k === 'tab') {
       e.preventDefault();
       this.cycle();

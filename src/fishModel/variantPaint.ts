@@ -1,11 +1,15 @@
 // Client for the variant painter worker: paints a species' variant colour maps (body albedo, fin sheet,
 // pectoral sheet) off the main thread and returns them as WebGL-flipped ImageBitmaps, ready to upload.
+// The worker also reads the variant's saved skin cache (fetch + decode) and encodes the cache PNG, so the
+// main thread only posts the finished PNG back to the server.
 import type { Species } from '../species/types.js';
+
+export interface VariantCache { readonly metaUrl: string; readonly skinUrl: string; readonly key: string }
 
 export interface VariantPaint {
   skin?: ImageBitmap;
   skinPng?: Blob;
-  /** The skin's mean colour (0..1), computed in the worker when the skin was painted. */
+  /** The skin's mean colour (0..1), from the cache meta or computed in the worker when painted. */
   skinAvg?: readonly [number, number, number];
   fins: ImageBitmap;
   pect: ImageBitmap;
@@ -29,9 +33,8 @@ function ensureWorker(): Worker {
     const p = pending.get(reply.id);
     pending.delete(reply.id);
     if (!p) return;
-    if (reply.error || !reply.fins || !reply.pect) { p.fail(new Error(reply.error ?? 'variant paint failed')); return; }
-    const maps: VariantPaint = { fins: reply.fins, pect: reply.pect };
-    if (reply.skin) maps.skin = reply.skin;
+    if (reply.error || !reply.skin || !reply.fins || !reply.pect) { p.fail(new Error(reply.error ?? 'variant paint failed')); return; }
+    const maps: VariantPaint = { skin: reply.skin, fins: reply.fins, pect: reply.pect };
     if (reply.skinPng) maps.skinPng = reply.skinPng;
     if (reply.avg) maps.skinAvg = reply.avg;
     p.ok(maps);
@@ -44,11 +47,11 @@ function ensureWorker(): Worker {
   return worker;
 }
 
-/** Paints the variant's fins + pectoral sheets, and its skin albedo when `needSkin`. */
-export function paintVariantMaps(sp: Species, needSkin: boolean): Promise<VariantPaint> {
+/** Produces the variant's colour maps; `cache` lets the worker read a saved skin instead of painting it. */
+export function paintVariantMaps(sp: Species, cache: VariantCache | null): Promise<VariantPaint> {
   const id = nextId++;
   return new Promise<VariantPaint>((ok, fail) => {
     pending.set(id, { ok, fail });
-    ensureWorker().postMessage({ id, sp, needSkin });
+    ensureWorker().postMessage({ id, sp, cache });
   });
 }

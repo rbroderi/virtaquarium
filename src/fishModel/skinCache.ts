@@ -3,8 +3,10 @@
 // maps takes ~1 s. The results are saved as lossless PNGs and reused while nothing that made them has
 // changed: the key hashes the species' look (everything but behaviour) and the source of the painters,
 // so editing either repaints. loadSkinCache() reads the saved maps before fish are built; species
-// painted live are saved back when the page is served locally (tools/serve.ts accepts the POST).
+// painted live are saved back: into the repository on the local dev server, into the visitor's own
+// browser on a public deploy (core/cacheStore.ts).
 import { isRecord } from '../util.js';
+import { canSaveCache, fetchCached, isDevServer, saveCached } from '../core/cacheStore.js';
 import type { Species } from '../species/types.js';
 import { cellHash, gillOf, gillU, makeProfile, mouthOf, naresOf } from './profile.js';
 import { applyShade, organicSkin, paintSkin } from './skin.js';
@@ -16,10 +18,9 @@ export const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'
 export type SkinMapName = (typeof SKIN_MAPS)[number];
 export type SkinImages = Record<SkinMapName, TexImage>;
 
-/** A cache hit: the key it was saved under, its decoded maps, and (variants) the skin's mean colour. */
-export interface SkinCacheHit { key: string; img: SkinImages; avg?: readonly [number, number, number] }
+/** A cache hit: the key it was saved under and its decoded maps. */
+export interface SkinCacheHit { key: string; img: SkinImages }
 
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const IMAGE_TIMEOUT_MS = 20000;
 const FNV_OFFSET = 0x811c9dc5, FNV_PRIME = 0x01000193;
 /** Fields that don't change a species' look, left out of its key. */
@@ -33,18 +34,27 @@ const useBitmaps = (): boolean =>
   typeof createImageBitmap === 'function' && new URLSearchParams(globalThis.location?.search).get('skinbmp') !== '0';
 
 const loadBitmap = async (url: string): Promise<ImageBitmap> => {
-  const r = await fetch(url);
+  const r = await fetchCached(url);
   if (!r.ok) throw new Error(String(r.status));
   return createImageBitmap(await r.blob(), { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
 };
 
 // onload, not decode(): decode() can wait indefinitely in a background tab.
-const loadImage = (url: string): Promise<HTMLImageElement> => new Promise((ok, fail) => {
+const loadImageAt = (url: string): Promise<HTMLImageElement> => new Promise((ok, fail) => {
   const im = new Image();
   im.onload = () => ok(im); im.onerror = fail;
   setTimeout(() => fail(new Error('timeout')), IMAGE_TIMEOUT_MS);
   im.src = url;
 });
+
+/** An <img> of a cached map; from the visitor's browser store when the caches live there. */
+async function loadImage(url: string): Promise<HTMLImageElement> {
+  if (isDevServer()) return loadImageAt(url);
+  const r = await fetchCached(url);
+  if (!r.ok) throw new Error(String(r.status));
+  const obj = URL.createObjectURL(await r.blob());
+  try { return await loadImageAt(obj); } finally { URL.revokeObjectURL(obj); }
+}
 
 /** The painters whose source is part of every key. */
 const PAINTERS: readonly ((...args: never[]) => unknown)[] = [
@@ -82,15 +92,14 @@ class SkinCache {
   }
 
   async load(species: readonly Species[], base: string): Promise<void> {
-    const local = LOCAL_HOSTS.includes(location.hostname);
     this.base = base;
-    this.saveBase = local ? new URL(base, location.href).pathname.replace(/^\//, '') : null;
+    this.saveBase = canSaveCache() ? new URL(base, location.href).pathname.replace(/^\//, '') : null;
     const bitmaps = useBitmaps();
     let hits = 0;
     await Promise.all(species.map(async (sp) => {
       const key = skinKey(sp);
       try {
-        const r = await fetch(`${base}${sp.id}.json`, { cache: 'no-cache' });
+        const r = await fetchCached(`${base}${sp.id}.json`, { cache: 'no-cache' });
         if (!r.ok) return;
         const meta: unknown = await r.json();
         if (!isRecord(meta) || meta['key'] !== key) return;
@@ -108,46 +117,34 @@ class SkinCache {
   save(sp: Species, key: string, canvases: Record<SkinMapName, HTMLCanvasElement>): void {
     const base = this.saveBase;
     if (!base) return;
-    const post = (path: string, body: BodyInit | null): Promise<unknown> =>
-      fetch(`/__save?path=${base}${path}`, { method: 'POST', body }).catch(() => undefined);
+    const post = (path: string, body: Blob | string | null): Promise<unknown> =>
+      body === null ? Promise.resolve() : saveCached(base + path, body).catch(() => undefined);
     const done = Promise.all(SKIN_MAPS.map((n) => new Promise<Blob | null>((ok) => canvases[n].toBlob(ok, 'image/png')).then((b) => post(`${sp.id}-${n}.png`, b))))
       .then(() => post(`${sp.id}.json`, JSON.stringify({ key })))   // last, so a half-written set never matches
       .then(() => undefined);
     this.current = this.current.then(() => done);
   }
 
-  /** Fetches and decodes a variant's saved skin albedo, if present (its other maps are variant 0's). */
-  async loadVariant(sp: Species, variant: number): Promise<SkinCacheHit | undefined> {
+  /** The URLs and key for a variant's saved skin, or null when there's no local cache to read. */
+  variantUrls(sp: Species, variant: number): { metaUrl: string; skinUrl: string; key: string } | null {
     const base = this.base;
-    if (!base || variant <= 0) return undefined;
-    const id = SkinCache.hitId(sp.id, variant);
-    const cached = this.hits.get(id);
-    if (cached) return cached;
+    if (!base || variant <= 0) return null;
     const key = skinKey(sp);
-    try {
-      const r = await fetch(`${base}${sp.id}-v${variant}.json`, { cache: 'no-cache' });
-      if (!r.ok) return undefined;
-      const meta: unknown = await r.json();
-      if (!isRecord(meta) || meta['key'] !== key) return undefined;
-      const bitmaps = useBitmaps();
-      const skin = bitmaps
-        ? await loadBitmap(`${base}${sp.id}-v${variant}-skin.png?${key}`)
-        : await loadImage(`${base}${sp.id}-v${variant}-skin.png?${key}`);
-      const avg = Array.isArray(meta['avg']) && meta['avg'].length === 3 && meta['avg'].every((v) => typeof v === 'number')
-        ? (meta['avg'] as [number, number, number])
-        : undefined;
-      const hit: SkinCacheHit = { key, img: { skin } as SkinImages, ...(avg ? { avg } : {}) };
-      this.hits.set(id, hit);
-      return hit;
-    } catch { return undefined; }
+    // Absolute URLs: the worker reads them, and its own script URL is not the page's, so a relative base
+    // would resolve to the wrong path.
+    const root = new URL(base, location.href).href;
+    return {
+      key,
+      metaUrl: `${root}${sp.id}-v${variant}.json`,
+      skinUrl: `${root}${sp.id}-v${variant}-skin.png?${key}`,
+    };
   }
 
   /** Saves a variant's painted skin albedo (its relief maps are shared with variant 0). */
   saveVariant(sp: Species, variant: number, key: string, skinPng: Blob | null, avg: readonly [number, number, number] | undefined): void {
     const base = this.saveBase;
     if (!base || variant <= 0 || !skinPng) return;
-    const post = (path: string, body: BodyInit | null): Promise<unknown> =>
-      fetch(`/__save?path=${base}${path}`, { method: 'POST', body }).catch(() => undefined);
+    const post = (path: string, body: Blob | string): Promise<unknown> => saveCached(base + path, body).catch(() => undefined);
     const done = (async () => {
       await post(`${sp.id}-v${variant}-skin.png`, skinPng);
       await post(`${sp.id}-v${variant}.json`, JSON.stringify(avg ? { key, avg } : { key }));   // last, so a half-written set never matches

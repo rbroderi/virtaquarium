@@ -22,6 +22,12 @@ export interface SwayOptions {
   readonly hTop?: number;
   /** Also part from nearby fish (a fixed-size uniform array updated once a frame). */
   readonly fishPush?: boolean;
+  /** GLSL declarations prepended to the vertex shader, for the attributes the deform reads. */
+  readonly prelude?: string;
+  /** GLSL run inside the bend block after the sway (h is in scope), e.g. a per-instance curl. */
+  readonly deform?: string;
+  /** Distinguishes program cache entries that share a key but not a deform. */
+  readonly variant?: string;
 }
 
 const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
@@ -36,6 +42,7 @@ export function addSway<M extends THREE.Material>(mat: M, key: string, options: 
   const ax = options.ax ?? SWAY_DEFAULTS.ax, az = options.az ?? SWAY_DEFAULTS.az;
   const hz = options.hz ?? SWAY_DEFAULTS.hz, hTop = options.hTop ?? SWAY_DEFAULTS.hTop;
   const fishPush = options.fishPush ?? false;
+  const prelude = options.prelude ?? '', deform = options.deform ?? '';
   const prev = mat.onBeforeCompile.bind(mat);
   const f = (x: number): string => x.toFixed(GLSL_DIGITS);
   mat.onBeforeCompile = (shader, r) => {
@@ -46,7 +53,7 @@ export function addSway<M extends THREE.Material>(mat: M, key: string, options: 
       shader.uniforms['uFishVel'] = fishUniforms.uFishVel;
       shader.uniforms['uFishCount'] = fishUniforms.uFishCount;
     }
-    const head = 'uniform float uTime;\n' + (fishPush ? FISH_PUSH_HEADER : '');
+    const head = 'uniform float uTime;\n' + prelude + (fishPush ? FISH_PUSH_HEADER : '');
     shader.vertexShader = head + shader.vertexShader.replace('#include <begin_vertex>', `
       vec3 transformed = vec3(position);
       {
@@ -59,10 +66,12 @@ export function addSway<M extends THREE.Material>(mat: M, key: string, options: 
         float s = sin(uTime * ${f(hz)} + ph) + 0.35 * sin(uTime * ${f(hz * 2.3)} + ph * 1.9);
         transformed.x += s * ${f(ax)} * h * h;
         transformed.z += cos(uTime * ${f(hz * 0.8)} + ph * 1.3) * ${f(az)} * h * h;
+        ${deform}
         ${fishPush ? FISH_PUSH_APPLY : ''}
       }`);
   };
-  mat.customProgramCacheKey = () => key + (fishPush ? '-fish' : '');
+  const variant = options.variant ?? '';
+  mat.customProgramCacheKey = () => key + (fishPush ? '-fish' : '') + (variant ? `-${variant}` : '');
   return mat;
 }
 
