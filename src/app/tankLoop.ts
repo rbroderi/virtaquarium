@@ -3,7 +3,7 @@
 // and present() themselves; the page drives them from requestAnimationFrame.
 import * as THREE from 'three';
 import { clamp, lerp } from '../core/math.js';
-import { waterUniforms, updateWaves, MarineSnow, Bubbles, type WaterSurface } from '../water.js';
+import { waterUniforms, updateWaves, MarineSnow, Bubbles, type SurfaceUniforms } from '../water.js';
 import { reefLightUniforms, type ScreenAO } from '../reefLight.js';
 import type { World } from '../world.js';
 import type { Jelly } from '../jelly.js';
@@ -43,7 +43,7 @@ export interface TankParts {
   readonly critters: readonly Critter[];
   readonly snow: MarineSnow;
   readonly bubbles: Bubbles | null;
-  readonly surface: WaterSurface | null;
+  readonly surface: { readonly surfaceUniforms: SurfaceUniforms } | null;
   readonly lighting: LightingController;
   readonly daylight: DaylightSource;
   readonly feeder: Feeder;

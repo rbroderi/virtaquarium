@@ -7,6 +7,7 @@ import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } f
 import { World, type TankBounds } from './world.js';
 import { loadCustomModels, loadSkinCache, fishRender } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
+import { makeGpuSurface } from './water/webgpuSurface.js';
 import { bakeReefLightCached, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
 import { JELLY_SPECIES, buildJellyTank } from './jelly.js';
 import { CRITTER_SPECIES } from './critters.js';
@@ -171,7 +172,7 @@ async function main(): Promise<void> {
 
   const snow = new MarineSnow(stage.scene, stage.tankWidth * SNOW_SPREAD, rng);
   const bubbles = reef.bubbler && !stage.gpu ? new Bubbles(stage.scene, reef.bubbler, rng) : null;
-  const surface = stage.gpu ? null : makeSurface(stage.tankWidth);
+  const surface = stage.gpu ? makeGpuSurface(stage.tankWidth) : makeSurface(stage.tankWidth);
   if (!isJellyTank && surface) stage.scene.add(surface);
 
   const bounds = swimBox(stage);
@@ -209,7 +210,7 @@ async function main(): Promise<void> {
   // checks that run there (look, motion, critters) only touch the common surface and the world.
   const aquarium: AquariumHandle = {
     THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies, critters, SPECIES,
-    caustics: stage.caustics as unknown as AquariumHandle['caustics'], water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as NonNullable<typeof surface>, daylight,
+    caustics: stage.caustics as unknown as AquariumHandle['caustics'], water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as unknown as AquariumHandle['surface'], daylight,
     setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
   };
   debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging

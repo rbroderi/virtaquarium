@@ -51,6 +51,19 @@ function fresnelT(I: NodeObject, n: NodeObject, r: NodeObject, eta: NodeObject):
   return rs.mul(rs).add(rp.mul(rp)).mul(0.5).oneMinus();
 }
 
+/** The wave surface gradient (waves.ts WAVE_GLSL), shared with the water surface. */
+export function waveGradNode(t: Tsl): (p: NodeObject) => NodeObject {
+  const waves = t.uniformArray(waveUniforms.uWaves.value as unknown as unknown[], 'vec4');
+  return t.Fn(([p]: [NodeObject]) => {
+    const g = t.vec2(0).toVar();
+    t.Loop(WAVE_COUNT, ({ i }: { i: NodeObject }) => {
+      const w = waves.element(i);
+      g.addAssign(w.z.mul(w.xy).mul(t.cos(w.xy.dot(p).sub(w.w))));
+    });
+    return g;
+  });
+}
+
 /** The caustic factor (vec3, mean ~1) at a world point, sampled from the three simulated depth layers. */
 function causticAtNode(t: Tsl, s: GpuCausticState): (p: NodeObject) => NodeObject {
   const [texA, texB, texC] = s.textures;
@@ -154,19 +167,11 @@ export class WebGpuCaustics {
    *  positionLocal and divides the two screen-space derivative areas (the same construction as the
    *  WebGL grid, without custom varyings). */
   private buildSim(t: Tsl): void {
-    const waves = t.uniformArray(waveUniforms.uWaves.value as unknown as unknown[], 'vec4');
     const uSunAir = t.uniform(waveUniforms.uSunAir.value) as unknown as NodeObject;
     const uDepth = this.depth;
     const uTile = t.uniform(WAVE_TILE);
 
-    const waveGrad = t.Fn(([p]: [NodeObject]) => {
-      const g = t.vec2(0).toVar();
-      t.Loop(WAVE_COUNT, ({ i }: { i: NodeObject }) => {
-        const w = waves.element(i);
-        g.addAssign(w.z.mul(w.xy).mul(t.cos(w.xy.dot(p).sub(w.w))));
-      });
-      return g;
-    });
+    const waveGrad = waveGradNode(t);
 
     const geo = new THREE.PlaneGeometry(WAVE_TILE * GRID_MARGIN, WAVE_TILE * GRID_MARGIN, GRID, GRID);
     geo.rotateX(-Math.PI / 2);

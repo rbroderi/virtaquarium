@@ -3,7 +3,7 @@
 // of day: warm and low at the golden hours, white-blue overhead at noon, cool moonlight at night.
 import * as THREE from 'three';
 import { lerp } from '../core/math.js';
-import { INSCATTER_DAY, setSunDirection, waterUniforms, type WaterSurface } from '../water.js';
+import { INSCATTER_DAY, setSunDirection, waterUniforms, type SurfaceUniforms } from '../water.js';
 import { reefLightUniforms } from '../reefLight.js';
 import { LIGHTS, SUN_NOON } from '../rig.js';
 import type { TankScene } from '../reef/types.js';
@@ -37,8 +37,8 @@ const SUN_LOW = { x: 14, y: 11, z: 5 } as const;
 
 export interface LightingTargets {
   readonly stage: Stage;
-  /** The WebGL water surface; null under WebGPU (no surface is drawn). */
-  readonly surface: WaterSurface | null;
+  /** The water surface; null under WebGPU before the surface port, or in the jelly tank. */
+  readonly surface: { readonly surfaceUniforms: SurfaceUniforms } | null;
   readonly reef: TankScene;
   /** Exposure gain of the tone curve in use. */
   readonly toneGain: number;
