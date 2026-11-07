@@ -6,6 +6,7 @@ import {
   installUnderwaterMedium, INSCATTER_DAY, makeWaterBackdrop, makeEnvironment, setSunDirection,
   Caustics, WaterRenderer, type WaterBackdrop,
 } from '../water.js';
+import { underwaterBackgroundNode, underwaterFogNode } from '../water/webgpuMedium.js';
 import { loadTsl } from '../webgpu/tsl.js';
 import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
 import { setView, panAt } from '../view.js';
@@ -156,9 +157,12 @@ export class StageBuilder {
     const fog = new THREE.FogExp2(INSCATTER_DAY.clone(), gpu ? GPU_FOG_DENSITY : FOG_DENSITY);   // colour = inscatter radiance, density = turbidity
     scene.fog = fog;
     if (gpu) {
-      // The backdrop and PMREM environment are ShaderMaterial GLSL; the WebGPU path uses a flat
-      // open-water clear colour and stock exponential fog instead (see notes/webgpu-plan.md).
+      // The backdrop and PMREM environment are ShaderMaterial GLSL; the WebGPU path uses TSL nodes for
+      // the graded open-water backdrop and the per-channel Beer-Lambert fog (see notes/webgpu-plan.md).
       scene.background = INSCATTER_DAY.clone();
+      const gpuScene = scene as typeof scene & { backgroundNode: unknown; fogNode: unknown };
+      gpuScene.backgroundNode = underwaterBackgroundNode();
+      gpuScene.fogNode = underwaterFogNode();
       return { scene, fog, backdrop: null };
     }
     const backdrop = makeWaterBackdrop();
