@@ -20,8 +20,11 @@ import { crystalBgUniforms } from './crystalBg.js';
 
 /** How near a triangle's normal must be to the face's normal to belong to the face (dot product). */
 const FACE_NORMAL_DOT = 0.93;
-/** Etched-mask texture width in pixels (height follows the rock's projected silhouette aspect). */
-const FACE_TEXTURE_W = 1024;
+/** The text is sized to facets whose normal stays at least this near the face normal, so the shader's
+ *  facing gate never fades the outermost letters near the rock's sides. */
+const FACE_STRONG_DOT = 0.8;
+/** Etched-mask texture width in pixels (height follows the strong-facing region's projected aspect). */
+const FACE_TEXTURE_W = 2048;
 /** Slight cyan tint of the glass (Beer-Lambert attenuation). */
 const ATTENUATION_COLOR = new THREE.Color(0.72, 0.92, 1.0);
 /** Fresnel F0 for crystal glass (IOR 1.54): near-normal faces stay clear, grazing edges turn mirror. */
@@ -273,14 +276,39 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
   if (!verts) return null;
   centre.multiplyScalar(1 / verts);
 
-  // The whole rock's projected silhouette on the text plane, measured around the face's centre.
+  // The text is sized to the region whose facets face the text direction strongly enough that the
+  // shader's facing gate stays at full strength (dot >= FACE_STRONG_DOT), so the outermost letters
+  // don't fade near the rock's sides. Measured around the face's centre.
+  const strong = new Uint8Array(pos.length / 3);
+  for (let t = 0; t < tris; t++) {
+    const d = (nx[t] ?? 0) * fn.x + (ny[t] ?? 0) * fn.y + (nz[t] ?? 0) * fn.z;
+    if (d >= FACE_STRONG_DOT) {
+      strong[idx[t * 3] as number] = 1;
+      strong[idx[t * 3 + 1] as number] = 1;
+      strong[idx[t * 3 + 2] as number] = 1;
+    }
+  }
   let silU0 = Infinity, silU1 = -Infinity, silV0 = Infinity, silV1 = -Infinity;
+  let anyStrong = false;
   for (let i = 0; i < pos.length / 3; i++) {
+    if (!strong[i]) continue;
+    anyStrong = true;
     p0.fromArray(pos, i * 3);
     const du = p0.dot(fu) - centre.dot(fu);
     const dv = p0.dot(fv) - centre.dot(fv);
     if (du < silU0) silU0 = du; if (du > silU1) silU1 = du;
     if (dv < silV0) silV0 = dv; if (dv > silV1) silV1 = dv;
+  }
+  if (!anyStrong) {
+    // Degenerate: no strongly-facing facets; fall back to the whole rock so the text still has a box.
+    silU0 = -0.5; silU1 = 0.5; silV0 = -0.5; silV1 = 0.5;
+    for (let i = 0; i < pos.length / 3; i++) {
+      p0.fromArray(pos, i * 3);
+      const du = p0.dot(fu) - centre.dot(fu);
+      const dv = p0.dot(fv) - centre.dot(fv);
+      if (du < silU0) silU0 = du; if (du > silU1) silU1 = du;
+      if (dv < silV0) silV0 = dv; if (dv > silV1) silV1 = dv;
+    }
   }
 
   const faceIdx = new Uint32Array(face.reduce((a, b) => a + b, 0) * 3);
@@ -560,16 +588,16 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
     if (split) {
       const fn = new THREE.Vector3(...split.info.n);
 
-      // The etched mask covers the whole rock's projected silhouette on the text plane.
+      // The etched mask covers the strongly-facing region's projection on the text plane.
       const silAspect = split.info.silExtentV > 1e-6 ? split.info.silExtentU / split.info.silExtentV : 1;
       const canvas = document.createElement('canvas');
       canvas.width = FACE_TEXTURE_W;
       canvas.height = Math.max(1, Math.round(FACE_TEXTURE_W / Math.max(0.1, silAspect)));
       const mask = new THREE.CanvasTexture(canvas);
       mask.colorSpace = THREE.NoColorSpace;
-      mask.minFilter = THREE.LinearFilter;
+      mask.minFilter = THREE.LinearMipmapLinearFilter;
       mask.magFilter = THREE.LinearFilter;
-      mask.generateMipmaps = false;
+      mask.generateMipmaps = true;
       mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
       renderMask(canvas, DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL);
 

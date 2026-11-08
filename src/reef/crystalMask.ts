@@ -19,11 +19,12 @@ const FONT = `system-ui, 'Segoe UI', sans-serif`;
 const LABEL_RATIO = 0.45;
 /** Fallback line-height ratio (of the font size) when the canvas reports no glyph bounds. */
 const FALLBACK_LINE_RATIO = 1.34;
-/** The etched-text area is the silhouette inset by this much on each side (fraction of the canvas). */
+/** The etched-text area is the strong-facing region inset by this much on each side (fraction of the canvas). */
 const TEXT_INSET = 0.12;
-/** Below this canvas font size a line is too small to read: allow another line instead. Calibrated so
- *  the short entry ("Red Sea Coral Pro salt") stays two large lines, not one long squeezed line. */
-const MIN_FONT = 90;
+/** Below this fraction of the text area's width a line is too small to read: allow another line instead.
+ *  Calibrated so the short entry ("Red Sea Coral Pro salt") stays two large lines, not one squeezed line,
+ *  independent of the mask resolution. */
+const MIN_FONT_FRACTION = 0.116;
 const MAX_LINES = 6;
 
 /** The settled text layout: a font size (px), the label size, and the wrapped lines. */
@@ -93,9 +94,10 @@ export function layoutCrystalText(
 
   // Prefer few, wide lines at a readable size: start with one line and only allow another line when
   // the single-line font falls below the readable floor, so a short message stays two large lines.
+  const minFont = maxW * MIN_FONT_FRACTION;
   let lines = 1;
   let size = largestFor(1);
-  while (size < MIN_FONT && lines < MAX_LINES) { lines++; size = largestFor(lines); }
+  while (size < minFont && lines < MAX_LINES) { lines++; size = largestFor(lines); }
   const final = atSize(size);
   return { size, labelSize: size * LABEL_RATIO, lines: final.lines };
 }
