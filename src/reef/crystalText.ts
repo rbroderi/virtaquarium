@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { isRecord } from '../util.js';
 import { crystalFaceMaterial } from './crystal.js';
-import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask, type CrystalTextRegion } from './crystalMask.js';
+import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
 
 /** One message a source can show on the crystal. */
 export interface CrystalMessage {
@@ -97,7 +97,6 @@ export class CrystalSign {
   private readonly fadeSeconds: number;
   private readonly mask: THREE.CanvasTexture;
   private readonly fadeUniform: { value: number };
-  private readonly textRegion: CrystalTextRegion | undefined;
   private hover = false;
 
   constructor(private readonly material: THREE.MeshPhysicalMaterial, private readonly source: CrystalAdSource, options: { intervalSeconds?: number; fadeSeconds?: number } = {}) {
@@ -105,7 +104,6 @@ export class CrystalSign {
     this.fadeSeconds = options.fadeSeconds ?? DEFAULT_FADE_S;
     this.mask = material.userData['crystalMask'] as THREE.CanvasTexture;
     this.fadeUniform = material.userData['crystalFade'] as { value: number };
-    this.textRegion = material.userData['crystalTextRegion'] as CrystalTextRegion | undefined;
     this.show(0, false);
   }
 
@@ -193,7 +191,7 @@ export class CrystalSign {
     this.index = ((i % this.messages.length) + this.messages.length) % this.messages.length;
     const msg = this.messages[this.index];
     if (!msg) return;
-    renderMask(this.mask.image as HTMLCanvasElement, Array.isArray(msg.text) ? msg.text : [msg.text], msg.label ?? DEFAULT_LABEL, this.textRegion);
+    renderMask(this.mask.image as HTMLCanvasElement, Array.isArray(msg.text) ? msg.text : [msg.text], msg.label ?? DEFAULT_LABEL);
     this.mask.needsUpdate = true;
     this.fade = force ? 1 : this.fade;
   }

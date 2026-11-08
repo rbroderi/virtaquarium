@@ -2,19 +2,25 @@
 // of crystal points with one large flat cleavage face; that face becomes a frosted, laser-etched plaque
 // facing the camera, and the rest of the cluster stays as a clear crystal frame around it.
 //
+// The etched text is a planar projection, not a per-facet UV: one text plane (centred on the face,
+// normal = the face normal, up = world-up projected onto the plane) is defined in the crystal's local
+// space, and the whole rock's shader projects each fragment's local position onto it. Letters therefore
+// continue across facet borders as if etched into the rock from the front, instead of vanishing where
+// the flat face's triangles end.
+//
 // loadScenery() builds the crystal group (split into a flat face mesh and a body mesh, both transparent
-// glass); ReefBuilder places and orients it; crystalText.ts drives the etched text on the face.
+// glass); ReefBuilder places and orients it; crystalText.ts drives the etched text.
 import * as THREE from 'three';
 import { addCaustics } from '../water.js';
-import { gpuActive } from '../webgpu/tsl.js';
-import { gpuCrystalMaterial } from './crystalGpu.js';
+import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { gpuCrystalMaterial, type GpuCrystalOptions } from './crystalGpu.js';
 import { isMesh } from './flags.js';
-import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask, type CrystalTextRegion } from './crystalMask.js';
+import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
 import { crystalBgUniforms } from './crystalBg.js';
 
 /** How near a triangle's normal must be to the face's normal to belong to the face (dot product). */
 const FACE_NORMAL_DOT = 0.93;
-/** Etched-mask texture width in pixels (height follows the face's aspect). */
+/** Etched-mask texture width in pixels (height follows the rock's projected silhouette aspect). */
 const FACE_TEXTURE_W = 1024;
 /** Slight cyan tint of the glass (Beer-Lambert attenuation). */
 const ATTENUATION_COLOR = new THREE.Color(0.72, 0.92, 1.0);
@@ -30,10 +36,16 @@ const FACE_ETCH_TRANSMISSION = 0.5;
 const FACE_DARK = 0.5;
 /** The frosted letters' soft ice-white scatter, added over the refracted background. */
 const FROST_COLOR = new THREE.Color(0.36, 0.44, 0.54);
+/** The frame's etched letters mix toward this roughness (frosted), while the clear frame keeps its own. */
+const FROST_ROUGH = 0.85;
+/** Recessed groove depth (local units): drives the engraved normal tilt and the cheap parallax. */
+const GROOVE_DEPTH = 0.05;
+/** Blur radius of the etched mask's red channel (text UVs), turning the glyph edge into a groove slope. */
+const GROOVE_BLUR = 0.02;
+/** The frosted letter floor is this much brighter than the surrounding clear glass. */
+const GROOVE_BRIGHT = 1.07;
 /** Max refraction displacement along the face normal, world units (the cluster's real depth is ~1). */
 const BODY_THICKNESS_MAX = 0.34;
-/** The face's UVs are inset by this much (of the canvas) so its texture never samples the clamped edge. */
-const FACE_UV_MARGIN = 0.06;
 
 /** The flat face, in the group's local space, as plain numbers (userData must survive JSON cloning). */
 export interface CrystalFaceInfo {
@@ -41,13 +53,14 @@ export interface CrystalFaceInfo {
   readonly u: readonly [number, number, number];
   readonly v: readonly [number, number, number];
   readonly center: readonly [number, number, number];
+  /** The face's own width along u (used to scale the placed sign to a target face width). */
   readonly extentU: number;
-  readonly extentV: number;
-  /** Minimum projected u/v of the face's vertices: UV 0..1 maps the face's bounding box. */
-  readonly u0: number;
-  readonly v0: number;
-  /** The etched-text area inside the face's outline, as [u0,u1,v0,v1] fractions of the bounding box. */
-  readonly text: readonly [number, number, number, number];
+  /** The whole rock's projected silhouette on the text plane, around the face's centre: [u0, v0] is the
+   *  lower bound and silExtentU/V the 2D size, so u = (p·u - centre·u - silU0) / silExtentU maps 0..1. */
+  readonly silU0: number;
+  readonly silV0: number;
+  readonly silExtentU: number;
+  readonly silExtentV: number;
 }
 
 const FACE_INFO_KEY = 'crystalFace';
@@ -137,51 +150,6 @@ function mergedGeometry(group: THREE.Object3D): MergedGeometry | null {
 /** Key for an undirected triangle edge (two vertex indices). */
 const edge = (a: number, b: number): string => (a < b ? `${a},${b}` : `${b},${a}`);
 
-/** True when (x, y) is inside (or on) triangle a/b/c in the face's 2D bounding-box space. */
-function pointInFaceTriangle(x: number, y: number, a: readonly [number, number], b: readonly [number, number], c: readonly [number, number]): boolean {
-  const d1 = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
-  const d2 = (c[0] - b[0]) * (y - b[1]) - (c[1] - b[1]) * (x - b[0]);
-  const d3 = (a[0] - c[0]) * (y - c[1]) - (a[1] - c[1]) * (x - c[0]);
-  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
-}
-
-/**
- * The largest axis-aligned rectangle centred on the face that still lies fully inside the face's
- * actual triangles, as fractions of the face's bounding box. A coarse occupancy grid of the real
- * triangles is used (not their convex hull), so a concave or notched cleavage face shrinks the text
- * area instead of letting glyphs spill onto adjacent facets.
- */
-function faceTextInset(tris: readonly (readonly (readonly [number, number])[])[]): [number, number, number, number] {
-  const GRID = 64;
-  const occ = new Uint8Array(GRID * GRID);
-  for (let gy = 0; gy < GRID; gy++) {
-    for (let gx = 0; gx < GRID; gx++) {
-      const x = (gx + 0.5) / GRID, y = (gy + 0.5) / GRID;
-      for (const tri of tris) {
-        if (pointInFaceTriangle(x, y, tri[0]!, tri[1]!, tri[2]!)) { occ[gy * GRID + gx] = 1; break; }
-      }
-    }
-  }
-  const INSET = 0.02;   // keep the text off the face's edge (and the AA of the etched glyphs)
-  let best = 0, u0 = 0.5, u1 = 0.5, v0 = 0.5, v1 = 0.5;
-  const mid = GRID / 2;
-  for (let hw = 1; hw <= mid; hw++) {
-    for (let hh = 1; hh <= mid; hh++) {
-      const gx0 = mid - hw, gx1 = mid + hw - 1, gy0 = mid - hh, gy1 = mid + hh - 1;
-      let ok = true;
-      for (let gy = gy0; gy <= gy1 && ok; gy++) for (let gx = gx0; gx <= gx1; gx++) if (!occ[gy * GRID + gx]) { ok = false; break; }
-      if (!ok) continue;
-      const area = (2 * hw) * (2 * hh);
-      if (area > best) {
-        best = area;
-        u0 = (mid - hw) / GRID; u1 = (mid + hw) / GRID; v0 = (mid - hh) / GRID; v1 = (mid + hh) / GRID;
-      }
-    }
-  }
-  if (best === 0) return [0.3, 0.7, 0.3, 0.7];   // degenerate: keep the text well inside
-  return [u0 + INSET, u1 - INSET, v0 + INSET, v1 - INSET];
-}
-
 interface FaceSplit {
   readonly faceIdx: Uint32Array;
   readonly bodyIdx: Uint32Array;
@@ -190,7 +158,8 @@ interface FaceSplit {
 
 /**
  * Finds the largest near-planar, connected cluster of triangles (the cleavage face), and returns that
- * face's triangles plus the rest, with a plane basis and extents for the etched text.
+ * face's triangles plus the rest, with a text plane: centred on the face, normal = the face normal,
+ * up = world-up projected onto the plane, and the whole rock's projected silhouette for the text size.
  */
 function splitFace(geo: MergedGeometry): FaceSplit | null {
   const { pos, idx } = geo;
@@ -277,14 +246,16 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
   }
   if (fn.lengthSq() < 1e-9) return null;
   fn.normalize();
+  // Up = world-up projected onto the plane (falls back to world Z when the plane is near-horizontal,
+  // so the "up" axis never degenerates; orientCrystal then maps this v to world-up in the tank).
   const ref = Math.abs(fn.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
   const fu = new THREE.Vector3().crossVectors(ref, fn).normalize();
   const fv = new THREE.Vector3().crossVectors(fn, fu).normalize();
 
-  // Extents and centre of the face's vertices in the plane.
-  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  // Centre and width of the face's vertices in the plane.
   const centre = new THREE.Vector3();
   let verts = 0;
+  let minU = Infinity, maxU = -Infinity;
   const seen = new Set<number>();
   for (let t = 0; t < tris; t++) {
     if (!face[t]) continue;
@@ -295,26 +266,22 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
       p0.fromArray(pos, vi * 3);
       centre.add(p0);
       verts++;
-      const u = p0.dot(fu), v = p0.dot(fv);
+      const u = p0.dot(fu);
       if (u < minU) minU = u; if (u > maxU) maxU = u;
-      if (v < minV) minV = v; if (v > maxV) maxV = v;
     }
   }
   if (!verts) return null;
   centre.multiplyScalar(1 / verts);
-  // The face's triangles in bounding-box fractions, and the text area that fits inside the real face.
-  const faceTris: [number, number][][] = [];
-  for (let t = 0; t < tris; t++) {
-    if (!face[t]) continue;
-    const tri: [number, number][] = [];
-    for (let k = 0; k < 3; k++) {
-      const vi = idx[t * 3 + k] as number;
-      p0.fromArray(pos, vi * 3);
-      tri.push([(p0.dot(fu) - minU) / (maxU - minU), (p0.dot(fv) - minV) / (maxV - minV)]);
-    }
-    faceTris.push(tri);
+
+  // The whole rock's projected silhouette on the text plane, measured around the face's centre.
+  let silU0 = Infinity, silU1 = -Infinity, silV0 = Infinity, silV1 = -Infinity;
+  for (let i = 0; i < pos.length / 3; i++) {
+    p0.fromArray(pos, i * 3);
+    const du = p0.dot(fu) - centre.dot(fu);
+    const dv = p0.dot(fv) - centre.dot(fv);
+    if (du < silU0) silU0 = du; if (du > silU1) silU1 = du;
+    if (dv < silV0) silV0 = dv; if (dv > silV1) silV1 = dv;
   }
-  const text = faceTextInset(faceTris);
 
   const faceIdx = new Uint32Array(face.reduce((a, b) => a + b, 0) * 3);
   const bodyIdx = new Uint32Array((tris - face.reduce((a, b) => a + b, 0)) * 3);
@@ -328,8 +295,9 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
     faceIdx, bodyIdx,
     info: {
       n: [fn.x, fn.y, fn.z], u: [fu.x, fu.y, fu.z], v: [fv.x, fv.y, fv.z],
-      center: [centre.x, centre.y, centre.z], extentU: maxU - minU, extentV: maxV - minV,
-      u0: minU, v0: minV, text,
+      center: [centre.x, centre.y, centre.z],
+      extentU: maxU - minU,
+      silU0, silV0, silExtentU: silU1 - silU0, silExtentV: silV1 - silV0,
     },
   };
 }
@@ -342,8 +310,15 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
 // render of the reef behind it (crystalBg.ts). Flat shading, a little iridescence and a tight specular
 // read as a mineral crystal rather than a smooth water blob.
 
+/** The etched text plane and shared mask/fade the face and body materials both use. */
+interface CrystalEtch {
+  readonly mask: THREE.CanvasTexture;
+  readonly fade: { value: number };
+  /** The shared TSL fade uniform (WebGPU): CrystalSign mutates fade.value, which drives this node. */
+  readonly fadeNode: { value: number } | null;
+}
+
 interface CrystalShaderOptions {
-  readonly face: boolean;
   readonly transmission: number;
   readonly thickness: number;
   readonly tint: THREE.Color;
@@ -351,22 +326,30 @@ interface CrystalShaderOptions {
   readonly etchTrans: number;
   readonly frost: THREE.Color;
   readonly dark: number;
+  /** How the etched letters read against the clear glass: the plaque polishes its clear area, while
+   *  the frame keeps its clear glass and only frosts the letters. */
+  readonly frostMode: 'plaque' | 'frame';
+  readonly plane: CrystalFaceInfo;
 }
 
-/** The faceted crystal body, caustic-lit like the rest of the reef. */
-function bodyMaterial(thickness: number): THREE.MeshPhysicalMaterial {
+/** The faceted crystal body, caustic-lit like the rest of the reef, etched by planar projection. */
+function bodyMaterial(thickness: number, etch: CrystalEtch, plane: CrystalFaceInfo): THREE.MeshPhysicalMaterial {
   const options = {
-    face: false, transmission: BODY_TRANSMISSION, thickness: Math.min(BODY_THICKNESS_MAX, thickness),
-    tint: ATTENUATION_COLOR.clone(), f0: CRYSTAL_F0, etchTrans: 0, frost: FROST_COLOR.clone(), dark: 0,
+    transmission: BODY_TRANSMISSION, thickness: Math.min(BODY_THICKNESS_MAX, thickness),
+    tint: ATTENUATION_COLOR.clone(), f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK,
+    frostMode: 'frame', plane,
   } as const;
   if (gpuActive()) {
-    return gpuCrystalMaterial({
+    const mat = gpuCrystalMaterial({
       color: 0xffffff, roughness: 0.15, metalness: 0,
       flatShading: true,
       iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessRange: [100, 400],
       specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
       envMapIntensity: 0.35,
-    }, options);
+    }, gpuOptions(options, etch), etch.fadeNode);
+    mat.userData['crystalMask'] = etch.mask;
+    mat.userData['crystalFade'] = etch.fade;
+    return mat;
   }
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, roughness: 0.15, metalness: 0,
@@ -375,57 +358,55 @@ function bodyMaterial(thickness: number): THREE.MeshPhysicalMaterial {
     specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
     envMapIntensity: 0.35,
   });
+  mat.userData['crystalMask'] = etch.mask;
+  mat.userData['crystalFade'] = etch.fade;
   return addCrystalShader(addCaustics(mat), options);
 }
 
-/** The etched face: the same glass, with the etched mask fading in via uCrystalFade. */
-function makeFaceMaterial(aspect: number, textRegion: CrystalTextRegion): THREE.MeshPhysicalMaterial {
-  const canvas = document.createElement('canvas');
-  canvas.width = FACE_TEXTURE_W;
-  canvas.height = Math.max(1, Math.round(FACE_TEXTURE_W / Math.max(0.1, aspect)));
-  const mask = new THREE.CanvasTexture(canvas);
-  mask.colorSpace = THREE.NoColorSpace;
-  mask.minFilter = THREE.LinearFilter;
-  mask.magFilter = THREE.LinearFilter;
-  mask.generateMipmaps = false;
-  mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
-  renderMask(canvas, DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, textRegion);
-
+/** The etched face plaque: the same clear glass, with the frosted letters shared with the body. */
+function makeFaceMaterial(etch: CrystalEtch, plane: CrystalFaceInfo): THREE.MeshPhysicalMaterial {
+  const options = {
+    transmission: FACE_TRANSMISSION, thickness: 0, tint: new THREE.Color(1, 1, 1),
+    f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK,
+    frostMode: 'plaque', plane,
+  } as const;
   if (gpuActive()) {
-    const fade = { value: 1 };
     const mat = gpuCrystalMaterial({
       color: 0xffffff, roughness: 0.8, metalness: 0,
       specularIntensity: 0.6, specularColor: new THREE.Color(1, 1, 1),
       envMapIntensity: 0.25,
-    }, {
-      face: true, transmission: FACE_TRANSMISSION, thickness: 0, tint: new THREE.Color(1, 1, 1),
-      f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK, mask, fade,
-    });
-    mat.userData['crystalMask'] = mask;
-    mat.userData['crystalAspect'] = aspect;
-    mat.userData['crystalFade'] = fade;
-    mat.userData['crystalTextRegion'] = textRegion;
+    }, gpuOptions(options, etch), etch.fadeNode);
+    mat.userData['crystalMask'] = etch.mask;
+    mat.userData['crystalFade'] = etch.fade;
     return mat;
   }
-
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, roughness: 0.8, metalness: 0,
     specularIntensity: 0.6, specularColor: new THREE.Color(1, 1, 1),
     envMapIntensity: 0.25,
   });
-  mat.userData['crystalMask'] = mask;
-  mat.userData['crystalAspect'] = aspect;
-  mat.userData['crystalFade'] = { value: 1 };
-  mat.userData['crystalTextRegion'] = textRegion;
-  return addCrystalShader(addCaustics(mat), {
-    face: true, transmission: FACE_TRANSMISSION, thickness: 0, tint: new THREE.Color(1, 1, 1),
-    f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK,
-  });
+  mat.userData['crystalMask'] = etch.mask;
+  mat.userData['crystalFade'] = etch.fade;
+  return addCrystalShader(addCaustics(mat), options);
+}
+
+/** The GPU material options (the WebGL path reads the same numbers from the shader options). */
+function gpuOptions(options: CrystalShaderOptions, etch: CrystalEtch): GpuCrystalOptions {
+  return {
+    transmission: options.transmission, thickness: options.thickness, tint: options.tint, f0: options.f0,
+    etchTrans: options.etchTrans, frost: options.frost, dark: options.dark, frostMode: options.frostMode,
+    mask: etch.mask,
+    textN: new THREE.Vector3(...options.plane.n), textU: new THREE.Vector3(...options.plane.u), textV: new THREE.Vector3(...options.plane.v),
+    textCenter: new THREE.Vector3(...options.plane.center),
+    silU0: options.plane.silU0, silV0: options.plane.silV0, silExtentU: options.plane.silExtentU, silExtentV: options.plane.silExtentV,
+    groove: GROOVE_DEPTH, grooveBlur: GROOVE_BLUR, grooveBright: GROOVE_BRIGHT,
+  };
 }
 
 /**
- * Patches the material to mix in the sub-frustum transmission background (uCrystalBg), and, for the
- * face, frost the etched letters (roughness from the mask's green channel) and fade them (uCrystalFade).
+ * Patches the material to mix in the sub-frustum transmission background (uCrystalBg), and etch the
+ * frosted letters by planar projection: project the fragment's local position onto the text plane,
+ * sample the shared mask, and fade the etch by how near the fragment's normal is to the face normal.
  */
 function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShaderOptions): THREE.MeshPhysicalMaterial {
   const fade = mat.userData['crystalFade'] as { value: number } | undefined;
@@ -443,12 +424,21 @@ function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShade
       uCrystalEtchTrans: { value: options.etchTrans },
       uCrystalFrost: { value: options.frost },
       uCrystalDark: { value: options.dark },
+      uTextN: { value: new THREE.Vector3(...options.plane.n) },
+      uTextU: { value: new THREE.Vector3(...options.plane.u) },
+      uTextV: { value: new THREE.Vector3(...options.plane.v) },
+      uTextCenter: { value: new THREE.Vector3(...options.plane.center) },
+      uTextU0: { value: options.plane.silU0 },
+      uTextV0: { value: options.plane.silV0 },
+      uTextInvExtU: { value: 1 / Math.max(1e-6, options.plane.silExtentU) },
+      uTextInvExtV: { value: 1 / Math.max(1e-6, options.plane.silExtentV) },
+      uCrystalGroove: { value: GROOVE_DEPTH },
+      uCrystalGrooveBlur: { value: GROOVE_BLUR },
+      uCrystalBright: { value: GROOVE_BRIGHT },
+      uEtchTex: { value: mat.userData['crystalMask'] as THREE.Texture },
     });
-    if (options.face) {
-      shader.uniforms['uEtchTex'] = { value: mat.userData['crystalMask'] as THREE.Texture };
-      shader.vertexShader = 'varying vec2 vCrystalUv;\n' + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace('void main() {', 'void main() {\n\tvCrystalUv = uv;');
-    }
+    shader.vertexShader = 'varying vec3 vCrystalLocal;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', 'vCrystalLocal = transformed.xyz;\n#include <project_vertex>');
 
     const head = `
 uniform sampler2D uCrystalBg;
@@ -463,43 +453,91 @@ uniform float uCrystalEtchTrans;
 uniform float uCrystalDark;
 uniform vec3 uCrystalTint;
 uniform vec3 uCrystalFrost;
-${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
+uniform sampler2D uEtchTex;
+uniform vec3 uTextN;
+uniform vec3 uTextU;
+uniform vec3 uTextV;
+uniform vec3 uTextCenter;
+uniform float uTextU0;
+uniform float uTextV0;
+uniform float uTextInvExtU;
+uniform float uTextInvExtV;
+uniform float uCrystalGroove;
+uniform float uCrystalGrooveBlur;
+uniform float uCrystalBright;
+uniform mat4 modelMatrix;
+varying vec3 vCrystalLocal;
 `;
     shader.fragmentShader = head + shader.fragmentShader;
 
-    if (options.face) {
-      shader.fragmentShader = shader.fragmentShader.replace('void main() {',
-        'void main() {\n\tvec4 crystalMask = texture2D( uEtchTex, vCrystalUv );\n\tfloat crystalEtch = ( 1.0 - crystalMask.r ) * uCrystalFade;\n\tfloat crystalDark = crystalMask.b * uCrystalFade;');
-      const roughness = THREE.ShaderChunk['roughnessmap_fragment'];
-      if (roughness.includes('roughnessFactor *= texelRoughness.g;')) {
-        shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>',
-          roughness.replace('float roughnessFactor = roughness;', 'float roughnessFactor = roughness;\n\troughnessFactor *= mix( 1.0, crystalMask.g, uCrystalFade );'));
-      } else {
-        console.warn('crystal: three.js roughness chunk changed; frost off');
-      }
+    shader.fragmentShader = shader.fragmentShader.replace('void main() {',
+      `void main() {
+    vec3 crystalNLocal = normalize( cross( dFdx( vCrystalLocal ), dFdy( vCrystalLocal ) ) );
+    float crystalFacing = smoothstep( 0.3, 0.5, dot( crystalNLocal, uTextN ) );
+    vec2 crystalTextUv = vec2(
+      ( dot( vCrystalLocal - uTextCenter, uTextU ) - uTextU0 ) * uTextInvExtU,
+      ( dot( vCrystalLocal - uTextCenter, uTextV ) - uTextV0 ) * uTextInvExtV );
+    vec4 crystalMask = texture2D( uEtchTex, crystalTextUv );
+    // Blur the clarity channel into a distance-field-like groove height (0 outside, 1 inside).
+    float crystalBlurR = ( crystalMask.r
+      + texture2D( uEtchTex, crystalTextUv + vec2( uCrystalGrooveBlur, 0.0 ) ).r
+      + texture2D( uEtchTex, crystalTextUv - vec2( uCrystalGrooveBlur, 0.0 ) ).r
+      + texture2D( uEtchTex, crystalTextUv + vec2( 0.0, uCrystalGrooveBlur ) ).r
+      + texture2D( uEtchTex, crystalTextUv - vec2( 0.0, uCrystalGrooveBlur ) ).r ) / 5.0;
+    float crystalLetter = 1.0 - crystalBlurR;
+    // The groove height's gradient in the text plane, from screen derivatives of the letter mask and
+    // the projected plane coordinates (du, dv).
+    float crystalDu = dot( vCrystalLocal - uTextCenter, uTextU );
+    float crystalDv = dot( vCrystalLocal - uTextCenter, uTextV );
+    float crystalLdx = dFdx( crystalLetter ), crystalLdy = dFdy( crystalLetter );
+    float crystalDudx = dFdx( crystalDu ), crystalDudy = dFdy( crystalDu );
+    float crystalDvdx = dFdx( crystalDv ), crystalDvdy = dFdy( crystalDv );
+    float crystalDet = crystalDudx * crystalDvdy - crystalDvdx * crystalDudy;
+    float crystalDletterdu = ( crystalLdx * crystalDvdy - crystalLdy * crystalDvdx ) / crystalDet;
+    float crystalDletterdv = ( crystalDudx * crystalLdy - crystalDudy * crystalLdx ) / crystalDet;
+    vec3 crystalPerturbW = ( modelMatrix * vec4( uTextU * crystalDletterdu + uTextV * crystalDletterdv, 0.0 ) ).xyz;
+    float crystalEtch = crystalLetter * crystalFacing * uCrystalFade;
+    float crystalDark = crystalMask.b * crystalFacing * uCrystalFade;`);
+
+    const roughness = THREE.ShaderChunk['roughnessmap_fragment'];
+    if (roughness.includes('roughnessFactor *= texelRoughness.g;')) {
+      const frost = options.frostMode === 'plaque'
+        ? 'roughnessFactor *= mix( 1.0, crystalMask.g, uCrystalFade );'
+        : `roughnessFactor = mix( roughnessFactor, ${FROST_ROUGH.toFixed(3)}, crystalEtch );`;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>',
+        roughness.replace('float roughnessFactor = roughness;', `float roughnessFactor = roughness;\n\t${frost}`));
+    } else {
+      console.warn('crystal: three.js roughness chunk changed; frost off');
     }
 
     const mixCode = `
   {
-    ${options.face ? '' : 'float crystalEtch = 0.0;\n    float crystalDark = 0.0;'}
     vec3 crystalV = normalize( cameraPosition - vCW );
     vec3 crystalN = normalize( inverseTransformDirection( normal, viewMatrix ) );
-    vec3 crystalR = refract( -crystalV, crystalN, 1.0 / uCrystalIor );
-    vec3 crystalExit = vCW + crystalR * uCrystalThickness;
+    // The etched groove perturbs the flat normal toward the letter walls, so the cut walls catch
+    // light and refract differently from the facet around them.
+    vec3 crystalNEngraved = normalize( crystalN + crystalPerturbW * uCrystalGroove );
+    vec3 crystalR = refract( -crystalV, crystalNEngraved, 1.0 / uCrystalIor );
+    // Cheap parallax: the letter floor is recessed, so it looks through a little less glass.
+    float crystalThick = max( 0.0, uCrystalThickness - crystalLetter * uCrystalGroove );
+    vec3 crystalExit = vCW + crystalR * crystalThick;
     vec4 crystalNdc = uCrystalBgProj * vec4( crystalExit, 1.0 );
     vec2 crystalUv = crystalNdc.xy / max( 1e-5, crystalNdc.w ) * 0.5 + 0.5;
     crystalUv = clamp( crystalUv, vec2( 0.0 ), vec2( 1.0 ) );
     vec3 crystalTransmitted = texture2D( uCrystalBg, crystalUv ).rgb * uCrystalTint * uCrystalTransmission;
-    ${options.face ? 'crystalTransmitted = mix( crystalTransmitted, crystalTransmitted * uCrystalEtchTrans + uCrystalFrost, crystalEtch );' : ''}
-    float crystalCosT = max( dot( crystalN, crystalV ), 0.0 );
+    crystalTransmitted = mix( crystalTransmitted, crystalTransmitted * uCrystalEtchTrans + uCrystalFrost, crystalEtch );
+    // The frosted floor reads a touch brighter than the surrounding clear glass.
+    crystalTransmitted *= mix( 1.0, uCrystalBright, crystalEtch );
+    // Fresnel with the engraved normal: one wall grazes (bright reflection), the other stays clear.
+    float crystalCosT = max( dot( crystalNEngraved, crystalV ), 0.0 );
     float crystalF = uCrystalF0 + ( 1.0 - uCrystalF0 ) * pow( 1.0 - crystalCosT, 5.0 );
     outgoingLight = mix( crystalTransmitted, outgoingLight, crystalF );
-    ${options.face ? 'outgoingLight *= ( 1.0 - crystalDark * uCrystalDark );' : ''}
+    outgoingLight *= ( 1.0 - crystalDark * uCrystalDark );
   }
 `;
     shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', mixCode + '#include <opaque_fragment>');
   };
-  mat.customProgramCacheKey = () => prevKey() + (options.face ? '|crystalface' : '|crystalbody');
+  mat.customProgramCacheKey = () => prevKey() + (options.frostMode === 'plaque' ? '|crystalplaque' : '|crystalframe');
   return mat;
 }
 
@@ -507,8 +545,9 @@ ${options.face ? 'uniform sampler2D uEtchTex;\nvarying vec2 vCrystalUv;' : ''}
 // Group construction
 
 /**
- * Rebuilds a normalised crystal scenery group as two glass meshes: the flat face (which carries the
- * etched text) and the body. Registers the shared face material for crystalText.ts.
+ * Rebuilds a normalised crystal scenery group as two glass meshes: the flat face and the body, both
+ * etched by planar projection so letters continue across the facet borders. Registers the shared face
+ * material for crystalText.ts.
  */
 export function makeCrystal(group: THREE.Group): THREE.Group {
   const original = group.children.slice();
@@ -519,20 +558,42 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
   if (geo) {
     const split = splitFace(geo);
     if (split) {
-      const aspect = split.info.extentV > 1e-6 ? split.info.extentU / split.info.extentV : 1;
-      const fn = new THREE.Vector3(...split.info.n), fu = new THREE.Vector3(...split.info.u), fv = new THREE.Vector3(...split.info.v);
-      // The face's text area, remapped from bounding-box fractions onto the face's UV inset.
-      const [tu0, tu1, tv0, tv1] = split.info.text;
-      const textRegion: CrystalTextRegion = [
-        FACE_UV_MARGIN + (1 - 2 * FACE_UV_MARGIN) * tu0,
-        FACE_UV_MARGIN + (1 - 2 * FACE_UV_MARGIN) * tv0,
-        FACE_UV_MARGIN + (1 - 2 * FACE_UV_MARGIN) * tu1,
-        FACE_UV_MARGIN + (1 - 2 * FACE_UV_MARGIN) * tv1,
-      ];
+      const fn = new THREE.Vector3(...split.info.n);
 
-      // Face geometry: planar UVs over the face's bounding box (0..1 = its visual centre), flat normals.
+      // The etched mask covers the whole rock's projected silhouette on the text plane.
+      const silAspect = split.info.silExtentV > 1e-6 ? split.info.silExtentU / split.info.silExtentV : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = FACE_TEXTURE_W;
+      canvas.height = Math.max(1, Math.round(FACE_TEXTURE_W / Math.max(0.1, silAspect)));
+      const mask = new THREE.CanvasTexture(canvas);
+      mask.colorSpace = THREE.NoColorSpace;
+      mask.minFilter = THREE.LinearFilter;
+      mask.magFilter = THREE.LinearFilter;
+      mask.generateMipmaps = false;
+      mask.wrapS = mask.wrapT = THREE.ClampToEdgeWrapping;
+      renderMask(canvas, DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL);
+
+      // One fade value drives both materials; on WebGPU it wraps one shared TSL uniform node.
+      const fade = { value: 1 };
+      let fadeNode: { value: number } | null = null;
+      if (gpuActive()) {
+        const node = tsl().uniform(fade.value) as unknown as { value: number };
+        fadeNode = node;
+        Object.defineProperty(fade, 'value', {
+          get: (): number => node.value,
+          set: (v: number): void => { node.value = v; },
+          configurable: true,
+          enumerable: true,
+        });
+      }
+      const etch: CrystalEtch = { mask, fade, fadeNode };
+
+      // Face geometry: flat normals plus a projected uv (the etch itself is sampled by planar
+      // projection in the shader, but a uv attribute keeps TSL from warning about the missing one).
+      const fu = new THREE.Vector3(...split.info.u), fv = new THREE.Vector3(...split.info.v);
+      const centre = new THREE.Vector3(...split.info.center);
       const remap = new Int32Array(geo.pos.length / 3).fill(-1);
-      const fpos: number[] = [], fuv: number[] = [], fnrm: number[] = [];
+      const fpos: number[] = [], fnrm: number[] = [], fuv: number[] = [];
       const faceIdx = new Uint32Array(split.faceIdx.length);
       for (let i = 0; i < split.faceIdx.length; i++) {
         const vi = split.faceIdx[i] as number;
@@ -543,9 +604,8 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
           const p = new THREE.Vector3(geo.pos[vi * 3] as number, geo.pos[vi * 3 + 1] as number, geo.pos[vi * 3 + 2] as number);
           fpos.push(p.x, p.y, p.z);
           fnrm.push(fn.x, fn.y, fn.z);
-          const u = (p.dot(fu) - split.info.u0) / split.info.extentU;
-          const v = (p.dot(fv) - split.info.v0) / split.info.extentV;
-          fuv.push(FACE_UV_MARGIN + (1 - 2 * FACE_UV_MARGIN) * Math.min(1, Math.max(0, u)), FACE_UV_MARGIN + (1 - 2 * FACE_UV_MARGIN) * Math.min(1, Math.max(0, v)));
+          fuv.push((p.dot(fu) - centre.dot(fu) - split.info.silU0) / split.info.silExtentU,
+                   (p.dot(fv) - centre.dot(fv) - split.info.silV0) / split.info.silExtentV);
         }
         faceIdx[i] = mapped;
       }
@@ -576,9 +636,9 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
       // The crystal is a transparent object: on the Roku it is baked into the backdrop (behind the
       // fish sprites), not the transparent foreground layer, where its transmission would bake black.
       group.userData['backdropOnly'] = true;
-      const faceMat = makeFaceMaterial(aspect, textRegion);
+      const faceMat = makeFaceMaterial(etch, split.info);
       faceMaterial = faceMat;
-      const body = new THREE.Mesh(bodyGeo, bodyMaterial(Math.max(0.02, maxN - minN)));
+      const body = new THREE.Mesh(bodyGeo, bodyMaterial(Math.max(0.02, maxN - minN), etch, split.info));
       body.name = 'crystal-body';
       body.castShadow = body.receiveShadow = true;
       const face = new THREE.Mesh(faceGeo, faceMat);
@@ -591,7 +651,9 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
 
   // Fallback (no detectable flat face): keep the original meshes, re-materialled as plain glass.
   if (!built) {
-    const fallback = bodyMaterial(0.2);
+    const fallback = bodyMaterial(0.2, { mask: blankEtchMask(), fade: { value: 1 }, fadeNode: null }, {
+      n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1], center: [0, 0, 0], extentU: 1, silU0: -0.5, silV0: -0.5, silExtentU: 1, silExtentV: 1,
+    });
     for (const child of original) group.add(child);
     group.traverse((o) => { if (isMesh(o)) o.material = fallback; });
   } else {
@@ -600,6 +662,21 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
     }
   }
   return group;
+}
+
+/** A blank 2x2 etch mask for the fallback body (all clear, no etched text). */
+function blankEtchMask(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 2;
+  const g = canvas.getContext('2d');
+  if (g) { g.fillStyle = 'rgb(255,16,0)'; g.fillRect(0, 0, 2, 2); }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
 }
 
 /** The merged geometry of a list of objects (their meshes are expected to be group-local). */
