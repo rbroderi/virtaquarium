@@ -1,5 +1,5 @@
 // Fish lab: inspect one species (or all of them) up close under the tank's lighting and water.
-// URL: lab.html?sp=clownfish&yaw=30&swim=0   or   lab.html?sp=all   or   lab.html?sp=clownfish&compare=1
+// URL: lab.html?sp=clownfish&yaw=30&swim=0 (fan=tank: still fans in the tank's rest pose)   or   lab.html?sp=all   or   lab.html?sp=clownfish&compare=1
 // The page wiring is here; the lab itself (scene, poses, lights) is FishLab in lab/fishLab.ts, which
 // implements the LabHost port the reference-photo tool (labRef) drives.
 import { SPECIES } from './species.js';
@@ -24,6 +24,7 @@ const options: LabOptions = {
   rig: params.get('rig') || 'sun',
   photo: params.has('photo') && params.get('photo') !== '0',
   fNumber: Number(params.get('fstop')) || DEFAULT_LAB_F_NUMBER,
+  tankFan: params.get('fan') === 'tank',
 };
 
 const canvas = requireElement('lab', HTMLCanvasElement);

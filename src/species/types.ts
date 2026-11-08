@@ -106,12 +106,20 @@ export interface PolyOp { op: 'poly'; color: string; pts: Point2[] }
 export interface BlobOp { op: 'blob'; u: number; v: number; ru: number; rv: number; color: string; soft: number }
 // Rings round a point (the lionfish's head stripes, bent round its eye): n bands at radii r0 + i * dr
 // (TL) between angles a0 and a1 (degrees; 0 points to the tail, 90 to the belly), w wide (TL), clipped
-// to u <= uMax; spokes: bars out from the centre at these angles, from spokeR0 to spokeR1, spokeW wide.
+// to u <= uMax; spokes: bars out from the centre at these angles, from spokeR0 to spokeR1, spokeW wide
+// (or [angle, width] for a bar of its own width).
 export interface RingsOp {
   op: 'rings'; u: number; v: number; n: number; r0: number; dr: number; w: number; a0: number; a1: number; color: string;
-  uMax?: number; spokes?: number[]; spokeR0?: number; spokeR1?: number; spokeW?: number;
+  uMax?: number; spokes?: (number | readonly [number, number])[]; spokeR0?: number; spokeR1?: number; spokeW?: number;
 }
-export interface StripesVOp { op: 'stripesV'; u0: number; u1: number; n: number; color: string; ratio: number; alpha?: number }
+// Vertical bars from u0 to u1: n bars, ratio of the pitch dark. lean: degrees off vertical, tops towards
+// the tail; dense: bars closer together and narrower towards u1 (0 even, 0.5 about half the pitch at the
+// end); split: bars (by index) parted down the middle by a thin pale line; fork: bars that part into a Y
+// over the back, above forkV (v as for the eye: -1 dorsal, default -0.2).
+export interface StripesVOp {
+  op: 'stripesV'; u0: number; u1: number; n: number; color: string; ratio: number; alpha?: number;
+  lean?: number; dense?: number; split?: number[]; fork?: number[]; forkV?: number;
+}
 export interface StripesHOp { op: 'stripesH'; n: number; color: string; w: number; tilt: number; u0: number; u1: number }
 export interface SpotsOp { op: 'spots'; n: number; r: number; color: string; u0: number; u1: number; v0: number; v1: number; seed: number }
 export interface BlotchRow { v: number; du?: number }
@@ -232,7 +240,12 @@ export interface Pectoral extends FinSpots {
   rayColor?: string;
   rayR?: number;
   flag?: number;
+  /** Fans: membrane depth between rays, as a share of the shorter ray (the rest stands free). */
   web?: number;
+  /** Fans: ray lengths as a share of len, [t, share] with t from the top ray (0) to the bottom one (1). */
+  rayLen?: readonly (readonly [number, number])[];
+  /** Fans: rest pose in the tank (rad; defaults to FAN_POSE): roll about the body axis, opening, droop. */
+  pose?: { readonly roll: number; readonly yaw: number; readonly flap: number };
 }
 
 /** A raised or grooved line on the head (bony stays, grooves, lips). */

@@ -1,7 +1,7 @@
 // The body skin: the species' pattern painted in (u, v) body space, then the imbricated scale lattice,
 // pigment, melanin shading and the packed normal / iridescence / cavity-roughness maps derived from it.
 import { clamp, lerp, mulberry32, makeCanvas, rgba, context2d } from '../util.js';
-import type { BlotchesOp, PatternOp, RingsOp, Species, SpotsOp } from '../species/types.js';
+import type { BlotchesOp, PatternOp, RingsOp, Species, SpotsOp, StripesVOp } from '../species/types.js';
 import { cellHash, gillOf, gillU, mouthOf, naresOf, smooth01, type Profile } from './profile.js';
 import { organicPass, roundCorners, wobble } from '../core/organic.js';
 import { VARIANT_SEED_STRIDE } from './variant.js';
@@ -66,6 +66,45 @@ function bandPath({ g, U, V }: Painter, u: number, w: number, curve: number): vo
   g.closePath();
 }
 
+// A bar between vA and vB (v as for the eye), centred on c(v) and hw(v) either side of it (u).
+function barPath({ g, U, V }: Painter, c: (v: number) => number, hw: (v: number) => number, vA = -1.2, vB = 1.2): void {
+  const N = 20, vs = Array.from({ length: N + 1 }, (_, i) => lerp(vA, vB, i / N));
+  g.beginPath();
+  for (const v of vs) g.lineTo(U(c(v) - hw(v)), V(v));
+  for (const v of vs.reverse()) g.lineTo(U(c(v) + hw(v)), V(v));
+  g.closePath();
+}
+
+// stripesV: see StripesVOp. The lean is a physical angle, so the u offset grows with the local depth.
+function paintStripesV(P: Painter, p: StripesVOp): void {
+  const { g, len, prof } = P, k = Math.tan(((p.lean ?? 0) * Math.PI) / 180), dn = p.dense ?? 0;
+  const split = new Set(p.split ?? []), fork = new Set(p.fork ?? []), fv = p.forkV ?? -0.2;
+  const SPLIT_GAP = 0.24, ARM_W = 0.6, ARM_SPREAD = 0.45;
+  g.fillStyle = p.color;
+  for (let i = 0; i < p.n; i++) {
+    const t = (i + 0.5) / p.n, uc = lerp(p.u0, p.u1, t + dn * t * (1 - t));
+    const w = ((p.u1 - p.u0) / p.n) * p.ratio * (1 + dn - 2 * dn * t), h = prof.half(clamp(uc, 0, 1));
+    const curve = 0.012 * Math.sin(i);
+    const c = (v: number): number => uc + curve * (1 - v * v) - (v * h * k) / len;
+    const fill = (cc: (v: number) => number, hw: (v: number) => number, vA?: number, vB?: number): void => {
+      if (!split.has(i)) { barPath(P, cc, hw, vA, vB); g.fill(); return; }
+      // parted by a thin pale line: two bars either side of it
+      for (const s of [-1, 1]) {
+        barPath(P, (v) => cc(v) + (s * hw(v) * (1 + SPLIT_GAP)) / 2, (v) => (hw(v) * (1 - SPLIT_GAP)) / 2, vA, vB);
+        g.fill();
+      }
+    };
+    if (!fork.has(i)) { fill(c, () => w / 2); continue; }
+    // a Y: the stem below forkV, two narrower arms parting above it
+    fill(c, () => w / 2, fv - 0.05, 1.2);
+    const arm = (v: number): number => (ARM_SPREAD * w * Math.max(0, fv - v)) / (fv + 1.2);
+    for (const s of [-1, 1]) {
+      barPath(P, (v) => c(v) + s * (arm(v) + (w * (1 - ARM_W)) / 2), () => (w * ARM_W) / 2, -1.2, fv);
+      g.fill();
+    }
+  }
+}
+
 function paintSpots(P: Painter, p: SpotsOp): void {
   const { g, U, V, len, prof } = P;
   const r2 = mulberry32(p.seed || 1);
@@ -122,9 +161,10 @@ function paintRings(P: Painter, p: RingsOp): void {
     for (let k = STEPS; k >= 0; k--) { const a = (p.a0 + ((p.a1 - p.a0) * k) / STEPS) * D; g.lineTo(...at(rr(a, 1), a)); }
     g.closePath(); g.fill();
   }
-  const sw = p.spokeW ?? p.w, s0 = p.spokeR0 ?? 0, s1 = p.spokeR1 ?? p.r0 + p.n * p.dr;
-  for (const deg of p.spokes ?? []) {
+  const s0 = p.spokeR0 ?? 0, s1 = p.spokeR1 ?? p.r0 + p.n * p.dr;
+  for (const spoke of p.spokes ?? []) {
     // a tapering bar: sideways offsets at a given radius are angles of sw / 2 / r
+    const [deg, sw] = typeof spoke === 'number' ? [spoke, p.spokeW ?? p.w] : spoke;
     const a = deg * D, side = (r: number, s: number, k: number): [number, number] => at(r, a + (s * k * sw) / 2 / Math.max(r, sw));
     g.beginPath();
     g.lineTo(...side(s0, -1, 1)); g.lineTo(...side(s1, -1, 0.6)); g.lineTo(...side(s1, 1, 0.6)); g.lineTo(...side(s0, 1, 1));
@@ -157,15 +197,7 @@ function paintPatternOp(P: Painter, p: PatternOp): void {
       g.fillStyle = p.color; g.fill();
       break;
     }
-    case 'stripesV': {
-      const step = (p.u1 - p.u0) / p.n;
-      g.fillStyle = p.color;
-      for (let i = 0; i < p.n; i++) {
-        bandPath(P, p.u0 + step * (i + 0.5), step * p.ratio, 0.012 * Math.sin(i));
-        g.fill();
-      }
-      break;
-    }
+    case 'stripesV': paintStripesV(P, p); break;
     case 'stripesH': {
       g.strokeStyle = p.color;
       g.lineCap = 'round';

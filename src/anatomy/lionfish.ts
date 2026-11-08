@@ -7,6 +7,10 @@
 // body.tailP and body.ped are dropped too (fitted 0.64 and 0.614, a near-cylinder): the traces ran over the
 // soft dorsal and anal fins, so the peduncle came out twice its depth. species.ts sets them, measured from
 // photos and models, along with body.outline.
+// The fins (spine, soft dorsal and anal positions), caudal spread, pelvic and pectoral are dropped as well
+// (fitted spines 0.279-0.667, soft dorsal 0.647-0.95, anal 0.476-0.999, caudal spread 0.16, pelvic u 0.258,
+// pectoral u 0.27 and len 0.626): the eye, gill margin and fin bases sit 0.05-0.15 further back in side-on
+// photos and the fans' rays are 0.7-0.85 TL, longer than the traces could follow. species.ts sets them.
 import type { FittedAnatomy } from '../species/types.js';
 
 const fitted: FittedAnatomy = {
@@ -17,48 +21,8 @@ const fitted: FittedAnatomy = {
     "headP": 0.6,
     "hump": 0.039
   },
-  "fins": [
-    {
-      "u0": 0.279,
-      "u1": 0.667
-    },
-    {
-      "u0": 0.647,
-      "u1": 0.95
-    },
-    {
-      "u0": 0.476,
-      "u1": 0.999,
-      "sweep": 0.54,
-      "pts": [
-        [
-          0,
-          0.124
-        ],
-        [
-          0.4,
-          0.129
-        ],
-        [
-          1,
-          0.072
-        ]
-      ]
-    }
-  ],
-  "caudal": {
-    "spread": 0.16
-  },
-  "pelvic": {
-    "u": 0.258,
-    "len": 0.189,
-    "angle": 42
-  },
-  "pectoral": {
-    "u": 0.27,
-    "v": 0.308,
-    "len": 0.626
-  }
+  "fins": [],
+  "caudal": {}
 };
 
 export default fitted;

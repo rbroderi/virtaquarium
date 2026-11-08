@@ -4,7 +4,7 @@ import { mulberry32, makeCanvas, context2d } from '../util.js';
 import { organicPass } from '../core/organic.js';
 import { VARIANT_SEED_STRIDE } from './variant.js';
 import type { Pectoral, Species } from '../species/types.js';
-import type { P2, P3, Profile } from './profile.js';
+import { outlineCurve, type P2, type P3, type Profile } from './profile.js';
 import type { TubeSpec } from './fins.js';
 import { attribute } from './section.js';
 
@@ -31,8 +31,12 @@ function pectShape(p: Pectoral): PectShape {
 }
 // Pectoral ray count: from the species' meristics when known.
 const pectoralRays = (sp: Species): number => (sp.anatomy?.pectoralRays ?? (pectoralOf(sp).kind === 'fan' ? FAN_RAYS : BLADE_RAYS)) - 1;
-// Fan pectoral ray lengths (fraction of p.len): longest in the middle of the fan, slightly irregular.
-const fanLen = (sp: Species, i: number): number => { const n = pectoralRays(sp); return 0.8 + 0.15 * Math.sin(Math.PI * (0.2 + (0.7 * i) / n)) + 0.04 * Math.sin(i * 1.7); };
+// Fan pectoral ray lengths (fraction of p.len): p.rayLen when given (top ray 0 .. bottom ray 1), else
+// longest in the middle of the fan; slightly irregular either way.
+const fanLen = (sp: Species, i: number): number => {
+  const n = pectoralRays(sp), rl = pectoralOf(sp).rayLen, jitter = 0.04 * Math.sin(i * 1.7);
+  return rl ? Math.min(1, outlineCurve(rl)(i / n) + jitter) : 0.8 + 0.15 * Math.sin(Math.PI * (0.2 + (0.7 * i) / n)) + jitter;
+};
 // Fan rays rise from a short vertical base, not one point (in fractions of the fin length, canvas y down):
 // spread evenly along it, so the rays don't bunch into a hub where they meet the body.
 const FAN_BASE = 0.085;

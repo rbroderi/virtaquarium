@@ -3,7 +3,7 @@
 // the reference-photo tool (labRef) drives.
 import * as THREE from 'three';
 import { SPECIES, type Species } from '../species.js';
-import { buildFishModel, loadFishModel, mountPectoral, posePectoral, posePectoralFan, type FanPose, type FishModel } from '../fishModel.js';
+import { buildFishModel, loadFishModel, mountPectoral, posePectoral, posePectoralFan, FAN_POSE, type FanPose, type FishModel } from '../fishModel.js';
 import type { NormalisedModel } from '../fishModel/customModels.js';
 import { PhotoCamera } from '../photo.js';
 import { LightRig } from '../rig.js';
@@ -47,6 +47,8 @@ export interface LabOptions {
   readonly rig: string;
   readonly photo: boolean;
   readonly fNumber: number;
+  /** Still fans in the tank's rest pose (the species' or FAN_POSE) rather than the lab's flat spread. */
+  readonly tankFan?: boolean;
 }
 
 /** lab.hold({ vent, gape, erect, pect }): pin parts of the pose (null: animate). */
@@ -81,6 +83,7 @@ export class FishLab implements LabHost {
   private pitch: number;
   private spinning: boolean;
   private swimming: boolean;
+  private readonly tankFan: boolean;
   private comparing: boolean;
   private level = 1;
   private span = 1;
@@ -94,6 +97,7 @@ export class FishLab implements LabHost {
     this.pitch = options.pitch;
     this.spinning = options.spin;
     this.swimming = options.swim;
+    this.tankFan = !!options.tankFan;
     this.comparing = options.compare;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, MAX_PIXEL_RATIO));
@@ -218,6 +222,7 @@ export class FishLab implements LabHost {
     const r = Math.floor(i / cols), c = i % cols, rows = Math.ceil(count / cols);
     m.position.copy(CENTRE).add(count === 1 ? new THREE.Vector3() : new THREE.Vector3((c - (cols - 1) / 2) * GRID_DX, ((rows - 1) / 2 - r) * GRID_DY, 0));
     m.userData['len'] = len;
+    m.userData['fanPose'] = sp.pectoral?.pose ?? FAN_POSE;
     m.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true; });   // as in the tank (fish.ts)
     this.scene.add(m);
     return m;
@@ -281,7 +286,12 @@ export class FishLab implements LabHost {
     for (const p of m.pects) {
       // Fans: the lab's own spread (pectoralOutline assumes it), beating and rippling while swimming.
       if (m.fan && swim) posePectoralFan(p, t * PECT_RATE * FAN_RATE_SHARE, FAN_LAB_BEAT, LAB_FAN_POSE);
-      else if (m.fan) {
+      else if (m.fan && this.tankFan) {
+        const pose = m.userData['fanPose'] as FanPose;
+        p.rotation.set(p.side * pose.roll, p.side * pose.yaw, pose.flap);
+        p.uPBend?.value.setX(0);
+        p.uPWave?.value.set(0, 0);
+      } else if (m.fan) {
         p.rotation.set(0, p.side * FAN_SPREAD, 0);
         p.uPBend?.value.setX(0);
         p.uPWave?.value.set(0, 0);

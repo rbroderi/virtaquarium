@@ -582,7 +582,7 @@ export class Fish implements SpineBody {
     this.model.pects.forEach((p, i) => {
       const side = p.side;
       if (this.model.fan) {
-        posePectoralFan(p, this.pectPhase * 0.5 + (side > 0 ? 0 : 0.3), fanBeat, FAN_POSE, fanFold);
+        posePectoralFan(p, this.pectPhase * 0.5 + (side > 0 ? 0 : 0.3), fanBeat, this.sp.pectoral?.pose ?? FAN_POSE, fanFold);
         mountPectoral(p, u);
         return;
       }

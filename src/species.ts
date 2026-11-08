@@ -139,71 +139,79 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // Dorsal XIII + 11, anal III + 7, pectoral 14 unbranched rays, pelvic I + 5 (Schultz 1986; FishBase).
     anatomy: { bodyDepthSL: [0.28, 0.38], dorsalSoft: { spines: 0, rays: 11 }, anal: { spines: 3, rays: 7 }, pectoralRays: 14, pelvic: { spines: 1, rays: 5 } },
     albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
-    // Proportions measured from side-on photos (web/ref/lionfish and others), in SL: eye 0.045-0.057 across,
-    // its centre 0.15-0.19 behind the snout and about a quarter of the head's depth below its top; the
-    // supraocular tentacles about 0.2; the longest dorsal spines 0.37-0.5 (1.1-1.7 body depths).
-    // mouth: the snout tip sits low under a steep forehead; headW: a narrow, compressed face. section:
-    // head-on the face is a blunt wedge, the cheeks widest and the forehead a narrow ridge between the
-    // eyes (about half the cheek width).
-    // outline (from side-on photos and two lionfish models, in body depths D off the axis at the deepest
-    // point): the head hangs low, its snout about 0.3 D below the axis and its throat nearly as deep as
-    // the belly; the forehead dips in front of the eye, bulges at the brow over it and dips again at the
-    // nape (u 0.26) before the back humps up under the spines (peak about 0.52 D at u 0.4-0.48). The
-    // belly is deepest under the pectorals; the body then tapers fast to a peduncle about a third of the
-    // body depth (ped), its midline a little below the axis.
-    body: { len: 0.78, depth: 0.27, width: 0.42, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.33, mouth: -0.45, headW: 0.5,
-      section: { u0: 0, u1: 0.24, ease: 0.07, lo: -0.55, hi: 0.15, round: 0.3, sharp: 0.6 },
+    // Proportions in SL (u runs over SL: len 0.765 TL, the caudal fin the other 0.235), from side-on photos
+    // and renders of lionfish models: eye 0.06 across, its centre 0.25 behind the snout and almost on the
+    // dorsal profile; gill margin about 0.38; supraocular tentacles about 0.2; the longest dorsal spines
+    // 0.37-0.5 (1.1-1.7 body depths). mouth: the snout tip sits low; headW: a narrow, compressed face.
+    // section: head-on the face is a blunt wedge, the cheeks widest and the forehead a narrow ridge
+    // between the eyes (about half the cheek width).
+    // outline: the trunk is level and the head hangs off it nose-down (snout about 0.14 TL below the trunk
+    // axis, head centre about 0.06, the head and trunk axes about 15 deg apart). The back climbs in three
+    // steps: a steep snout up to the brow (u 0.13), a flat nape over the eye (u 0.2-0.33), then the hump
+    // under the spines (peak u 0.52, max depth 0.33 TL); the belly is one nearly straight line from the
+    // chin to the anal fin; the body tapers concave to a peduncle about a third of the body depth.
+    body: { len: 0.765, depth: 0.27, width: 0.42, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.33, mouth: -0.45, headW: 0.5,
+      section: { u0: 0, u1: 0.34, ease: 0.07, lo: -0.55, hi: 0.15, round: 0.3, sharp: 0.6 },
       outline: {
-        top: [[0, -0.08], [0.04, -0.07], [0.08, -0.14], [0.12, -0.05], [0.17, -0.01], [0.21, -0.11], [0.26, -0.33], [0.32, -0.18], [0.4, 0.03],
-          [0.48, 0.06], [0.56, 0], [0.65, -0.11], [0.75, -0.23], [0.85, -0.26], [0.93, -0.2], [1, -0.1]],
-        bot: [[0, -0.18], [0.04, -0.07], [0.08, -0.03], [0.12, 0], [0.17, -0.02], [0.21, -0.04], [0.26, -0.07], [0.32, -0.12], [0.4, -0.13],
-          [0.48, -0.12], [0.56, -0.1], [0.65, -0.08], [0.75, -0.05], [0.85, -0.01], [0.93, -0.02], [1, -0.1]],
+        top: [[0, -0.57], [0.016, -0.63], [0.033, -0.59], [0.065, -0.46], [0.098, -0.3], [0.131, -0.25], [0.163, -0.28], [0.196, -0.37],
+          [0.261, -0.51], [0.327, -0.54], [0.392, -0.31], [0.458, -0.04], [0.523, 0.19], [0.588, 0.23], [0.654, 0.22], [0.719, 0.23],
+          [0.784, 0.23], [0.85, 0.2], [0.915, 0.1], [0.961, 0.05], [1, 0.05]],
+        bot: [[0, -0.46], [0.016, -0.34], [0.033, -0.31], [0.065, -0.27], [0.098, -0.24], [0.131, -0.21], [0.163, -0.2], [0.196, -0.19],
+          [0.261, -0.16], [0.327, -0.14], [0.392, -0.13], [0.458, -0.2], [0.523, -0.23], [0.588, -0.23], [0.654, -0.22], [0.719, -0.18],
+          [0.784, -0.15], [0.85, -0.12], [0.915, -0.1], [0.961, -0.1], [1, -0.11]],
       } },
-    eye: { u: 0.17, v: -0.55, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
-    mouth: { u: 0.17, v: 0.65, v0: 0.0, lining: 0.05 },   // large and oblique, the corner under the front of the eye
+    eye: { u: 0.25, v: -0.75, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
+    mouth: { u: 0.2, v: 0.8, v0: -0.5, lining: 0.025 },   // large and oblique, the corner under the front of the eye
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
-      // Body bars from the gill margin back: broad red-brown, narrow pale gaps.
-      { op: 'stripesV', u0: 0.29, u1: 1.0, n: 14, color: '#923f22', ratio: 0.66 },
-      // Head stripes bend round the eye: arcs over the nape, back across the cheek and down over the
-      // snout, with a bar down through the eye to the jaw and a short one up over it.
-      { op: 'rings', u: 0.17, v: -0.55, n: 5, r0: 0.034, dr: 0.021, w: 0.011, a0: -110, a1: 205, color: '#923f22', uMax: 0.29,
-        spokes: [90, -90], spokeR0: 0.012, spokeR1: 0.075, spokeW: 0.011 },
-      { op: 'blob', u: 0.4, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
+      // Body bars from the opercle back: broad red-brown, narrow pale gaps, leaning back at the top and
+      // closer together towards the tail; some parted by a thin pale line, some forking into a Y over the back.
+      { op: 'stripesV', u0: 0.31, u1: 1.0, n: 13, color: '#923f22', ratio: 0.64, lean: 10, dense: 0.3, split: [2, 6, 9], fork: [5], forkV: -0.4 },
+      // Head lines at about twice the body's frequency, radiating from the eye: down and forward to the
+      // lips, a broad bar straight down over the cheek, three back across the cheek to the preopercle,
+      // and a few arcs over the forehead and nape.
+      { op: 'rings', u: 0.25, v: -0.75, n: 3, r0: 0.04, dr: 0.022, w: 0.01, a0: -175, a1: -25, color: '#923f22', uMax: 0.35,
+        spokes: [[90, 0.026], 112, 128, 144, 160, 176, 50, 66], spokeR0: 0.03, spokeR1: 0.2, spokeW: 0.011 },
+      { op: 'blob', u: 0.45, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
     ],
     // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle, a
     // ridge arches over each eye and the lacrimal bone ridges the snout ahead of it.
     ridges: [
-      { u0: 0.15, v0: -0.2, u1: 0.29, v1: 0.0, w: 0.008, h: 0.005 },   // suborbital stay
-      { u0: 0.12, v0: -0.82, u1: 0.22, v1: -0.86, w: 0.007, h: 0.005 },   // supraorbital ridge
-      { u0: 0.05, v0: -0.25, u1: 0.13, v1: -0.4, w: 0.006, h: 0.003 },   // lacrimal
-      { u0: 0.27, v0: -0.3, u1: 0.3, v1: 0.45, w: 0.006, h: 0.003 },   // preopercle margin
+      { u0: 0.25, v0: -0.4, u1: 0.36, v1: -0.12, w: 0.008, h: 0.005 },   // suborbital stay
+      { u0: 0.21, v0: -0.95, u1: 0.3, v1: -0.98, w: 0.007, h: 0.005 },   // supraorbital ridge
+      { u0: 0.1, v0: -0.4, u1: 0.2, v1: -0.62, w: 0.006, h: 0.003 },   // lacrimal
+      { u0: 0.355, v0: -0.4, u1: 0.375, v1: 0.45, w: 0.006, h: 0.003 },   // preopercle margin
     ],
     // A long, banded, leaf-like tentacle over each eye; fringed flaps hanging from the lacrimal over the
     // upper jaw and under the chin; short bony spines on the snout, over the eye, the nape and the
     // preopercle margin.
     appendages: [
-      { u: 0.165, v: -0.8, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0025, flat: 0.18, shape: 'frond', color: '#f2e8dc', stripes: '#8a3a1c', nb: 6, bend: -0.12 },
-      { u: 0.05, v: 0.2, len: 0.03, dir: [0.35, -1, 0.5], r: 0.004, flat: 0.35, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 3 },
-      { u: 0.03, v: 0.7, len: 0.016, dir: [0.3, -1, 0.4], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
-      { u: 0.09, v: 0.8, len: 0.014, dir: [0, -1, 0.5], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
-      { u: 0.07, v: -0.6, len: 0.012, dir: [0.6, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // nasal spine
-      { u: 0.215, v: -0.88, len: 0.014, dir: [-0.4, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // supraocular spine
-      { u: 0.27, v: -0.93, len: 0.016, dir: [-0.7, 1, 0.25], r: 0.002, color: '#f2e6d8', bend: 0 },   // parietal spine
-      { u: 0.3, v: 0.2, len: 0.016, dir: [-1, -0.2, 0.4], r: 0.002, color: '#f2e6d8', bend: 0 },   // preopercular spines
-      { u: 0.29, v: 0.5, len: 0.013, dir: [-1, -0.7, 0.4], r: 0.0018, color: '#f2e6d8', bend: 0 },
+      { u: 0.255, v: -0.97, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0025, flat: 0.18, shape: 'frond', color: '#f2e8dc', stripes: '#8a3a1c', nb: 6, bend: -0.12 },
+      { u: 0.13, v: 0.25, len: 0.03, dir: [0.35, -1, 0.5], r: 0.004, flat: 0.35, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 3 },
+      { u: 0.04, v: 0.75, len: 0.016, dir: [0.3, -1, 0.4], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
+      { u: 0.12, v: 0.85, len: 0.014, dir: [0, -1, 0.5], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
+      { u: 0.1, v: -0.6, len: 0.012, dir: [0.6, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // nasal spine
+      { u: 0.29, v: -0.98, len: 0.014, dir: [-0.4, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // supraocular spine
+      { u: 0.33, v: -1.0, len: 0.016, dir: [-0.7, 1, 0.25], r: 0.002, color: '#f2e6d8', bend: 0 },   // parietal spine
+      { u: 0.375, v: 0.2, len: 0.016, dir: [-1, -0.2, 0.4], r: 0.002, color: '#f2e6d8', bend: 0 },   // preopercular spines
+      { u: 0.365, v: 0.5, len: 0.013, dir: [-1, -0.7, 0.4], r: 0.0018, color: '#f2e6d8', bend: 0 },
     ],
     // Venomous dorsal spines: carried up, flared further forward at a threat (and while stalking).
     erect: { rest: 1, alarm: 1.8 },
     fins: [
-      { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.36, hs: [0.5, 0.8, 0.95, 1, 1, 0.96, 0.9, 0.8, 0.68, 0.55, 0.42, 0.3, 0.2], lean: [-12, 58], r: 0.0032, flag: 0.05, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c', raise: 15, foldTo: 82 },
+      // Spines from just behind the eye to 0.76; the soft dorsal and anal end at the peduncle.
+      { pos: 'top', kind: 'spines', u0: 0.3, u1: 0.76, n: 13, h: 0.36, hs: [0.5, 0.8, 0.95, 1, 1, 0.96, 0.9, 0.8, 0.68, 0.55, 0.42, 0.3, 0.2], lean: [-12, 58], r: 0.0032, flag: 0.05, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c', raise: 15, foldTo: 82 },
       // Soft dorsal: about 0.17 SL high near its front, ending just ahead of the peduncle (side-on photos).
-      { pos: 'top', meristic: 'dorsalSoft', u0: 0.66, u1: 0.93, pts: [[0, 0.08], [0.25, 0.13], [0.7, 0.11], [1, 0.03]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
-      { pos: 'bottom', meristic: 'anal', u0: 0.62, u1: 0.88, pts: [[0, 0.03], [0.4, 0.15], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
+      { pos: 'top', meristic: 'dorsalSoft', u0: 0.76, u1: 0.97, pts: [[0, 0.08], [0.25, 0.13], [0.7, 0.11], [1, 0.03]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
+      { pos: 'bottom', meristic: 'anal', u0: 0.75, u1: 0.94, pts: [[0, 0.03], [0.4, 0.14], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
     ],
     caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
-    pectoral: { kind: 'fan', u: 0.27, v: 0.2, len: 0.5, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.004, flag: 0.011, web: 0.6, spots: '#20140c', spotR: 0.004, spotN: 50 },
-    pelvic: { u: 0.3, len: 0.2, angle: 60, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
+    // Fans of 14 free, banded rays: the upper ones about 0.7-0.85 TL, the lowest about 0.35; membrane only
+    // on the inner half. Held swept back and drooping, like wings.
+    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.022, web: 0.5,
+      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.25, yaw: 0.85, flap: 0.22 },
+      spots: '#20140c', spotR: 0.004, spotN: 50 },
+    pelvic: { u: 0.41, len: 0.24, angle: 50, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },
   },
   {

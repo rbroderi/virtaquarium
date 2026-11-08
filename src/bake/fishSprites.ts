@@ -58,7 +58,7 @@ export function makeFishScene(renderer: THREE.WebGLRenderer, config: BakeConfig)
 }
 
 /** Pose the model for frame i of n. Every phase advances a whole number of cycles so the loop is seamless. */
-function pose(model: FishModel, i: number, n: number, amp: number): void {
+function pose(model: FishModel, i: number, n: number, amp: number, sp: Species): void {
   const a = (i / n) * TAU, u = model.uniforms;
   u.uPhase.value = a;
   u.uAmp.value = amp;
@@ -68,7 +68,7 @@ function pose(model: FishModel, i: number, n: number, amp: number): void {
   u.uVent.value = VENT_AMP * (0.5 + 0.5 * Math.sin(a));
   for (const p of model.pects) {
     const s = p.side;
-    if (model.fan) posePectoralFan(p, a + (s > 0 ? 0 : 0.3), 0.3);   // one beat per loop, so it closes
+    if (model.fan) posePectoralFan(p, a + (s > 0 ? 0 : 0.3), 0.3, sp.pectoral?.pose);   // one beat per loop, so it closes
     else posePectoral(p, a * 2, 0.35 + 0.25 * Math.sin(a * 2), 0.2 + 0.25 * Math.cos(a * 2));
     mountPectoral(p, u);
   }
@@ -92,7 +92,7 @@ async function bakeAngle(
   const cells: ImageData[] = [];
   let x0 = cell.w, y0 = cell.h, x1 = 0, y1 = 0;
   for (let i = 0; i < config.frames; i++) {
-    pose(model, i, config.frames, amp);
+    pose(model, i, config.frames, amp, sp);
     model.rotation.y = -yawDeg * DEG;   // +90: head-on, -90: tail-on
     renderer.render(scene, camera);
     shot.clearRect(0, 0, cell.w, cell.h);
