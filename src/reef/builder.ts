@@ -21,9 +21,10 @@ import { setFishPushReactors, type FishPushReactor } from './fishPush.js';
 import { gpuActive } from '../webgpu/tsl.js';
 import { swapCoral } from './scenery.js';
 import { orientCrystal, readCrystalFace, registerCrystalPiece } from './crystal.js';
+import { inKeepOut, signClear, signKeepOut, surfacePoints, vertexBox, type SignKeepOut } from './signClearance.js';
 import { inNoHeightSubtree, isMesh, isSolid, markNoHeight, markSolid, naturalSize } from './flags.js';
 import {
-  ANEMONE_SPOT, BUBBLER, CAVE_STONE_GROWTH, CM_PER_UNIT, DESIGN_WIDTH, FOREGROUND_ROCK_X, GENERATED_ROCK_GROWTH,
+  ANEMONE_SPOT, BUBBLER, CAVE_STONE_GROWTH, CM_PER_UNIT, CRYSTAL_SIGN, DESIGN_WIDTH, FOREGROUND_ROCK_X, GENERATED_ROCK_GROWTH,
   HEIGHT_FIELD, HOMES, MORAY_CAVES, OPEN_SAND_LEVEL, PILE_DOUBLE_WIDTH, PROBE_HEIGHT, ROCK_PILES, ROCK_STRETCH,
   SHELTER_LIMITS, STAGHORNS, STREAM,
 } from './layout.js';
@@ -105,6 +106,8 @@ export class ReefBuilder {
   private readonly caves: Cave[] = [];
   private readonly planted: PlantedCounts = { grass: 0, clumps: 0, rubble: 0 };
   private readonly reactors: FishPushReactor[] = [];
+  /** The crystal sign's footprint and the sand in front of it, kept clear of later plantings. */
+  private signKeepOut: SignKeepOut | null = null;
 
   constructor(params: ReefBuildParams) {
     this.width = params.width;
@@ -548,31 +551,57 @@ export class ReefBuilder {
   }
 
   /**
-   * The crystal rock: a clear glass sign standing on the open sand at the front, its flat cleavage
-   * face turned to the viewer for the etched text. Its own stream leaves the seeded layout as it was.
+   * The crystal rock: a clear glass sign standing on the open sand at the front, its smooth cleavage
+   * face turned to the viewer for the etched text. It is glass, so nothing may sit inside it or in
+   * front of it: it takes the spot nearest its preferred one where no rock or coral surface pokes into
+   * it or stands between it and the viewer (signClearance.ts), and later plantings keep out of its
+   * footprint and the sand in front. Its own stream leaves the seeded layout as it was.
    */
   private addCrystal(): void {
     const crng = mulberry32(this.seed + STREAM.crystal);
     const model = this.scenery.props['crystal_rock'];
-    const faceWidth = 1.1 + (crng() - 0.5) * 0.08;   // drawn before the model check, as the other steps do
+    // The etched text spans the face's strongly facing region (silExtentU): size the sign by that width.
+    const textWidth = 1.5 + (crng() - 0.5) * 0.1;   // drawn before the model check, as the other steps do
     if (!model) return;
     const info = readCrystalFace(model);
     if (!info) return;
     const m = model.clone();
-    m.scale.setScalar(faceWidth / info.extentU);
-    // A small sign on the open sand, left of centre: clear of the starfish (front-right) and the
-    // anemone's tentacles (far right), and inside the always-visible band of the camera pan.
-    const x = -1.6, z = 1.5;
-    const ground = this.restingHeight(x, z, 0.2 * faceWidth);
-    m.position.set(x, 0, z);
-    orientCrystal(m, info, this.view);
-    m.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(m);
-    m.position.y = ground - box.min.y - 0.02 * faceWidth;   // stand on the sand, face to the glass
+    m.scale.setScalar(textWidth / info.silExtentU);
+    const sign = CRYSTAL_SIGN;
+    // Stands the sign at (x, z): face to the viewer, resting on the sand. Returns its world box.
+    const stand = (x: number, z: number): THREE.Box3 => {
+      m.position.set(x, 0, z);
+      orientCrystal(m, info, this.view);
+      const box = vertexBox(m);
+      const lift = this.restingHeight(x, z, 0.15 * textWidth) - box.min.y - 0.015 * textWidth;
+      m.position.y = lift;
+      return box.translate(new THREE.Vector3(0, lift, 0));
+    };
+    // The rock and coral surface near the search area (and in front of it, toward the viewer).
+    const region = new THREE.Box3(
+      new THREE.Vector3(sign.searchX[0] - 1.5, -1, sign.searchZ[0] - 1.5),
+      new THREE.Vector3(sign.searchX[1] + 1.5, 4, HEIGHT_FIELD.z1),
+    );
+    const points = surfacePoints([this.rocks, this.corals], region, () => false);
+    const spots: [number, number][] = [];
+    for (let x = sign.searchX[0]; x <= sign.searchX[1] + 1e-6; x += sign.searchStep) {
+      for (let z = sign.searchZ[0]; z <= sign.searchZ[1] + 1e-6; z += sign.searchStep) spots.push([x, z]);
+    }
+    spots.sort((a, b) => Math.hypot(a[0] - sign.x, a[1] - sign.z) - Math.hypot(b[0] - sign.x, b[1] - sign.z));
+    let box: THREE.Box3 | null = null;
+    for (const [x, z] of spots) {
+      const b = stand(x, z);
+      if (signClear(points, b, this.view, sign.clearance)) { box = b; break; }
+    }
+    if (!box) {
+      console.warn('crystal: no spot clear of rock and coral; using the preferred one');
+      box = stand(sign.x, sign.z);
+    }
     m.traverse((o) => { if (isMesh(o)) o.castShadow = o.receiveShadow = true; });
     m.name = 'crystal';
     this.corals.add(m);
     registerCrystalPiece(m);
+    this.signKeepOut = signKeepOut(box, sign.plantMargin, sign.frontStrip);
   }
 
   // ---------- plants and rubble ----------
@@ -592,9 +621,10 @@ export class ReefBuilder {
     this.planted.clumps = spots.length - this.planted.grass;
   }
 
-  /** True when the sand within r of (x, z) is clear of rock. */
+  /** True when the sand within r of (x, z) is clear of rock, and of the crystal sign and its view. */
   private clearSand(x: number, z: number, r: number): boolean {
     const hf = this.hf;
+    if (this.signKeepOut && inKeepOut(this.signKeepOut, x, z, r)) return false;
     if (hf.sample(x, z) > OPEN_SAND_LEVEL) return false;
     for (let i = 0; i < EIGHT_DIRECTIONS; i++) if (hf.sample(x + Math.cos(i * Math.PI / 4) * r, z + Math.sin(i * Math.PI / 4) * r) > OPEN_SAND_LEVEL) return false;
     return true;

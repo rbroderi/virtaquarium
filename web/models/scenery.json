@@ -188,7 +188,7 @@
     "retired": true
   },
   "crystal_rock": {
-    "file": "scenery/crystal_rock.glb",
+    "file": "scenery/crystal_rock_flat_up.glb",
     "kind": "prop",
     "glass": true
   }

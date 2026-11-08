@@ -1,5 +1,6 @@
 // The crystal rock, worked into the aquarium as a clear glass sign. The Tripo model is a fused cluster
-// of crystal points with one large flat cleavage face; that face becomes a frosted, laser-etched plaque
+// of crystal points with one large, smooth cleavage face, authored facing up (crystal_rock_flat_up.glb);
+// that face becomes a frosted, laser-etched plaque
 // facing the camera, and the rest of the cluster stays as a clear crystal frame around it.
 //
 // The etched text is a planar projection, not a per-facet UV: one text plane (centred on the face,
@@ -18,6 +19,8 @@ import { isMesh } from './flags.js';
 import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
 import { crystalBgUniforms } from './crystalBg.js';
 
+/** Triangles whose normal's up component exceeds this seed the face direction (the model's face is up). */
+const FACE_UP_DOT = 0.8;
 /** How near a triangle's normal must be to the face's normal to belong to the face (dot product). */
 const FACE_NORMAL_DOT = 0.93;
 /** The text is sized to facets whose normal stays at least this near the face normal, so the shader's
@@ -180,24 +183,11 @@ function splitFace(geo: MergedGeometry): FaceSplit | null {
     nx[t] = cn.x / len; ny[t] = cn.y / len; nz[t] = cn.z / len;
   }
 
-  // Dominant direction from a histogram of the normals' largest components.
-  const counts = new Map<string, number>();
-  for (let t = 0; t < tris; t++) {
-    const x = nx[t] as number, y = ny[t] as number, z = nz[t] as number;
-    const m = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
-    const key = m === Math.abs(x) ? (x >= 0 ? 'x+' : 'x-') : m === Math.abs(y) ? (y >= 0 ? 'y+' : 'y-') : (z >= 0 ? 'z+' : 'z-');
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  let dominant = 'y+', best = 0;
-  for (const [k, v] of counts) if (v > best) { best = v; dominant = k; }
-
-  // Mean normal of triangles near the dominant direction.
-  const sign = dominant.endsWith('+') ? 1 : -1;
-  const axis = dominant.startsWith('x') ? 0 : dominant.startsWith('y') ? 1 : 2;
+  // The model is authored with its smooth cleavage face on top (crystal_rock_flat_up.glb), so the face
+  // is the up-facing side: the mean normal of the triangles facing up.
   let mn = new THREE.Vector3();
   for (let t = 0; t < tris; t++) {
-    const comp = axis === 0 ? nx[t] as number : axis === 1 ? ny[t] as number : nz[t] as number;
-    if (comp * sign > 0.8) mn.add(new THREE.Vector3(nx[t] as number, ny[t] as number, nz[t] as number));
+    if ((ny[t] as number) > FACE_UP_DOT) mn.add(new THREE.Vector3(nx[t] as number, ny[t] as number, nz[t] as number));
   }
   if (mn.lengthSq() < 1e-9) return null;
   mn.normalize();

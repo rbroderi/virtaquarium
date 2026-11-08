@@ -55,6 +55,17 @@ export const STAGHORNS: readonly (readonly [number, number, number])[] = [[-0.6,
 /** The host anemone's low front rock (design x, z). */
 export const ANEMONE_SPOT = { x: 2.9, z: 1.3 } as const;
 
+/**
+ * The crystal sign: its preferred spot on the open sand left of centre (world x, z), the area searched
+ * for the nearest spot clear of rock and coral, the clearance kept around it, and the keep-out margin
+ * and front strip later plantings stay out of (world units).
+ */
+export const CRYSTAL_SIGN = {
+  x: -1.6, z: 1.5,
+  searchX: [-2.8, -0.6], searchZ: [1.2, 2.8], searchStep: 0.1,
+  clearance: 0.06, plantMargin: 0.45, frontStrip: 2.2,
+} as const;
+
 /** The bubbler's air stone (design x, y, z). */
 export const BUBBLER = { x: 6.3, y: 0.6, z: -3.4 } as const;
 
