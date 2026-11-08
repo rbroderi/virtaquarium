@@ -26,7 +26,7 @@ const ADDITIVE = { transparent: true, depthWrite: false, blending: THREE.Additiv
 
 const CONTRACT_SHARE = 0.3;          // of each pulse cycle: the quick close; the rest relaxes
 const RELAX_FLARE = 0.35;            // how far the relaxing bell overshoots its rest shape (dips to about -0.07)
-const THRUST_PER_RADIUS = 1.6;       // speed gained per unit contraction per unit bell radius
+const THRUST_PER_RADIUS = 3.0;     // speed gained per unit contraction per unit bell radius
 /** Heavier than water: with DRAG_RATE it settles to ~0.12 units/s (~1.5 cm/s) of sinking between beats. */
 const SINK_RATE = 0.42;              // units/s^2
 /** Strong drag: each beat's surge bleeds off in ~0.3 s, so the jelly glides, stalls and sinks before the next. */
@@ -182,8 +182,9 @@ export class Jelly implements Inspectable {
   }
 
   /**
-   * Thrust while the bell closes, along the bell axis: a surge to ~5 cm/s that drag bleeds off within
-   * the beat, then a slow sink until the next (about 1-2 cm/s on average). Each jelly holds a
+   * Thrust while the bell closes, along the bell axis: a surge to ~8 cm/s (a mid-size bell at its
+   * favoured depth) that drag bleeds off within the beat, then a slow sink until the next; pointed
+   * straight up it still nets ~2 cm/s of climb. Each jelly holds a
    * loose depth: above it the pulses weaken and it sinks, below it they strengthen. Returns the
    * contraction now.
    */
