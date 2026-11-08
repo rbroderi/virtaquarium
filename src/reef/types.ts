@@ -62,6 +62,20 @@ export interface ShoalCoral {
   readonly r: number;
 }
 
+/** A patch of turtle grass on the sand (a grazing spot): centre and rough radius. */
+export interface GrassBed {
+  readonly x: number;
+  readonly z: number;
+  readonly r: number;
+}
+
+/** A sponge a turtle can settle on: the top of its bounding box and its rough radius. */
+export interface Perch {
+  readonly pos: THREE.Vector3;
+  readonly r: number;
+  readonly name: string;
+}
+
 /** How much sea grass, algae and rubble found clear sand (logged at startup). */
 export interface PlantedCounts {
   grass: number;
@@ -83,6 +97,10 @@ export interface TankScene {
   readonly shelters?: readonly Shelter[];
   readonly shoalCoral?: ShoalCoral | null;
   readonly planted?: PlantedCounts;
+  /** Turtle-grass patches (grazing). */
+  readonly grassBeds?: readonly GrassBed[];
+  /** Sponges a turtle can settle on. */
+  readonly perches?: readonly Perch[];
   /** The jelly tank's light panel (its uLight uniform follows the day). */
   readonly backdrop?: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
 }

@@ -146,7 +146,11 @@ World scale: **1 unit = 12.5 cm**. The tank is 2.0 × 1.1 × 0.75 m and the fish
   iridescent ring, and species details such as the tangs' scalpels and the lionfish's tentacles.
 - **Not fish**: the cuttlefish, octopus and turtle have their own models and behaviour. The cuttlefish and
   octopus bodies are distance fields meshed into one surface each (`bun run softbodies`), so their parts
-  grow out of each other without seams. Click any of them, or a moon jelly, to see what it is doing.
+  grow out of each other without seams. Each has a small brain like the fish: drives (hunger,
+  tiredness, fear, restlessness and, for the turtle, air) score its options, so the turtle grazes the
+  turtle grass, browses the rock, settles on the sponges and comes up to breathe. Click any of them to
+  see its drives, options and personality in the same panel as a fish, or click a moon jelly to see
+  what it is doing.
 
 ### The reef
 

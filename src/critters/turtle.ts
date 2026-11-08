@@ -3,16 +3,21 @@
 // Carapace 2.0 units (25 cm). An oval, gently domed carapace with five vertebral, four pairs of costal
 // and the marginal scutes, each with the radiating orange-brown streaks of a juvenile; a pale plastron;
 // head and flippers dark with pale seams between the scales. The long front flippers fly (a
-// dorsoventral stroke with feathering, then a glide), the rear flippers steer. It cruises the tank,
-// comes up to the surface to breathe every few minutes, rests on the sand, and grazes on the rock.
+// dorsoventral stroke with feathering, then a glide), the rear flippers steer.
+//
+// Its brain (critterBrain.ts) runs on four drives: air (it comes up to breathe every few minutes),
+// hunger (it grazes the turtle grass, browses algae off the rock, and goes for food in the water),
+// fatigue (it settles on a sponge or the sand) and restlessness (it gets up and cruises the tank).
 import * as THREE from 'three';
 import { range, clamp, lerp, type Rng } from '../util.js';
 import { skin, randomTarget, Swimmer } from './shared.js';
 import { carapaceTex, scaleTex, paddle } from './turtleParts.js';
-import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
-import type { Critter, CritterSpecies, CritterWorld, JoinRule } from './types.js';
+import { CritterBrain, type DriveInfo } from './critterBrain.js';
+import type { InspectPanel } from '../inspect.js';
+import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
-export type TurtleMode = 'cruise' | 'rest' | 'graze' | 'breathe';
+export type TurtleMode = 'cruise' | 'rest' | 'graze' | 'browse' | 'perch' | 'feed' | 'breathe';
+type TurtleDrive = 'air' | 'hunger' | 'fatigue' | 'restless';
 
 interface Flipper { readonly front: THREE.Group; readonly rear: THREE.Group; readonly s: number }
 
@@ -23,10 +28,37 @@ const SPOT_TRIES = 30;
 const SAND_HEIGHT = 0.25;     // rest where the reef is lower than this ...
 const ROCK_HEIGHT = 0.8;      // ... graze where it is higher than this
 
-const MODE_NOTES: Readonly<Record<TurtleMode, string>> = {
+/** Food further than this (units) goes unnoticed. */
+const FOOD_RANGE = 8;
+/** Modes that end settled on the bottom (it stops swimming once there). */
+const SETTLING: ReadonlySet<TurtleMode> = new Set(['rest', 'graze', 'browse', 'perch']);
+/** Seconds a fresh choice is kept before the brain reconsiders, and between reconsiderations after. */
+const COMMIT: Readonly<Record<TurtleMode, readonly [number, number]>> = {
+  cruise: [8, 16], rest: [20, 35], graze: [15, 25], browse: [12, 20], perch: [20, 35], feed: [6, 6], breathe: [1e3, 1e3],
+};
+const RETHINK_SECONDS = 3;
+/** Drive time scales (s): air fills over a breath interval; the rest over these. */
+const HUNGER_SECONDS = 360, GRAZE_SECONDS = 45, BROWSE_SECONDS = 70, FOOD_BITE = 0.12;
+const TIRE_SECONDS = 300, REST_SECONDS = 50;
+const FIDGET_SECONDS = 80, CRUISE_CALM_SECONDS = 40;
+
+const DRIVES: Readonly<Record<TurtleDrive, DriveInfo>> = {
+  air: { label: 'Air need', cls: 'social' },
+  hunger: { label: 'Hunger', cls: 'hunger' },
+  fatigue: { label: 'Tiredness', cls: 'energy' },
+  restless: { label: 'Restlessness', cls: 'boredom' },
+};
+
+/** Personality: appetite (food and grazing), activity (cruising), calm (resting, perching), grazer (grass over rock). */
+type TurtleTrait = 'appetite' | 'activity' | 'calm' | 'grazer';
+const TRAITS: Readonly<Record<TurtleTrait, string>> = { appetite: 'Appetite', activity: 'Activity', calm: 'Calm', grazer: 'Grass lover' };
+
+const MODE_NOTES: Readonly<Record<Exclude<TurtleMode, 'perch'>, string>> = {
   cruise: 'Cruising, flying with its long front flippers',
   rest: 'Resting on the sand',
-  graze: 'Grazing on the rock',
+  graze: 'Grazing on the turtle grass',
+  browse: 'Browsing algae off the rock',
+  feed: 'Going for the food',
   breathe: 'Coming up to the surface for air',
 };
 
@@ -80,8 +112,12 @@ export class Turtle implements Critter {
   target: THREE.Vector3;
   private readonly rng: Rng;
   private readonly flip: Flipper[] = [];
-  /** Seconds until it needs air. */
-  private breath: number;
+  readonly brain: CritterBrain<TurtleDrive, TurtleMode, TurtleTrait>;
+  /** Seconds between breaths (air need fills over this). */
+  private readonly breathEvery: number;
+  /** The food it is going for, and the sponge it settled on. */
+  private food: CritterFood | null = null;
+  private perchName = '';
   private stroke = 0;
   private t = 0;
 
@@ -104,7 +140,10 @@ export class Turtle implements Critter {
     this.body = new Swimmer(new THREE.Vector3(range(rng, B.x0 + 3, B.x1 - 3), range(rng, 4, 7), range(rng, -0.5, 1.2)), rng() < 0.5 ? 0 : Math.PI);
     this.pos = this.body.pos;
     this.modeT = range(rng, 15, 30); this.target = randomTarget(rng, world, 3, 7);
-    this.breath = range(rng, 60, 200);
+    this.breathEvery = range(rng, 150, 300);
+    this.brain = new CritterBrain(DRIVES,
+      { air: range(rng, 0, 0.6), hunger: range(rng, 0.2, 0.6), fatigue: range(rng, 0.1, 0.4), restless: range(rng, 0, 0.3) },
+      { appetite: rng(), activity: rng(), calm: rng(), grazer: rng() }, TRAITS);
   }
 
   /** Head on a short neck; the neck runs from the head back under the front of the carapace. */
@@ -166,34 +205,23 @@ export class Turtle implements Critter {
     }
   }
 
-  /** The click panel: its real state machine, target, speed and breathing clock. */
+  /** The click panel, laid out as the fish panel. */
   inspect(): InspectPanel {
-    return {
-      title: this.sp.name,
-      sci: this.sp.sci,
-      note: MODE_NOTES[this.mode],
-      rows: [
-        { heading: 'State' },
-        { label: 'Mode', value: modeLabel(this.mode) },
-        { label: 'Time left', value: fmtSeconds(this.modeT) },
-        { label: 'Speed', value: fmtSpeed(this.body.speed) },
-        { label: 'Target', value: `${fmtMetres(this.pos.distanceTo(this.target))} away` },
-        { heading: 'Body' },
-        { label: 'Height', value: fmtMetres(this.pos.y) },
-        { label: 'Next breath', value: this.mode === 'breathe' ? 'at the surface' : fmtSeconds(this.breath) },
-      ],
-      fact: this.sp.fact,
-    };
+    return this.brain.panel(this.sp, this.mode, this.mode === 'perch' ? `Settled on ${this.perchName}` : MODE_NOTES[this.mode]);
   }
 
   update(dt: number, world: CritterWorld): void {
-    this.t += dt; this.modeT -= dt; this.breath -= dt;
-    this.breatheWhenDue(world);
-    if (this.modeT <= 0 && this.mode !== 'breathe') this.chooseMode(world);
-    const b = this.body, d = this.pos.distanceTo(this.target);
+    this.t += dt; this.modeT -= dt;
+    const b = this.body;
+    let d = this.pos.distanceTo(this.target);
+    const settled = SETTLING.has(this.mode) && d < 0.5;
+    this.feelDrives(dt, settled);
+    if (this.mode === 'breathe' && this.pos.y > world.bounds.y1 - SURFACE_MARGIN) { this.brain.drives.air = 0; this.decide(world, true); }
+    else if (this.modeT <= 0 || (this.brain.drives.air >= 1 && this.mode !== 'breathe')) this.decide(world, false);
+    if (this.mode === 'feed') this.chaseFood();
+    d = this.pos.distanceTo(this.target);
     if (this.mode === 'cruise' && d < 1) this.target = randomTarget(this.rng, world, 2, 7);
-    const settled = (this.mode === 'rest' || this.mode === 'graze') && d < 0.5;
-    const speed = settled ? 0 : this.mode === 'breathe' ? 0.6 : (this.mode === 'cruise' ? CRUISE_SPEED : 0.3) * clamp(d, 0.3, 1);
+    const speed = settled ? 0 : this.mode === 'breathe' ? 0.6 : this.mode === 'feed' ? 0.5 : (this.mode === 'cruise' ? CRUISE_SPEED : 0.3) * clamp(d, 0.3, 1);
     b.steer(dt, world, this.target, { turn: 0.45, speed, accel: 0.6, clearance: this.L * 0.14, look: this.L * 1.2 });
     if (settled) { b.pitch = lerp(b.pitch, 0, dt); b.roll = lerp(b.roll, 0, dt); }
     this.stroke += dt * STROKE_HZ * Math.PI * 2 * (settled ? 0 : clamp(Math.abs(b.speed) / CRUISE_SPEED, 0.25, 1.2));
@@ -202,22 +230,87 @@ export class Turtle implements Critter {
     b.place(this.model);
   }
 
-  /** Up to the surface every few minutes for air; back to cruising once there. */
-  private breatheWhenDue(world: CritterWorld): void {
-    const rng = this.rng, B = world.bounds;
-    if (this.breath <= 0 && this.mode !== 'breathe') { this.mode = 'breathe'; this.target.set(this.pos.x + range(rng, -2, 2), B.y1, this.pos.z); }
-    if (this.mode === 'breathe' && this.pos.y > B.y1 - SURFACE_MARGIN) { this.mode = 'cruise'; this.modeT = range(rng, 15, 30); this.breath = range(rng, 150, 300); this.target = randomTarget(rng, world, 2, 6); }
+  /** Drives move with what it is doing: air fills always, the rest by swimming, grazing and resting. */
+  private feelDrives(dt: number, settled: boolean): void {
+    const br = this.brain, swimming = !settled, effort = clamp(Math.abs(this.body.speed) / CRUISE_SPEED, 0.3, 1.5);
+    br.add('air', dt / this.breathEvery);
+    const eating = settled && (this.mode === 'graze' || this.mode === 'browse');
+    br.add('hunger', eating ? -dt / (this.mode === 'graze' ? GRAZE_SECONDS : BROWSE_SECONDS) : dt / HUNGER_SECONDS);
+    br.add('fatigue', swimming ? (dt / TIRE_SECONDS) * effort : settled && (this.mode === 'rest' || this.mode === 'perch') ? -dt / REST_SECONDS : -dt / (REST_SECONDS * 4));
+    br.add('restless', settled ? dt / FIDGET_SECONDS : this.mode === 'cruise' ? -dt / CRUISE_CALM_SECONDS : -dt / (CRUISE_CALM_SECONDS * 3));
   }
 
-  private chooseMode(world: CritterWorld): void {
-    const rng = this.rng, r = rng();
-    this.mode = r < 0.55 ? 'cruise' : r < 0.8 ? 'rest' : 'graze';
-    this.modeT = this.mode === 'rest' ? range(rng, 30, 70) : range(rng, 15, 30);
-    if (this.mode === 'cruise') { this.target = randomTarget(rng, world, 2, 7); return; }
-    // Rest on open sand (low height field), graze on rock.
-    const spot = this.findSpot(world, this.mode === 'rest');
-    if (spot) this.target = spot;
-    else { this.mode = 'cruise'; this.target = randomTarget(rng, world, 2, 7); }
+  /** Score every option from the drives and take the best (sticking with the current one unless beaten). */
+  private decide(world: CritterWorld, fresh: boolean): void {
+    const br = this.brain, { air, hunger, fatigue, restless } = br.drives, reef = world.reef;
+    const food = this.nearestFood(world), appetite = br.weight('appetite'), calm = br.weight('calm'), grass = br.weight('grazer');
+    const scores: Partial<Record<TurtleMode, number>> = {
+      breathe: air > 0.75 ? 0.6 + (air - 0.75) * 8 : air * 0.3,
+      browse: hunger * 0.85 * appetite * (2 - grass),
+      rest: fatigue * 0.95 * calm,
+      cruise: (0.25 + restless * 0.8) * br.weight('activity'),
+    };
+    if (reef.grassBeds?.length) scores.graze = hunger * 1.3 * appetite * grass;
+    if (reef.perches?.length) scores.perch = fatigue * 1.2 * calm;
+    if (food) scores.feed = (0.3 + hunger * 1.2) * appetite;
+    const next = this.brain.choose(fresh || this.mode === 'breathe' ? null : this.mode, scores);
+    if (next === this.mode && !fresh) { this.modeT = RETHINK_SECONDS; return; }
+    this.go(next, world, food);
+  }
+
+  /** Start a behaviour: where it goes for it, and how long before it reconsiders. */
+  private go(mode: TurtleMode, world: CritterWorld, food: CritterFood | null): void {
+    const rng = this.rng, B = world.bounds;
+    let target: THREE.Vector3 | null = null;
+    if (mode === 'cruise') target = randomTarget(rng, world, 2, 7);
+    else if (mode === 'breathe') target = new THREE.Vector3(clamp(this.pos.x + range(rng, -2, 2), B.x0 + 1, B.x1 - 1), B.y1, this.pos.z);
+    else if (mode === 'feed' && food) { this.food = food; target = food.pos.clone(); }
+    else if (mode === 'graze') target = this.grassSpot(world);
+    else if (mode === 'perch') target = this.perchSpot(world);
+    else if (mode === 'rest' || mode === 'browse') target = this.findSpot(world, mode === 'rest');
+    if (!target) { mode = 'cruise'; target = randomTarget(rng, world, 2, 7); }
+    this.mode = mode;
+    this.target = target;
+    const [lo, hi] = COMMIT[mode];
+    this.modeT = range(rng, lo, hi);
+  }
+
+  private nearestFood(world: CritterWorld): CritterFood | null {
+    let best: CritterFood | null = null, bestD = FOOD_RANGE;
+    for (const f of world.food) if (!f.eaten) { const d = f.pos.distanceTo(this.pos); if (d < bestD) { bestD = d; best = f; } }
+    return best;
+  }
+
+  /** Follow the flake as it sinks; take it when the head reaches it. */
+  private chaseFood(): void {
+    const f = this.food;
+    if (!f || f.eaten) { this.food = null; this.modeT = 0; return; }
+    this.target.copy(f.pos);
+    if (this.pos.distanceTo(f.pos) < this.L * 0.55) { f.eaten = true; this.food = null; this.brain.add('hunger', -FOOD_BITE); this.modeT = 0; }
+  }
+
+  /** A spot in one of the turtle-grass beds, settled on the sand among the blades. */
+  private grassSpot(world: CritterWorld): THREE.Vector3 | null {
+    const beds = world.reef.grassBeds;
+    if (!beds?.length) return null;
+    const bed = beds[Math.floor(this.rng() * beds.length)] ?? beds[0];
+    if (!bed) return null;
+    const a = this.rng() * Math.PI * 2, r = Math.sqrt(this.rng()) * bed.r * 0.6;
+    const x = bed.x + Math.cos(a) * r, z = bed.z + Math.sin(a) * r;
+    return new THREE.Vector3(x, Math.max(world.reefHeight(x, z), 0) + this.L * 0.12, z);
+  }
+
+  /** The top of a sponge (the highest of the sponge's top under the shell), to settle on. */
+  private perchSpot(world: CritterWorld): THREE.Vector3 | null {
+    const perches = world.reef.perches;
+    if (!perches?.length) return null;
+    const p = perches[Math.floor(this.rng() * perches.length)] ?? perches[0];
+    if (!p) return null;
+    const B = world.bounds, x = clamp(p.pos.x, B.x0 + 1, B.x1 - 1), z = clamp(p.pos.z, B.z0 + 0.3, B.z1 - 0.3);
+    let top = p.pos.y;
+    for (let i = 0; i < 6; i++) top = Math.max(top, world.reefHeight(x + Math.cos(i) * p.r * 0.5, z + Math.sin(i) * p.r * 0.5));
+    this.perchName = p.name;
+    return new THREE.Vector3(x, top + this.L * 0.1, z);
   }
 
   private findSpot(world: CritterWorld, onSand: boolean): THREE.Vector3 | null {
@@ -240,7 +333,7 @@ export class Turtle implements Critter {
 
   /** Head: looks about, bobs down to graze. */
   private moveHead(settled: boolean): void {
-    const grazing = this.mode === 'graze' && settled;
+    const grazing = (this.mode === 'graze' || this.mode === 'browse') && settled;
     this.head.rotation.y = Math.sin(this.t * 0.3) * 0.25;
     this.head.rotation.z = grazing ? -0.35 + 0.15 * Math.max(0, Math.sin(this.t * 3)) : Math.sin(this.t * 0.4) * 0.06;
   }

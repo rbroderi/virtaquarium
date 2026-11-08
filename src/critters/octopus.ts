@@ -14,7 +14,8 @@ import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scala
 import { boundMaterialColor, gpuActive } from '../webgpu/tsl.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
-import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
+import type { InspectPanel } from '../inspect.js';
+import { CritterBrain, type DriveInfo } from './critterBrain.js';
 import type { Critter, CritterCave, CritterFood, CritterSpecies, CritterWorld, JoinRule, OctopusDen } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
@@ -48,6 +49,22 @@ const SAC_BREATH = 0.04;
 const OBSTACLE_SAC_RADIUS = 1.1;   // the sac's bumpy skin, up to 9% proud
 const SIPHON_BALL_RADIUS = 0.08;
 const WEB_CLEARANCE = 0.02;
+
+/** Drive time scales (s), and how much a flake takes off hunger. */
+const HUNGER_SECONDS = 240, FORAGE_FEED_SECONDS = 150, FOOD_BITE = 0.3;
+const TIRE_SECONDS = 120, JET_TIRE_SECONDS = 10, REST_SECONDS = 60, FEAR_SECONDS = 40, FIDGET_SECONDS = 90;
+/** Seconds between reconsiderations once a choice stands. */
+const RETHINK_SECONDS = 4;
+
+type OctopusDrive = 'hunger' | 'fatigue' | 'fear' | 'restless';
+const DRIVES: Readonly<Record<OctopusDrive, DriveInfo>> = {
+  hunger: { label: 'Hunger', cls: 'hunger' },
+  fatigue: { label: 'Tiredness', cls: 'energy' },
+  fear: { label: 'Fear', cls: 'fear' },
+  restless: { label: 'Restlessness', cls: 'boredom' },
+};
+type OctopusTrait = 'boldness' | 'curiosity' | 'calm';
+const TRAITS: Readonly<Record<OctopusTrait, string>> = { boldness: 'Boldness', curiosity: 'Curiosity', calm: 'Calm' };
 
 const MODE_NOTES: Readonly<Record<OctopusMode, string>> = {
   den: 'In its den, arms curled close',
@@ -119,6 +136,9 @@ export class Octopus implements Critter {
   private squash = 1;
   private tuck = 1;
   private food: CritterFood | null = null;
+  /** The food it last noticed (a new flake makes it think again). */
+  private seen: CritterFood | null = null;
+  readonly brain: CritterBrain<OctopusDrive, OctopusMode, OctopusTrait>;
   private jetDir = new THREE.Vector3();
   private readonly down = new THREE.Vector3(0, -1, 0);
   private readonly worldToLocal = new THREE.Matrix4();
@@ -162,6 +182,9 @@ export class Octopus implements Critter {
     this.yaw = range(rng, -Math.PI, Math.PI);
     this.modeT = range(rng, 20, 60);
     this.target = this.pos.clone();
+    this.brain = new CritterBrain(DRIVES,
+      { hunger: range(rng, 0.2, 0.5), fatigue: range(rng, 0.3, 0.6), fear: 0, restless: range(rng, 0, 0.3) },
+      { boldness: rng(), curiosity: rng(), calm: rng() }, TRAITS);
     this.cave = den.cave;
     if (den.cave) this.yaw = Math.atan2(den.cave.dir.z, den.cave.dir.x);
   }
@@ -307,25 +330,9 @@ export class Octopus implements Critter {
     return web;
   }
 
-  /** The click panel: its real state machine, target, speed, den and startle responses. */
+  /** The click panel, laid out as the fish panel. */
   inspect(): InspectPanel {
-    return {
-      title: this.sp.name,
-      sci: this.sp.sci,
-      note: MODE_NOTES[this.mode],
-      rows: [
-        { heading: 'State' },
-        { label: 'Mode', value: modeLabel(this.mode) },
-        { label: 'Time left', value: fmtSeconds(this.modeT) },
-        { label: 'Speed', value: fmtSpeed(this.speed) },
-        { label: 'Target', value: `${fmtMetres(this.pos.distanceTo(this.target))} away` },
-        { heading: 'Home & responses' },
-        { label: 'Den', value: this.cave ? 'a cave' : 'a low crevice' },
-        { label: 'Jet', bar: this.jet, cls: 'energy' },
-        { label: 'Startle', value: this.calm > 0 ? `recovering · ${fmtSeconds(this.calm)}` : 'ready' },
-      ],
-      fact: this.sp.fact,
-    };
+    return this.brain.panel(this.sp, this.mode, MODE_NOTES[this.mode]);
   }
 
   update(dt: number, world: CritterWorld): void {
@@ -333,8 +340,8 @@ export class Octopus implements Critter {
     this.calm -= dt;
     const threat = this.calm <= 0 && this.mode !== 'jet' ? threatNear(this, world, THREAT_RANGE) : null;
     if (threat) this.startle(world, threat.pos);
-    this.lookForFood(world);
-    if (this.modeT <= 0) this.chooseMode(world);
+    this.feelDrives(dt);
+    if (this.modeT <= 0 || this.foodAppeared(world)) this.decide(world);
     this.prevPos.copy(this.pos);
     const reach = this.mode === 'jet' ? JET_SPEED * this.jet : this.mode === 'pounce' ? POUNCE_SPEED : CRAWL_SPEED;
     this.moveBody(dt);
@@ -357,36 +364,61 @@ export class Octopus implements Critter {
     this.buildWeb();
   }
 
-  private lookForFood(world: CritterWorld): void {
-    if (this.mode !== 'den' && this.mode !== 'forage') return;
-    let food: CritterFood | null = null;
-    for (const f of world.food) if (!f.eaten && f.resting && f.pos.distanceTo(this.pos) < FOOD_RANGE) { food = f; break; }
-    if (food) { this.mode = 'pounce'; this.target.copy(food.pos); this.food = food; this.modeT = 8; }
+  /** Out foraging it tires and feeds a little on what it finds; in the den it rests and gets restless. */
+  private feelDrives(dt: number): void {
+    const br = this.brain, home = this.mode === 'den', out = this.mode === 'forage' || this.mode === 'pounce';
+    br.add('hunger', this.mode === 'forage' ? -dt / FORAGE_FEED_SECONDS : dt / HUNGER_SECONDS);
+    br.add('fatigue', out ? dt / TIRE_SECONDS : this.mode === 'jet' ? dt / JET_TIRE_SECONDS : -dt / REST_SECONDS);
+    br.add('fear', -dt / FEAR_SECONDS);
+    br.add('restless', home ? dt / FIDGET_SECONDS : -dt / FIDGET_SECONDS);
   }
 
-  private chooseMode(world: CritterWorld): void {
+  /** Settled food within reach, while it is in the den or foraging (it doesn't stop a jet or a pounce). */
+  private nearFood(world: CritterWorld): CritterFood | null {
+    if (this.mode !== 'den' && this.mode !== 'forage') return null;
+    for (const f of world.food) if (!f.eaten && f.resting && f.pos.distanceTo(this.pos) < FOOD_RANGE) return f;
+    return null;
+  }
+
+  /** New food has landed within reach since the last decision: think again now. */
+  private foodAppeared(world: CritterWorld): boolean {
+    const f = this.nearFood(world);
+    const fresh = f !== null && f !== this.seen;
+    this.seen = f;
+    return fresh;
+  }
+
+  /** Score den, forage and pounce from the drives; a jet runs its course first. */
+  private decide(world: CritterWorld): void {
+    if (this.mode === 'jet' && this.modeT > 0) return;
+    const br = this.brain, { hunger, fatigue, fear, restless } = br.drives, food = this.nearFood(world);
+    const scores: Partial<Record<OctopusMode, number>> = {
+      den: (0.15 + fatigue * 0.9) * br.weight('calm') + fear * 1.2 * (2 - br.weight('boldness')),
+      forage: (hunger * 0.9 + restless * 0.6) * br.weight('curiosity'),
+    };
+    if (food) scores.pounce = (0.35 + hunger * 1.2) * br.weight('boldness') - fear * 0.6;
+    const current = this.mode === 'den' || this.mode === 'forage' ? this.mode : null;
+    const next = br.choose(current, scores);
     const rng = this.rng;
-    if (this.mode === 'den') {
+    if (next === current) { this.modeT = RETHINK_SECONDS; return; }
+    if (next === 'pounce' && food) { this.mode = 'pounce'; this.target.copy(food.pos); this.food = food; this.modeT = 8; return; }
+    if (next === 'forage') {
       this.mode = 'forage'; this.modeT = range(rng, 25, 50);
       this.target = randomTarget(rng, world, 0, 0);
       this.target.x = clamp(this.den.x + range(rng, -4, 4), world.bounds.x0 + 1.5, world.bounds.x1 - 1.5);
-    } else this.returnToDen(range(rng, 40, 90));
-  }
-
-  private returnToDen(seconds: number): void {
-    this.mode = 'den'; this.target.copy(this.den); this.modeT = seconds;
+      return;
+    }
+    this.mode = 'den'; this.target.copy(this.den); this.modeT = range(rng, 30, 60);
   }
 
   /** Body: crawl over the surface (or jet clear of it). */
   private moveBody(dt: number): void {
-    const rng = this.rng;
     if (this.mode === 'jet') {
       this.pos.addScaledVector(this.jetDir, JET_SPEED * this.jet * dt);
       // Mantle first: it turns its sac into the jet, so the arms stream out behind it, clear of the sac.
       const yawT = Math.atan2(-this.jetDir.z, -this.jetDir.x);
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 6);
       this.jet = Math.max(0, this.jet - dt * 0.7);
-      if (this.modeT <= 0) this.returnToDen(range(rng, 30, 60));
       return;
     }
     _v.subVectors(this.target, this.pos).setY(0);
@@ -397,7 +429,10 @@ export class Octopus implements Critter {
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 0.8);
       this.pos.addScaledVector(_v.normalize(), Math.min(d, speed * dt));
     }
-    if (this.mode === 'pounce' && this.food && (this.food.eaten || d < 0.35)) { this.food.eaten = true; this.food = null; this.returnToDen(range(rng, 30, 60)); }
+    if (this.mode === 'pounce' && this.food && (this.food.eaten || d < 0.35)) {
+      if (!this.food.eaten) this.brain.add('hunger', -FOOD_BITE);
+      this.food.eaten = true; this.food = null; this.modeT = 0;
+    }
   }
 
   /**
@@ -523,6 +558,7 @@ export class Octopus implements Critter {
   /** Startled by something at `from`: jet away (critterCheck.ts calls this too). */
   startle(world: CritterWorld, from: THREE.Vector3): void {
     this.mode = 'jet'; this.modeT = JET_SECONDS; this.jet = 1; this.calm = CALM_AFTER_JET;
+    this.brain.add('fear', 1);
     // Away from the threat and a little up; under the den's roof, straight out of the mouth instead.
     this.jetDir = this.cave && ceilingAt(world, this.pos.x, this.pos.z) < Infinity
       ? this.cave.dir.clone().setY(0.05).normalize()

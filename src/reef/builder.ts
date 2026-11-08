@@ -27,7 +27,7 @@ import {
   HEIGHT_FIELD, HOMES, MORAY_CAVES, OPEN_SAND_LEVEL, PILE_DOUBLE_WIDTH, PROBE_HEIGHT, ROCK_PILES, ROCK_STRETCH,
   SHELTER_LIMITS, STAGHORNS, STREAM,
 } from './layout.js';
-import type { Anemone, Cave, PlantedCounts, Reef, Scenery, Shelter, ShoalCoral } from './types.js';
+import type { Anemone, Cave, GrassBed, Perch, PlantedCounts, Reef, Scenery, Shelter, ShoalCoral } from './types.js';
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const EIGHT_DIRECTIONS = 8;
@@ -39,6 +39,8 @@ const SAND_SHADE_MIN = 0.22;
 const ANEMONE_REACTOR_RADIUS = 1.0;
 /** How far a fish is tracked around a sea-grass patch for blade parting (world units). */
 const GRASS_REACTOR_RADIUS = 1.4;
+/** A grass patch's grazing radius (its shoots spread to about this). */
+const GRASS_BED_RADIUS = 0.7;
 
 export interface ReefBuildParams {
   readonly scene: THREE.Object3D;
@@ -105,6 +107,8 @@ export class ReefBuilder {
   private readonly caves: Cave[] = [];
   private readonly planted: PlantedCounts = { grass: 0, clumps: 0, rubble: 0 };
   private readonly reactors: FishPushReactor[] = [];
+  private readonly grassBeds: GrassBed[] = [];
+  private readonly perches: Perch[] = [];
 
   constructor(params: ReefBuildParams) {
     this.width = params.width;
@@ -164,6 +168,8 @@ export class ReefBuilder {
       homes,
       caves: this.caves,
       planted: this.planted,   // { grass: patches, clumps: algae clumps, rubble: pieces } that found clear sand
+      grassBeds: this.grassBeds,
+      perches: this.perches,
       shelters,
       shoalCoral,              // the chromis' home staghorn
       fanWorms,                // feather dusters: update(dt, world) retracts them when startled
@@ -535,10 +541,16 @@ export class ReefBuilder {
       this.tableShelter = { pos: new THREE.Vector3(c.x, b.min.y + (b.max.y - b.min.y) * 0.35, c.z), floor: this.restingHeight(c.x, c.z), top: b.max.y - 0.15, r: 0.6, kind: 'ledge' };
     }
     // Barrel sponge back left, filling the back-wall gap and breaking the skyline.
-    put(coral['sponge_barrel'], 2.2, -4.4, -2.9, { sink: 0.04, onSand: true });
+    // Each sponge is also a perch the turtle can settle on.
+    const perch = (m: THREE.Object3D | null, name: string): void => {
+      if (!m) return;
+      const b = new THREE.Box3().setFromObject(m), c = b.getCenter(new THREE.Vector3());
+      this.perches.push({ pos: new THREE.Vector3(c.x, b.max.y, c.z), r: 0.5 * Math.min(b.max.x - b.min.x, b.max.z - b.min.z), name });
+    };
+    perch(put(coral['sponge_barrel'], 2.2, -4.4, -2.9, { sink: 0.04, onSand: true }), 'the barrel sponge');
     // Tube sponges standing up from pile tops: yellow on the back-left pile, orange on the right pile.
-    put(coral['sponge_tube'], 1.8, -2.9, -2.5, { sink: 0.05 });
-    put(coral['sponge_tube_orange'], 1.5, 5.2, -1.4, { sink: 0.05 });
+    perch(put(coral['sponge_tube'], 1.8, -2.9, -2.5, { sink: 0.05 }), 'the yellow tube sponge');
+    perch(put(coral['sponge_tube_orange'], 1.5, 5.2, -1.4, { sink: 0.05 }), 'the orange tube sponge');
     // Sea rods in the back corners, filling the empty upper frame; they flex, and fish swim through.
     put(coral['sea_rod'], 3.4, -7.0, -3.7, { soft: true, sink: 0.03 });
     put(coral['sea_rod'], 2.8, 7.1, -3.9, { soft: true, sink: 0.03 });
@@ -622,6 +634,7 @@ export class ReefBuilder {
       if (!at) break;
       const [cx, cz] = at, shoots = Math.floor(range(grng, 45, 65)), blades: Blade[] = [];
       this.reactors.push({ x: cx, z: cz, r: GRASS_REACTOR_RADIUS });
+      this.grassBeds.push({ x: cx, z: cz, r: GRASS_BED_RADIUS });
       for (let sh = 0; sh < shoots; sh++) {
         const a = grng() * Math.PI * 2, r = Math.sqrt(grng()) * 0.6;
         const yaw = grng() * Math.PI * 2;

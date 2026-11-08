@@ -73,7 +73,13 @@ export interface CritterNeighbour {
 /** The parts of the World a critter reads. */
 export interface CritterWorld {
   readonly bounds: CritterBounds;
-  readonly reef: { readonly caves?: readonly CritterCave[] };
+  readonly reef: {
+    readonly caves?: readonly CritterCave[];
+    /** Turtle-grass patches: centre and radius. */
+    readonly grassBeds?: readonly { readonly x: number; readonly z: number; readonly r: number }[];
+    /** Sponges to settle on: top centre, radius and a name for the panel. */
+    readonly perches?: readonly { readonly pos: THREE.Vector3; readonly r: number; readonly name: string }[];
+  };
   readonly critters: readonly CritterNeighbour[];
   readonly fish: readonly CritterThreatFish[];
   readonly food: readonly CritterFood[];

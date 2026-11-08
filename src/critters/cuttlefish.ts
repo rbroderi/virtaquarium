@@ -13,7 +13,8 @@ import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, type ShaderHook, type NodeHook, type SpringState } from './shared.js';
 import { boundMaterialColor, type NodeObject } from '../webgpu/tsl.js';
 import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
-import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
+import type { InspectPanel } from '../inspect.js';
+import { CritterBrain, type DriveInfo } from './critterBrain.js';
 import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
 export type CuttlefishMode = 'hover' | 'cruise' | 'rest' | 'hunt' | 'jet';
@@ -39,6 +40,22 @@ const FOOD_RANGE = 3.5;
 const HUNT_SECONDS = 20;
 const JET_AWAY_DISTANCE = 3;
 const JET_SPEED = 2.2;
+
+/** Drive time scales (s), and how much a catch takes off hunger. */
+const HUNGER_SECONDS = 200, FOOD_BITE = 0.25;
+const TIRE_SECONDS = 150, JET_TIRE_SECONDS = 8, REST_SECONDS = 50, FEAR_SECONDS = 30, FIDGET_SECONDS = 60, CALM_SECONDS = 40;
+/** Seconds between reconsiderations once a choice stands. */
+const RETHINK_SECONDS = 3;
+
+type CuttleDrive = 'hunger' | 'fatigue' | 'fear' | 'restless';
+const DRIVES: Readonly<Record<CuttleDrive, DriveInfo>> = {
+  hunger: { label: 'Hunger', cls: 'hunger' },
+  fatigue: { label: 'Tiredness', cls: 'energy' },
+  fear: { label: 'Fear', cls: 'fear' },
+  restless: { label: 'Restlessness', cls: 'boredom' },
+};
+type CuttleTrait = 'appetite' | 'activity' | 'calm';
+const TRAITS: Readonly<Record<CuttleTrait, string>> = { appetite: 'Appetite', activity: 'Activity', calm: 'Calm' };
 
 const MODE_NOTES: Readonly<Record<CuttlefishMode, string>> = {
   hover: 'Hovering on its fins',
@@ -99,9 +116,15 @@ export class Cuttlefish implements Critter {
   private readonly sSqueeze: SpringState = { x: 0, v: 0 };
   private calm = 0;
   private reverse = false;
+  /** The food it last saw (new food in sight makes it think again). */
+  private seen: CritterFood | null = null;
+  readonly brain: CritterBrain<CuttleDrive, CuttlefishMode, CuttleTrait>;
 
   constructor(sp: CritterSpecies, rng: Rng, world: CritterWorld) {
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
+    this.brain = new CritterBrain(DRIVES,
+      { hunger: range(rng, 0.2, 0.5), fatigue: range(rng, 0.1, 0.3), fear: 0, restless: range(rng, 0.1, 0.4) },
+      { appetite: rng(), activity: rng(), calm: rng() }, TRAITS);
     const ML = this.ML = range(rng, 1.0, 1.3);
     this.pickRadius = 0.75 * ML;
     this.u = { uTime: { value: 0 }, uCloud: { value: 0 }, uMottle: { value: 0 }, uPale: { value: 0 }, uSqueeze: { value: new THREE.Vector3(1, 1, 1) }, uExt: { value: 1 } };
@@ -305,39 +328,25 @@ export class Cuttlefish implements Critter {
 
   startle(): void {
     this.mode = 'jet'; this.modeT = JET_SECONDS; this.jet = 1;
+    this.brain.add('fear', 1);
   }
 
   forceStrike(seconds: number): void {
     this.strike = seconds;
   }
 
-  /** The click panel: its real state machine, target, speed and startle responses. */
+  /** The click panel, laid out as the fish panel. */
   inspect(): InspectPanel {
-    return {
-      title: this.sp.name,
-      sci: this.sp.sci,
-      note: MODE_NOTES[this.mode],
-      rows: [
-        { heading: 'State' },
-        { label: 'Mode', value: modeLabel(this.mode) },
-        { label: 'Time left', value: fmtSeconds(this.modeT) },
-        { label: 'Speed', value: fmtSpeed(this.body.speed) },
-        { label: 'Target', value: `${fmtMetres(this.pos.distanceTo(this.target))} away` },
-        { heading: 'Responses' },
-        { label: 'Jet', bar: this.jet, cls: 'energy' },
-        { label: 'Tentacles', value: this.strike > 0 ? 'striking' : 'in' },
-        { label: 'Startle', value: this.calm > 0 ? `recovering · ${fmtSeconds(this.calm)}` : 'ready' },
-      ],
-      fact: this.sp.fact,
-    };
+    return this.brain.panel(this.sp, this.mode, MODE_NOTES[this.mode]);
   }
 
   update(dt: number, world: CritterWorld): void {
     this.modeT -= dt;
     this.u.uTime.value += dt;
     this.reactToThreat(dt, world);
+    this.feelDrives(dt);
     const food = this.lookForFood(world);
-    if (this.modeT <= 0) this.chooseMode(world);
+    if (this.modeT <= 0 || this.foodChanged(food)) this.decide(world, food);
     const speed = this.speedFor(dt, food);
     const b = this.body, yaw0 = b.yaw, pitch0 = b.pitch;
     b.steer(dt, world, this.target, { turn: 0.9, speed, accel: this.mode === 'jet' ? 6 : 1.2, clearance: 0.25 * this.ML, reverse: speed < 0 });
@@ -355,21 +364,54 @@ export class Cuttlefish implements Critter {
     const threat = this.calm <= 0 && this.mode !== 'jet' ? threatNear(this, world, THREAT_RANGE) : null;
     if (!threat) return;
     this.mode = 'jet'; this.modeT = JET_SECONDS; this.jet = 1; this.calm = CALM_AFTER_JET;
+    this.brain.add('fear', 1);
     this.target.copy(this.pos).addScaledVector(_v.subVectors(this.pos, threat.pos).setY(0).normalize(), JET_AWAY_DISTANCE);
   }
 
-  /** Food: stalk, then strike with the tentacles. */
+  /** The nearest food in sight (none during a jet). */
   private lookForFood(world: CritterWorld): CritterFood | null {
     if (this.mode === 'jet') return null;
     let food: CritterFood | null = null, best = FOOD_RANGE;
     for (const f of world.food) if (!f.eaten) { const d = f.pos.distanceTo(this.pos); if (d < best) { best = d; food = f; } }
-    if (food && this.mode !== 'hunt') { this.mode = 'hunt'; this.modeT = HUNT_SECONDS; }
     return food;
   }
 
-  private chooseMode(world: CritterWorld): void {
-    const rng = this.rng, r = rng();
-    this.mode = r < 0.4 ? 'hover' : r < 0.85 ? 'cruise' : 'rest';
+  /** Cruising tires it and resting restores it; sitting still makes it restless; fear fades. */
+  private feelDrives(dt: number): void {
+    const br = this.brain, m = this.mode;
+    br.add('hunger', dt / HUNGER_SECONDS);
+    br.add('fatigue', m === 'cruise' || m === 'hunt' ? dt / TIRE_SECONDS : m === 'jet' ? dt / JET_TIRE_SECONDS : m === 'rest' ? -dt / REST_SECONDS : dt / (TIRE_SECONDS * 3));
+    br.add('fear', -dt / FEAR_SECONDS);
+    br.add('restless', m === 'cruise' ? -dt / CALM_SECONDS : dt / FIDGET_SECONDS);
+  }
+
+  /** Food has come into sight since the last decision (or the one it was after is gone). */
+  private foodChanged(food: CritterFood | null): boolean {
+    const changed = food !== this.seen;
+    this.seen = food;
+    return changed && food !== null;
+  }
+
+  /** Score hover, cruise, rest and (with food in sight) hunt; a jet runs its course first. */
+  private decide(world: CritterWorld, food: CritterFood | null): void {
+    if (this.mode === 'jet' && this.modeT > 0) return;
+    const br = this.brain, { hunger, fatigue, fear, restless } = br.drives;
+    const scores: Partial<Record<CuttlefishMode, number>> = {
+      hover: 0.3 + fear * 0.6,
+      cruise: (0.2 + restless * 0.9) * br.weight('activity') * (1 - fear * 0.5),
+      rest: fatigue * 1.1 * br.weight('calm'),
+    };
+    if (food) scores.hunt = (0.3 + hunger * 1.3) * br.weight('appetite') - fear * 0.8;
+    const current = this.mode === 'jet' ? null : this.mode;
+    const next = br.choose(current, scores);
+    if (next === current) { this.modeT = RETHINK_SECONDS; return; }
+    this.go(next, world);
+  }
+
+  private go(mode: CuttlefishMode, world: CritterWorld): void {
+    const rng = this.rng;
+    this.mode = mode;
+    if (mode === 'hunt') { this.modeT = HUNT_SECONDS; return; }
     this.modeT = this.mode === 'rest' ? range(rng, 25, 50) : range(rng, 8, 18);
     this.reverse = this.mode === 'cruise' && rng() < 0.3;
     if (this.mode === 'rest') {
@@ -391,7 +433,7 @@ export class Cuttlefish implements Critter {
     if (this.mode === 'hunt' && food) {
       this.target.copy(food.pos);
       const d = this.pos.distanceTo(food.pos);
-      if (d < 0.5 * this.ML + 0.2) { food.eaten = true; this.strike = STRIKE_SECONDS; }
+      if (d < 0.5 * this.ML + 0.2) { food.eaten = true; this.strike = STRIKE_SECONDS; this.brain.add('hunger', -FOOD_BITE); this.modeT = 0; }
       return d > 0.6 ? 0.35 : 0.08;
     }
     if (this.mode === 'hunt') { this.modeT = 0; return 0; }
