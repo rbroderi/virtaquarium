@@ -1,6 +1,7 @@
 // A moon jelly: one pulse a second or so (a quick contraction of the bell margin that thrusts along
-// the bell axis and a slow relaxation), slight negative buoyancy, a righting tendency that keeps the
-// bell up, and the tank's current carrying it round.
+// the bell axis and a slow relaxation). Each beat is a surge that the water's drag soon stops, and
+// between beats the jelly, a little heavier than water, sinks. The bell points where it swims, often
+// towards or away from the viewer, and the tank's current carries it round.
 import * as THREE from 'three';
 import { range, clamp, type Rng } from '../util.js';
 import { sharedJellyGeometry } from './geometry.js';
@@ -25,12 +26,20 @@ const ADDITIVE = { transparent: true, depthWrite: false, blending: THREE.Additiv
 
 const CONTRACT_SHARE = 0.3;          // of each pulse cycle: the quick close; the rest relaxes
 const RELAX_FLARE = 0.35;            // how far the relaxing bell overshoots its rest shape (dips to about -0.07)
-const THRUST_PER_RADIUS = 0.3;       // speed gained per unit contraction per unit bell radius
-const SINK_RATE = 0.04;              // slightly heavier than water (units/s^2)
-const DRAG_RATE = 1.2;
+const THRUST_PER_RADIUS = 1.6;       // speed gained per unit contraction per unit bell radius
+/** Heavier than water: with DRAG_RATE it settles to ~0.12 units/s (~1.5 cm/s) of sinking between beats. */
+const SINK_RATE = 0.42;              // units/s^2
+/** Strong drag: each beat's surge bleeds off in ~0.3 s, so the jelly glides, stalls and sinks before the next. */
+const DRAG_RATE = 3.5;
 const BUMP_RANGE = 1.15;             // bells nearer than this many summed radii push apart
 const BUMP_STRENGTH = 0.6;
 const RIGHTING_RATE = 0.25;
+/** Heading tilt from vertical (radians) a wander picks: from nearly upright to well over on its side. */
+const WANDER_TILT: readonly [number, number] = [0.4, 1.45];
+/** Share of wanders aimed mostly towards or away from the viewer, so the jellies travel through the depth. */
+const WANDER_DEPTH_SHARE = 0.6;
+/** Seconds a jelly keeps one heading. */
+const WANDER_SECONDS: readonly [number, number] = [6, 14];
 const WALL_MARGIN_X = 1.2;
 const WALL_MARGIN_Z = 0.6;
 const TOP_MARGIN = 1.0;
@@ -173,7 +182,8 @@ export class Jelly implements Inspectable {
   }
 
   /**
-   * Thrust while the bell closes, along the bell axis: about 1-2 cm/s on average. Each jelly holds a
+   * Thrust while the bell closes, along the bell axis: a surge to ~5 cm/s that drag bleeds off within
+   * the beat, then a slow sink until the next (about 1-2 cm/s on average). Each jelly holds a
    * loose depth: above it the pulses weaken and it sinks, below it they strengthen. Returns the
    * contraction now.
    */
@@ -198,19 +208,28 @@ export class Jelly implements Inspectable {
   }
 
   /**
-   * The bell rights itself (the heavy, gelatinous margin hangs below) and wanders slowly; near the
-   * walls it tips away from them.
+   * The bell swims where it points, so its heading is its course: every few seconds it picks a new
+   * one anywhere in the upper hemisphere (often towards or away from the viewer, through the tank's
+   * depth) and turns to it slowly. Near the walls it tips away from them.
    */
   private right(dt: number, B: JellyBounds): void {
     this.wanderT -= dt;
-    if (this.wanderT <= 0) { this.wander.set(range(this.rng, -0.6, 0.6), 0, range(this.rng, -0.4, 0.4)); this.wanderT = range(this.rng, 4, 9); }
-    const want = this._f.set(0, 1, 0).add(this.wander);
+    if (this.wanderT <= 0) {
+      const tilt = range(this.rng, WANDER_TILT[0], WANDER_TILT[1]);
+      const side = this.rng() < 0.5 ? -1 : 1;
+      const az = this.rng() < WANDER_DEPTH_SHARE
+        ? side * Math.PI / 2 + range(this.rng, -0.5, 0.5)   // mostly along z: towards or away from the viewer
+        : range(this.rng, -Math.PI, Math.PI);
+      this.wander.set(Math.sin(tilt) * Math.cos(az), Math.cos(tilt), Math.sin(tilt) * Math.sin(az));
+      this.wanderT = range(this.rng, WANDER_SECONDS[0], WANDER_SECONDS[1]);
+    }
+    const want = this._f.copy(this.wander);
     want.x += clamp((this.prefX - this.pos.x) * 0.12, -0.5, 0.5);   // a loose home column, so they spread out
-    const m = WALL_MARGIN_X;
+    const m = WALL_MARGIN_X, mz = WALL_MARGIN_Z + 0.5 * this.R;   // big bells turn before their rim meets the glass
     if (this.pos.x < B.x0 + m) want.x += (B.x0 + m - this.pos.x) * 2;
     if (this.pos.x > B.x1 - m) want.x -= (this.pos.x - B.x1 + m) * 2;
-    if (this.pos.z < B.z0 + WALL_MARGIN_Z) want.z += 1.5;
-    if (this.pos.z > B.z1 - WALL_MARGIN_Z) want.z -= 1.5;
+    if (this.pos.z < B.z0 + mz) want.z += 1.5;
+    if (this.pos.z > B.z1 - mz) want.z -= 1.5;
     if (this.pos.y > B.y1 - TOP_MARGIN) want.y -= 2.5;   // near the top: tip over and drift back down
     if (this.pos.y < LOW_Y) want.y += 1.5;
     this.axis.lerp(want.normalize(), Math.min(1, dt * RIGHTING_RATE)).normalize();
