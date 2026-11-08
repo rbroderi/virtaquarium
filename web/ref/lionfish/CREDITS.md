@@ -7,3 +7,4 @@ Reference photos for the fish lab (`lab.html?sp=lionfish&ref=1`), from Wikimedia
 | eldar_oniria07.jpg | Tylwyth Eldar | CC BY-SA 4.0 | <https://commons.wikimedia.org/wiki/File:Oniria_-_Rascasse_volante_07.jpg> (1920 px rendition) |
 | vanderwel.jpg | Sander van der Wel | CC BY-SA 2.0 | <https://commons.wikimedia.org/wiki/File:Koraalduivel_(4039683514).jpg> (1920 px rendition) |
 | eldar_oniria11.jpg | Tylwyth Eldar | CC BY-SA 4.0 | <https://commons.wikimedia.org/wiki/File:Oniria_-_Rascasse_volante_11.jpg> (1920 px rendition) |
+| vasenin_gilibanta.jpg | Alexander Vasenin | CC BY-SA 3.0 | <https://commons.wikimedia.org/w/index.php?curid=25523559> (File:Red_lionfish_near_Gilli_Banta_Island.JPG, original 1280 px) |
