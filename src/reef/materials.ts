@@ -6,7 +6,7 @@ import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishPushBend, fishUniforms } from '.
 import { gpuActive, tsl } from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
-import type { Node, ShaderNodeObject } from 'three/webgpu';
+import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
 
 const GLSL_DIGITS = 4;
 
@@ -56,9 +56,15 @@ function swayNode(options: { ax: number; az: number; hz: number; hTop: number; f
   const t = tsl();
   const { ax, az, hz, hTop, fishPush, instanced, instanceMatrixNode, deformNode } = options;
   const time = waterTimeNode();
+  // The per-species sway numbers arrive as uniforms, not float() literals, so every swayed material
+  // shares one vertex program instead of one per (ax, az, hz, hTop) combination.
+  const uAx = t.uniform(ax, 'float') as ShaderNodeObject<UniformNode<number>>;
+  const uAz = t.uniform(az, 'float') as ShaderNodeObject<UniformNode<number>>;
+  const uHz = t.uniform(hz, 'float') as ShaderNodeObject<UniformNode<number>>;
+  const uHTop = t.uniform(hTop, 'float') as ShaderNodeObject<UniformNode<number>>;
   return t.Fn(() => {
     const p = t.positionGeometry.toVar();   // the authored position: h is the model's own height
-    const h = t.clamp(p.y.div(t.float(hTop)), t.float(0), t.float(1));
+    const h = t.clamp(p.y.div(uHTop), t.float(0), t.float(1));
     // The instance matrix's four columns: a storage-buffer node when the caller supplied one (a single
     // mesh per material), else the aInst0..aInst3 per-instance attributes.
     const i0 = instanceMatrixNode ? (t.element(instanceMatrixNode, 0) as ShaderNodeObject<Node>)
@@ -72,11 +78,11 @@ function swayNode(options: { ax: number; az: number; hz: number; hTop: number; f
     const ph = instanced
       ? i3.x.mul(t.float(1.7)).add(i3.z.mul(t.float(2.3)))
       : t.modelPosition.x.mul(t.float(1.7)).add(t.modelPosition.z.mul(t.float(2.3)));
-    const s = t.sin(time.mul(t.float(hz)).add(ph))
-      .add(t.float(0.35).mul(t.sin(time.mul(t.float(hz * 2.3)).add(ph.mul(t.float(1.9))))));
+    const s = t.sin(time.mul(uHz).add(ph))
+      .add(t.float(0.35).mul(t.sin(time.mul(uHz.mul(t.float(2.3))).add(ph.mul(t.float(1.9))))));
     const out = p.toVar();
-    out.x.addAssign(s.mul(t.float(ax)).mul(h).mul(h));
-    out.z.addAssign(t.cos(time.mul(t.float(hz * 0.8)).add(ph.mul(t.float(1.3)))).mul(t.float(az)).mul(h).mul(h));
+    out.x.addAssign(s.mul(uAx).mul(h).mul(h));
+    out.z.addAssign(t.cos(time.mul(uHz.mul(t.float(0.8))).add(ph.mul(t.float(1.3)))).mul(uAz).mul(h).mul(h));
     if (deformNode) out.assign(deformNode(out, h));
     if (fishPush) {
       const bent = instanced

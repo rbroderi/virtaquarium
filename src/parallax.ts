@@ -185,14 +185,16 @@ function pomOffNode(t: Tsl, heightTex: THREE.Texture, ch: 'x' | 'a', depth: numb
     const det = dp1.dot(p2);
     const pxSize = dp1.length().max(dp2.length());
     const nv0 = N.dot(V).max(0.3);
-    const shiftPx = t.float(depth).mul(V.sub(N.mul(N.dot(V))).length()).div(nv0).div(pxSize.max(1e-6));
+    // depth is a uniform so rock, coral and generated scenery share one POM program.
+    const uDepth = t.uniform(depth, 'float');
+    const shiftPx = uDepth.mul(V.sub(N.mul(N.dot(V))).length()).div(nv0).div(pxSize.max(1e-6));
     const fade = t.smoothstep(0.5, 1.5, shiftPx);
     const pomOff = t.vec2(0).toVar('pomOff');
     t.If(t.abs(det).greaterThan(1e-12), () => {
       t.If(fade.greaterThan(0), () => {
         const gu = p2.mul(du1.x).add(p1.mul(du2.x)).div(det);
         const gv = p2.mul(du1.y).add(p1.mul(du2.y)).div(det);
-        const across = V.sub(N.mul(N.dot(V))).div(nv0).negate().mul(t.float(depth)).mul(fade);
+        const across = V.sub(N.mul(N.dot(V))).div(nv0).negate().mul(uDepth).mul(fade);
         const Sd = t.vec2(across.dot(gu), across.dot(gv));
         const layer = t.float(0).toVar('pomLayer');
         const dl = t.float(1).div(t.float(steps));

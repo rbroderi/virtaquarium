@@ -113,7 +113,10 @@ function applyGrade(mat: THREE.Material, grade: ColourGrade): void {
     const existing = (mat as unknown as { colorNode: Node | null }).colorNode;
     const c = (existing ?? t.materialColor) as unknown as ShaderNodeObject<Node>;
     const l = c.rgb.dot(t.vec3(0.2126, 0.7152, 0.0722));
-    (mat as unknown as { colorNode: Node | null }).colorNode = t.mix(t.vec3(l), c.rgb, t.float(sat)).mul(t.float(gain));
+    // sat/gain are uniforms so graded models share one program instead of one per grade value.
+    const uSat = t.uniform(sat, 'float');
+    const uGain = t.uniform(gain, 'float');
+    (mat as unknown as { colorNode: Node | null }).colorNode = t.mix(t.vec3(l), c.rgb, uSat).mul(uGain);
     return;
   }
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
