@@ -3,8 +3,8 @@
 import * as THREE from 'three';
 import { clamp, lerp } from '../util.js';
 import type { Ridge, Species } from '../species/types.js';
-import { gillOf, mouthOf, smooth01, type Gill, type P2, type Profile } from './profile.js';
-import { attribute, coverAt, flankZ } from './section.js';
+import { COVER, gillOf, mouthOf, smooth01, type Gill, type P2, type Profile } from './profile.js';
+import { attribute, coverAt, coverOf, flankZ } from './section.js';
 
 /** Rings along the body (more for species with head ridges) and vertices round each. */
 const RINGS_PLAIN = 140, RINGS_FINE = 170, RING_VERTICES = 112;
@@ -66,7 +66,9 @@ export function bodyGeometry(prof: Profile, sp: Species): THREE.BufferGeometry {
   };
   // Near the gill margin the rings bend to follow its bow, so none crosses it; the body-side rings of
   // the margin sit GAP behind it, and the rings behind those stay behind.
-  const backU = (v: number): number => gill().edge(v) + GILL_GAP * gill().fade(v);
+  // (a flush cover, sp.body.cover below COVER, leaves a narrower opening)
+  const gap = GILL_GAP * Math.min(1, coverOf(sp) / COVER);
+  const backU = (v: number): number => gill().edge(v) + gap * gill().fade(v);
   const bendU = (u: number, v: number): number => {
     if (!G) return u;
     const b = u - (G.u - G.edge(v)) * Math.max(0, 1 - Math.abs(u - G.u) / 0.08);
@@ -105,7 +107,7 @@ export function bodyGeometry(prof: Profile, sp: Species): THREE.BufferGeometry {
       const th = angle(a, u), cy = Math.cos(th), vv = -cy;
       const us_ = uSec ?? u, h = prof.half(us_) * scale, yc = prof.centre(us_), x = capX ?? prof.x(u);
       let y = yc + cy * h, z = flankZ(sp, prof, us_, vv, seam ? !seam.back : undefined) * scale;
-      if (seam?.back && seam.slit) z *= 1 - 0.04 * gill().fade(vv);   // the gill chamber is sunk under the cover
+      if (seam?.back && seam.slit) z *= 1 - 0.8 * coverOf(sp) * gill().fade(vv);   // the gill chamber is sunk under the cover
       const k = 1 + (relief(x, y) + lips(u, vv, h, scale)) / Math.max(Math.hypot(y - yc, z), 2 * mw * Math.min(1, scale), 1e-3);
       y = yc + (y - yc) * k; z *= k;
       pos.push(x, y, Math.sign(Math.sin(th)) * z);

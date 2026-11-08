@@ -108,8 +108,8 @@ export function makeProfile(body: Body): Profile {
   // snoutW: the snout's width over its height (a butterflyfish beak is round; a tang's is flattened).
   // headW: the head's width at the snout relative to the usual, easing back to 1 by the deepest point:
   // strongly compressed fish narrow to a wedge at the front rather than carrying their width forward.
-  const headW = body.headW ?? 1;
-  const width = (u: number): number => Math.max(half(u) * body.width * (1.15 - 0.55 * u) * lerp(headW, 1, smooth01(u / mEnd)) * (head ? 1 - (1 - head.width) * headBump(u) : 1),
+  const headW = body.headW ?? 1, dW = outlineCurve(body.widthCurve);
+  const width = (u: number): number => Math.max(half(u) * body.width * (1.15 - 0.55 * u) * lerp(headW, 1, smooth01(u / mEnd)) * (1 + dW(u)) * (head ? 1 - (1 - head.width) * headBump(u) : 1),
     snout && u < snout ? (body.snoutTip != null ? half(u) : snoutH) * (body.snoutW ?? DEFAULT_SNOUT_WIDTH) : MIN_HALF_WIDTH);   // a tapered snout narrows too
   // The back arches above the midline (epaxial muscle) while the mouth and tail stay on it.
   const hump = body.hump ?? DEFAULT_HUMP;
@@ -130,6 +130,11 @@ export const cellHash = (a: number, b: number, k: number): number => {
   h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12; h = Math.imul(h, 0x297a2d39); h ^= h >>> 15;
   return (h >>> 0) / UINT32_RANGE;
 };
+
+/** How far the gill cover stands proud of the flank at its margin (a share of the half-width), by default. */
+export const COVER = 0.05;
+/** The gill cover's stand-off for this species (sp.body.cover, else COVER). */
+export const coverOf = (sp: Species): number => sp.body.cover ?? COVER;
 
 // Rear edge of the gill cover (operculum), in body u.
 export const gillU = (sp: Species): number => sp.eye.u + (0.09 / sp.body.len) + sp.eye.r * 0.6;

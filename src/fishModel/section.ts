@@ -3,12 +3,13 @@
 import * as THREE from 'three';
 import { lerp } from '../util.js';
 import type { BodySection, Species } from '../species/types.js';
-import { gillOf, smooth01, type Gill, type Profile } from './profile.js';
+import { coverOf, gillOf, outlineCurve, smooth01, type Gill, type Profile } from './profile.js';
 
 // Gill cover: how far it stands proud of the body (a share of the body's half-width), rising over
 // its rear half to a step at the free margin. cover: whether the point is on the cover (the body mesh
 // puts two coincident rings on the margin, one each side of the step); by default, ahead of the margin.
-const COVER = 0.05;
+// (COVER and coverOf live in profile.ts, with the gill margin.)
+export { coverOf };
 export function coverAt(G: Gill | null, u: number, v: number, cover?: boolean): number {
   if (!G) return 0;
   const edge = G.edge(v);
@@ -31,6 +32,13 @@ function angularSection(S: BodySection | undefined, u: number, cy: number, z: nu
   return lerp(z, a * W, s);
 }
 
+const eggs = new WeakMap<Species, (u: number) => number>();
+const eggOf = (sp: Species): ((u: number) => number) => {
+  let f = eggs.get(sp);
+  if (!f) { f = outlineCurve(sp.body.egg); eggs.set(sp, f); }
+  return f;
+};
+
 // The skin's distance from the midplane at body position u and texture height v (-1 dorsal, +1
 // ventral), before relief: the body mesh's cross-section, shared with the eyes so they sit on it.
 export function flankZ(sp: Species, prof: Profile, u: number, v: number, cover?: boolean): number {
@@ -43,7 +51,8 @@ export function flankZ(sp: Species, prof: Profile, u: number, v: number, cover?:
   z = angularSection(sp.body.section, u, cy, z, prof.width(u));
   z *= 1 - 0.25 * Math.max(0, cy) ** 4;                                  // narrow dorsal ridge (fin base)
   z *= 1 + 0.12 * Math.max(0, -cy) * (1 - smooth01(u / 0.6));            // fuller belly over the gut
-  z *= 1 + COVER * coverAt(gillOf(sp), u, v, cover);                    // gill cover overhangs the flank
+  z *= 1 - eggOf(sp)(u) * cy;                                           // egg-shaped section (sp.body.egg)
+  z *= 1 + coverOf(sp) * coverAt(gillOf(sp), u, v, cover);              // gill cover overhangs the flank
   const du = (u - e.u) / (e.r * 1.6 / len), dv = (v - e.v) / (e.r * 1.6 / Math.max(h, 1e-3));
   z *= 1 + 0.07 * Math.exp(-(du * du + dv * dv));                       // eye socket
   return z;

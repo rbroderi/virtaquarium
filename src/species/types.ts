@@ -73,6 +73,15 @@ export interface Body {
   head?: HeadShape;
   /** Free-form corrections to the side outline, for bodies the formula cannot bend into shape. */
   outline?: BodyOutline;
+  /** Control points [u, k] scaling the section's half-width by 1 + k (smooth through the points, held at
+   *  the end values): a broad trunk, a tapered snout. */
+  widthCurve?: readonly (readonly [number, number])[];
+  /** Control points [u, e] making the section egg-shaped: e > 0 widens the lower half and narrows the
+   *  upper (a head broadest across the cheeks), e < 0 the reverse (a trunk broadest over the back). */
+  egg?: readonly (readonly [number, number])[];
+  /** How far the gill cover stands proud of the flank at its free margin, as a share of the half-width
+   *  (0.05 when unset). Smaller: a cover that lies flush, its margin a soft edge rather than a step. */
+  cover?: number;
 }
 
 /** Control points [u, dy] that move the dorsal (top) and ventral (bot) outlines up or down by dy (in

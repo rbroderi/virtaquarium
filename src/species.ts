@@ -150,18 +150,24 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // steps: a steep snout up to the brow (u 0.13), a flat nape over the eye (u 0.2-0.33), then the hump
     // under the spines (peak u 0.52, max depth 0.33 TL); the belly is one nearly straight line from the
     // chin to the anal fin; the body tapers concave to a peduncle about a third of the body depth.
+    // widthCurve: from above the head is broadest across the cheeks (about 0.15 TL) and the trunk nearly
+    // as broad, tapering to a narrow snout; egg: the head's section is broadest low (the cheeks), the
+    // trunk's high (over the back). cover: the gill cover lies flush, its margin a soft edge.
     body: { len: 0.765, depth: 0.27, width: 0.42, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.33, mouth: -0.45, headW: 0.5,
-      section: { u0: 0, u1: 0.34, ease: 0.07, lo: -0.55, hi: 0.15, round: 0.3, sharp: 0.6 },
+      section: { u0: 0, u1: 0.34, ease: 0.07, lo: -0.6, hi: 0.2, round: 0.15, sharp: 0.8 },
+      widthCurve: [[0, 0], [0.08, 0.1], [0.2, 0.5], [0.32, 0.55], [0.42, 0.4], [0.52, 0.25], [0.7, 0.1], [0.9, 0]],
+      egg: [[0, 0.1], [0.28, 0.2], [0.42, 0], [0.55, -0.15], [0.8, -0.1], [1, 0]],
+      cover: 0.012,
       outline: {
         top: [[0, -0.57], [0.016, -0.63], [0.033, -0.59], [0.065, -0.46], [0.098, -0.3], [0.131, -0.25], [0.163, -0.28], [0.196, -0.37],
           [0.261, -0.51], [0.327, -0.54], [0.392, -0.31], [0.458, -0.04], [0.523, 0.19], [0.588, 0.23], [0.654, 0.22], [0.719, 0.23],
           [0.784, 0.23], [0.85, 0.2], [0.915, 0.1], [0.961, 0.05], [1, 0.05]],
-        bot: [[0, -0.46], [0.016, -0.34], [0.033, -0.31], [0.065, -0.27], [0.098, -0.24], [0.131, -0.21], [0.163, -0.2], [0.196, -0.19],
+        bot: [[0, -0.405], [0.016, -0.27], [0.033, -0.24], [0.065, -0.195], [0.098, -0.19], [0.131, -0.21], [0.163, -0.2], [0.196, -0.19],
           [0.261, -0.16], [0.327, -0.14], [0.392, -0.13], [0.458, -0.2], [0.523, -0.23], [0.588, -0.23], [0.654, -0.22], [0.719, -0.18],
           [0.784, -0.15], [0.85, -0.12], [0.915, -0.1], [0.961, -0.1], [1, -0.11]],
       } },
     eye: { u: 0.25, v: -0.75, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
-    mouth: { u: 0.2, v: 0.8, v0: -0.5, lining: 0.025 },   // large and oblique, the corner under the front of the eye
+    mouth: { u: 0.16, v: 0.85, v0: -0.3, lining: 0.018 },   // oblique, along the jaw edge, the corner under the front of the eye
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
       // Body bars from the opercle back: broad red-brown, narrow pale gaps, leaning back at the top and
@@ -177,10 +183,10 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle, a
     // ridge arches over each eye and the lacrimal bone ridges the snout ahead of it.
     ridges: [
-      { u0: 0.25, v0: -0.4, u1: 0.36, v1: -0.12, w: 0.008, h: 0.005 },   // suborbital stay
+      { u0: 0.25, v0: -0.4, u1: 0.33, v1: -0.15, w: 0.008, h: 0.005 },   // suborbital stay
       { u0: 0.21, v0: -0.95, u1: 0.3, v1: -0.98, w: 0.007, h: 0.005 },   // supraorbital ridge
       { u0: 0.1, v0: -0.4, u1: 0.2, v1: -0.62, w: 0.006, h: 0.003 },   // lacrimal
-      { u0: 0.355, v0: -0.4, u1: 0.375, v1: 0.45, w: 0.006, h: 0.003 },   // preopercle margin
+      { u0: 0.31, v0: -0.4, u1: 0.33, v1: 0.45, w: 0.006, h: 0.003 },   // preopercle margin
     ],
     // A long, banded, leaf-like tentacle over each eye; fringed flaps hanging from the lacrimal over the
     // upper jaw and under the chin; short bony spines on the snout, over the eye, the nape and the
@@ -193,8 +199,8 @@ const DEFINITIONS: SpeciesDefinition[] = [
       { u: 0.1, v: -0.6, len: 0.012, dir: [0.6, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // nasal spine
       { u: 0.29, v: -0.98, len: 0.014, dir: [-0.4, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // supraocular spine
       { u: 0.33, v: -1.0, len: 0.016, dir: [-0.7, 1, 0.25], r: 0.002, color: '#f2e6d8', bend: 0 },   // parietal spine
-      { u: 0.375, v: 0.2, len: 0.016, dir: [-1, -0.2, 0.4], r: 0.002, color: '#f2e6d8', bend: 0 },   // preopercular spines
-      { u: 0.365, v: 0.5, len: 0.013, dir: [-1, -0.7, 0.4], r: 0.0018, color: '#f2e6d8', bend: 0 },
+      { u: 0.33, v: 0.2, len: 0.016, dir: [-1, -0.2, 0.4], r: 0.002, color: '#f2e6d8', bend: 0 },   // preopercular spines
+      { u: 0.325, v: 0.5, len: 0.013, dir: [-1, -0.7, 0.4], r: 0.0018, color: '#f2e6d8', bend: 0 },
     ],
     // Venomous dorsal spines: carried up, flared further forward at a threat (and while stalking).
     erect: { rest: 1, alarm: 1.8 },
@@ -207,9 +213,10 @@ const DEFINITIONS: SpeciesDefinition[] = [
     ],
     caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
     // Fans of 14 free, banded rays: the upper ones about 0.7-0.85 TL, the lowest about 0.35; membrane only
-    // on the inner half. Held swept back and drooping, like wings.
+    // on the inner half. Held out like wings: the top ray swept about 25 deg back, the lowest straight back,
+    // the fan's surface tilted about 45 deg down from the horizontal.
     pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.022, web: 0.5,
-      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.25, yaw: 0.85, flap: 0.22 },
+      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 1.1, yaw: 0.55, flap: -0.2 },
       spots: '#20140c', spotR: 0.004, spotN: 50 },
     pelvic: { u: 0.41, len: 0.24, angle: 50, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },

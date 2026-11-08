@@ -2,7 +2,7 @@
 // pigment, melanin shading and the packed normal / iridescence / cavity-roughness maps derived from it.
 import { clamp, lerp, mulberry32, makeCanvas, rgba, context2d } from '../util.js';
 import type { BlotchesOp, PatternOp, RingsOp, Species, SpotsOp, StripesVOp } from '../species/types.js';
-import { cellHash, gillOf, gillU, mouthOf, naresOf, smooth01, type Profile } from './profile.js';
+import { cellHash, COVER, coverOf, gillOf, gillU, mouthOf, naresOf, smooth01, type Profile } from './profile.js';
 import { organicPass, roundCorners, wobble } from '../core/organic.js';
 import { VARIANT_SEED_STRIDE } from './variant.js';
 
@@ -513,8 +513,9 @@ export function paintSkin(sp: Species, prof: Profile): SkinMaps {
         g.lineTo(U(G.edge(v) + du), V(v));
       }
     };
-    g.strokeStyle = 'rgba(0,0,0,0.16)'; g.lineWidth = 3.5 * K; gillPath((2 * K) / TW, 1); g.stroke();
-    g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1.5 * K; gillPath(-0.05, 0.75); g.stroke();
+    const step = Math.min(1, coverOf(sp) / COVER);   // a flush cover (sp.body.cover) casts less shadow
+    g.strokeStyle = `rgba(0,0,0,${0.16 * step})`; g.lineWidth = 3.5 * K; gillPath((2 * K) / TW, 1); g.stroke();
+    g.strokeStyle = `rgba(0,0,0,${0.12 * step})`; g.lineWidth = 1.5 * K; gillPath(-0.05, 0.75); g.stroke();
     // (The lateral line is a row of pored scales in the scale lattice above, not painted marks.)
   }
   // Mouth: the gape is lined dark (the inside of the mouth); the jaw seam in the body mesh stretches
