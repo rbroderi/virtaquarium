@@ -6,6 +6,7 @@ import { SPECIES } from './species.js';
 import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } from './reef.js';
 import { World, type TankBounds } from './world.js';
 import { crystalSign, bindCrystalSign, JsonCrystalAdSource } from './reef/crystalText.js';
+import { renderCrystalBgScene, type CrystalBgRenderer } from './reef/crystalBg.js';
 import { loadCustomModels, loadSkinCache, fishRender, startIdleVariantPainting, pendingSkinSave } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { makeGpuSurface } from './water/webgpuSurface.js';
@@ -141,6 +142,22 @@ function reefLightRequest(stage: Stage): ReefLightOptions {
   };
 }
 
+/** WebGPU precompile: one hidden warm-up render through the real post chain compiles every pipeline the
+ *  first frame would otherwise build synchronously. The loading screen still covers the canvas, so the
+ *  warm frame is never seen. It goes through the same path as TankLoop.present(): the crystal background,
+ *  the velocity pass (the first live frame blurs) and the scene-pass + shaft composite. */
+function precompileGpu(stage: Stage, world: World): void {
+  const post = stage.post;
+  if (!post) return;
+  const models = world.fish.map((f) => f.model);
+  renderCrystalBgScene(stage.renderer as unknown as CrystalBgRenderer, stage.scene, stage.camera, models);
+  post.setSun(stage.sun);
+  post.track(models, stage.camera);
+  post.blurScale = 1;
+  post.render(stage.camera, 0);
+  post.blurScale = 0;
+}
+
 function swimBox(stage: Stage): TankBounds {
   const half = stage.tankWidth / 2;
   return {
@@ -213,17 +230,17 @@ async function main(): Promise<void> {
   const ao = stage.gpu ? null : new ScreenAO(stage.renderer as THREE.WebGLRenderer);
   const useReefLight = !isJellyTank && options.reefLight;
   if (useReefLight) useSoftFishShadows(stage);
-  // Shaders compile in parallel while the rest of startup runs, instead of blocking on first draw. Bound
-  // to the target the tank draws into (the water renderer's): a program is specific to its target (an
-  // HDR target has no tone mapping or sRGB output), and the screen's would go unused. WebGPU has no
-  // water target, so it precompiles straight against the default framebuffer.
+  // WebGL shaders compile in parallel while the rest of startup runs, instead of blocking on first draw.
+  // Bound to the target the tank draws into (the water renderer's): a program is specific to its target
+  // (an HDR target has no tone mapping or sRGB output), and the screen's would go unused. WebGPU pipelines
+  // compile through a warm-up render after stocking instead (precompileGpu, below).
   const precompile = (): Promise<void> => {
     if (stage.water) stage.renderer.setRenderTarget(stage.water.target);
     const compiling = stage.renderer.compileAsync(stage.scene, stage.camera);   // issues every compile now, then waits
     if (stage.water) stage.renderer.setRenderTarget(null);
     return compiling.then(() => undefined, (e: unknown) => console.warn('compileAsync:', e instanceof Error ? e.message : e));
   };
-  if (options.precompile && !stage.gpu) void precompile();   // WebGPU pipelines compile lazily; compileAsync corrupts its draw path (see below)
+  if (options.precompile && !stage.gpu) void precompile();   // WebGL: compile in parallel during the bake; WebGPU warms up after stocking (see below)
   if (useReefLight) await bakeReefLight(stage, reef);
   timer.stage('reef light bake');
 
@@ -241,6 +258,10 @@ async function main(): Promise<void> {
   });
   timer.stage('fish and critters');
   if (options.precompile && !stage.gpu) await precompile();
+  if (options.precompile && stage.gpu) {
+    await paintLoading();   // show "Preparing shaders" before the synchronous warm-up render
+    precompileGpu(stage, world);
+  }
   timer.stage('compile shaders');
 
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
@@ -298,13 +319,29 @@ function startAnimation(loop: TankLoop, stage: Stage, timer: StartupTimer, optio
   tick();
 }
 
+/** Distinct WebGPU render pipelines (compute passes excluded), read from the renderer's private cache. */
+function gpuPipelineCount(renderer: Stage['renderer']): number {
+  const r = renderer as unknown as { _pipelines?: { caches?: Map<unknown, { isComputePipeline?: boolean }> } };
+  const caches = r._pipelines?.caches;
+  if (!caches) return 0;
+  let render = 0;
+  for (const p of caches.values()) if (!p.isComputePipeline) render++;
+  return render;
+}
+
 /** Logs startup timing once the first frame (and its shader compiles) is done; ?check=startup reports it. */
 function reportFirstFrame(stage: Stage, timer: StartupTimer, options: AppOptions, profiler: ReturnType<typeof startProfiler>, programsBefore: number): void {
   if (stage.gpu) {
     timer.stage('first frame');
     loading?.finish();
     const times = timer.times();
-    console.info(`Startup ${timer.totalMs()} ms (WebGPU):`, JSON.stringify(times));
+    debugHooks.startupTimes = times;
+    const total = timer.totalMs();
+    console.info(`Startup ${total} ms (WebGPU):`, JSON.stringify(times), `pipelines: ${gpuPipelineCount(stage.renderer)}`);
+    void Promise.all([pendingReefLightSave(), pendingSkinSave()]).then(() => {
+      if (options.check !== 'startup') return;
+      void fetch('/__done', { method: 'POST', body: JSON.stringify({ total, pipelines: gpuPipelineCount(stage.renderer), stages: times }, null, 1) });
+    });
     return;
   }
   const gl = stage.renderer as THREE.WebGLRenderer;
