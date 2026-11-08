@@ -113,14 +113,17 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     uAnguil: { value: sp.swim.mode === 'anguilliform' ? 1 : 0 },
     uGape: { value: 0 }, uHinge: { value: hinge }, uNight: { value: 0 },
     uErect: { value: 1 },   // erectile spines as drawn (fish.ts raises and lowers them)
+    // The eyes turn under a nearly flush cornea: uGaze slides the iris and ring across the cap
+    // (set per fish in fish.ts; saccades and counter-rolling).
+    uGaze: { value: new THREE.Vector2() },
   });
   const erect = sp.fins.some((f) => f.kind === 'spines');
   const M = mouthOf(sp);   // the lower jaw hinges at the corner of the mouth
   hinge.set(a.prof.x(M.u), a.prof.centre(M.u) - M.v * a.prof.half(M.u));
   const bodyTissue: Tissue = { kind: 'body', sizeMM: sp.size * MM_PER_UNIT, jaw: true, cover: !!gillOf(sp), night: sp.night, detail: a.detail, packed: true };
   /** One entry point for either backend: TSL node materials under WebGPU, GLSL-patched ones under WebGL. */
-  const swimMat = (params: THREE.MeshPhysicalMaterialParameters, u: SwimUniforms, tissue: Tissue | null = null): THREE.Material => {
-    return swimMaterialFor(params, u, tissue, fishRender.gpu);
+  const swimMat = (params: THREE.MeshPhysicalMaterialParameters, u: SwimUniforms, tissue: Tissue | null = null, gaze = false): THREE.Material => {
+    return swimMaterialFor(params, u, tissue, fishRender.gpu, gaze);
   };
   const bodyParams: THREE.MeshPhysicalMaterialParameters = {
     // Packed maps, each read through one sampler (the fish shader is at the GPU's 16 texture units with the
@@ -202,13 +205,12 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR, clearcoat: 0.3, clearcoatRoughness: 0.04,
     // The iris' reflective iridophore ring round the pupil (moves with the gaze, as the map does).
     iridescence: 0.3, iridescenceIOR: 1.8, iridescenceThicknessRange: [260, 420], iridescenceMap: a.eyeRingTex,
-  }, uniforms);
+  }, uniforms, null, true);
   // Eye movement: the eyeball turns under a nearly flush cornea, so the iris and pupil slide across the
   // cap. uGaze = (forward, up) in texture units, set per fish in fish.ts (saccades and counter-rolling).
-  const gaze = { value: new THREE.Vector2() };
-  uniforms.uGaze = gaze;
+  const gaze = uniforms.uGaze!;
   a.eyeTex.wrapS = a.eyeTex.wrapT = a.eyeRingTex.wrapS = a.eyeRingTex.wrapT = THREE.ClampToEdgeWrapping;
-  if (!fishRender.gpu) addGaze(eyeMat as THREE.MeshPhysicalMaterial, gaze);   // gaze is a GLSL patch; not ported to TSL
+  if (!fishRender.gpu) addGaze(eyeMat as THREE.MeshPhysicalMaterial, gaze);
   for (const geo of a.eyeGeos) group.add(new THREE.Mesh(geo, eyeMat));
   return group;
 }

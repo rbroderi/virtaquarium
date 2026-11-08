@@ -16,6 +16,7 @@ import type {
 } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
 import { reefLightUniforms } from './uniforms.js';
+import { causticFactorNode } from '../water/webgpuCaustics.js';
 
 type NodeObject = ShaderNodeObject<Node>;
 type TextureNodeObject = ShaderNodeObject<TextureNode>;
@@ -113,6 +114,7 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
   const aoTex = s.ao as unknown as TextureNodeObject;
   const scrSample = (uv: NodeObject, layer: number): NodeObject =>
     (scrTex.uv(uv) as unknown as TextureNodeObject).depth(t.int(layer));
+  const caustic = causticFactorNode(t);
   class ReefLightLightingModel extends t.PhysicalLightingModel {
     private rlSky: NodeObject = t.float(1).toVar('rlSky');
     private rlBounce: NodeObject = t.vec3(0).toVar('rlBounce');
@@ -177,7 +179,11 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
       // Baked soft shadow on the key light only (rlSunFor): the LED fills stay unshadowed.
       const dirWorld = t.cameraWorldMatrix.mul(t.vec4(input.lightDirection, t.float(0))).xyz.normalize() as unknown as NodeObject;
       const isSun = dirWorld.dot(s.uRLSunDir).greaterThan(t.float(0.999));
-      input.lightColor = (input.lightColor as unknown as NodeObject).mul(t.select(isSun, this.rlSun, t.float(1)));
+      // The simulated caustic irradiance (water/materials.ts causticAt(vCW) on WebGL): applied to every
+      // directional light before the BRDF, alongside the baked soft shadow.
+      input.lightColor = (input.lightColor as unknown as NodeObject)
+        .mul(caustic(t.positionWorld as unknown as NodeObject))
+        .mul(t.select(isSun, this.rlSun, t.float(1)));
       inner.direct(input, stack, builder);
     }
 

@@ -11,7 +11,7 @@
 //     exactly where materials.ts patches directLight.color on the WebGL path.
 import * as THREE from 'three';
 import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
-import type { NodeBuilder, WebGPURenderer } from 'three/webgpu';
+import type { WebGPURenderer } from 'three/webgpu';
 import { tsl, type Tsl } from '../webgpu/tsl.js';
 import { causticUniforms, CAUSTIC_RES, CAUSTIC_GAIN, CAUSTIC_LOW_LOD, GREEN_IOR, refractDir, SEAWATER_IOR } from './caustics.js';
 import { SURFACE_Y } from './medium.js';
@@ -105,43 +105,20 @@ export function shaftCausticNode(t: Tsl): (p: NodeObject) => NodeObject {
   return causticAtNode(t, s, 2);
 }
 
-/** The sun light node with the caustic irradiance multiplier (registered in app/stage.ts). */
-export function causticDirectionalLightNode(t: Tsl): typeof t.DirectionalLightNode {
-  return class CausticDirectionalLightNode extends t.DirectionalLightNode {
-    private caustic: ((p: NodeObject) => NodeObject) | null = null;
+/** The caustic irradiance factor (vec3, mean ~1) at a world point, as the WebGL materials.ts patch
+ *  applies it in lights_fragment_begin. Returns 1 when the simulation state is not built. */
+export function causticFactorNode(t: Tsl): (p: NodeObject) => NodeObject {
+  const s = gpuCausticState;
+  if (!s) return (p) => t.vec3(1);
+  return causticAtNode(t, s);
+}
 
-    override setup(builder: NodeBuilder): void {
-      const me = this as unknown as {
-        light: THREE.DirectionalLight;
-        colorNode: ShaderNodeObject<UniformNode<THREE.Color>>;
-        baseColorNode: ShaderNodeObject<UniformNode<THREE.Color>> | null;
-        shadowNode: { dispose(): void } | null;
-        setupShadow(builder: NodeBuilder): void;
-      };
-      // AnalyticLightNode.setup (shadow handling), inlined so the caustic factor modulates the light
-      // before the single lightingModel.direct() call (calling super.setup would direct() once without
-      // it and then again with it).
-      me.colorNode = (me.baseColorNode ?? me.colorNode);
-      if (me.light.castShadow) {
-        if (builder.object.receiveShadow) me.setupShadow(builder);
-      } else if (me.shadowNode !== null) {
-        me.shadowNode.dispose();
-      }
-      const context = builder.getContext() as {
-        lightingModel: { direct: (input: { lightDirection: Node; lightColor: Node; reflectedLight: Node }, stack: unknown, builder: NodeBuilder) => void };
-        reflectedLight: Node;
-      };
-      const s = gpuCausticState;
-      let lightColor = me.colorNode as unknown as NodeObject;
-      if (s && s.uCauOn.value > 0.5) {
-        if (!this.caustic) this.caustic = causticAtNode(t, s);
-        lightColor = lightColor.mul(this.caustic(t.positionWorld));
-      }
-      context.lightingModel.direct(
-        { lightDirection: t.lightTargetDirection(me.light), lightColor, reflectedLight: context.reflectedLight },
-        builder.stack, builder);
-    }
-  };
+/** The sun light node registered for THREE.DirectionalLight in app/stage.ts. The caustic factor moved
+ *  into the reef-light lighting model (reefLight/webgpu.ts direct), exactly where the WebGL patch
+ *  multiplies directLight.color, so it reaches every wrapped material whether or not it receives a
+ *  shadow. This node stays a plain DirectionalLightNode. */
+export function causticDirectionalLightNode(t: Tsl): typeof t.DirectionalLightNode {
+  return t.DirectionalLightNode;
 }
 
 export class WebGpuCaustics {

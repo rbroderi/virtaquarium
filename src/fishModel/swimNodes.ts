@@ -21,6 +21,9 @@ type Vec2UniformNode = ShaderNodeObject<UniformNode<THREE.Vector2>>;
 type Vec3UniformNode = ShaderNodeObject<UniformNode<THREE.Vector3>>;
 type PathArrayNode = ShaderNodeObject<UniformArrayNode>;
 
+/** Brightest linear radiance a fish fragment may write, as swimShader.ts's HDR_CLAMP. */
+const HDR_CLAMP = 16;
+
 /** TSL uniform nodes shared by every material of one fish (they all read the same SwimUniforms). */
 interface SwimNodes {
   uPhase: FloatUniformNode;
@@ -45,6 +48,7 @@ interface SwimNodes {
   uPWave: Vec2UniformNode | undefined;
   uPath: PathArrayNode;
   uPathUp: PathArrayNode;
+  uGaze: Vec2UniformNode | undefined;
 }
 
 const nodesByUniforms = new WeakMap<SwimUniforms, SwimNodes>();
@@ -112,6 +116,7 @@ function nodesFor(uniforms: SwimUniforms): SwimNodes {
     uPWave: uniforms.uPWave ? vec2Uniform(t, uniforms.uPWave) : undefined,
     uPath: vec3Path(t, uniforms.uPath),
     uPathUp: vec3Path(t, uniforms.uPathUp),
+    uGaze: uniforms.uGaze ? vec2Uniform(t, uniforms.uGaze) : undefined,
   };
   nodesByUniforms.set(uniforms, nodes);
   return nodes;
@@ -417,6 +422,17 @@ function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['Phy
       // later rlSky scaling of indirectSpecular).
       (input.reflectedLight.indirectSpecular as unknown as NodeObject).mulAssign(this.specularCover());
     }
+
+    override finish(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
+      super.finish(input, stack, builder);
+      // swimShader.ts's opaque_fragment patch also guards against NaN/Inf and clamps the fish's outgoing
+      // radiance to HDR_CLAMP, so one overbright texel (a rim firefly or an isolated normal-map peak)
+      // cannot reach the shaft/motion-blur composite and bloom into a white speck.
+      const out = (input as unknown as { outgoingLight: NodeObject }).outgoingLight;
+      const finite = (c: NodeObject): NodeObject =>
+        t.select(c.equal(c).and(c.abs().lessThanEqual(t.float(1e20))), c, t.float(0));
+      out.assign(t.vec3(finite(out.x), finite(out.y), finite(out.z)).max(t.vec3(0)).min(t.vec3(HDR_CLAMP)));
+    }
   }
   return new FishLightingModel();
 }
@@ -427,6 +443,7 @@ export function makeSwimNodeMaterial(
   params: THREE.MeshPhysicalMaterialParameters,
   uniforms: SwimUniforms,
   tissue: Tissue | null = null,
+  gaze = false,
 ): InstanceType<Tsl['MeshPhysicalNodeMaterial']> {
   const t = tsl();
   const anisotropic = (params.anisotropy as number | undefined) !== 0;
@@ -465,6 +482,17 @@ export function makeSwimNodeMaterial(
   mat.positionNode = swimPositionNode(uniforms, tissue);
   mat.normalNode = swimNormalNode(uniforms, tissue, params);
   if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, nodesFor(uniforms).uNight!, tissue.night);
+  // Eye gaze (builder.ts addGaze on WebGL): the iris, pupil and iridophore ring slide across the cap.
+  // The eyeSide attribute (+1 right, -1 left) turns the shared gaze vector into each eye's texture shift.
+  if (gaze && params.map && uniforms.uGaze) {
+    const u = nodesFor(uniforms).uGaze!;
+    const gazeUv = t.uv().add(t.vec2(u.x.mul(t.attribute('eyeSide', 'float')), u.y.negate()));
+    mat.colorNode = t.materialReference('color', 'color').mul(t.texture(params.map, gazeUv).rgb);
+    if (params.iridescenceMap) {
+      // The ring mask modulates iridescence strength (three's GLSL iridescenceMap, shifted by the same gaze).
+      mat.iridescenceNode = t.materialReference('iridescence', 'float').mul(t.texture(params.iridescenceMap, gazeUv).r);
+    }
+  }
   // Packed body maps' second channels (swimShader.ts's `packed`): the film thickness is the iridescence
   // map's G (three's native iridescenceMap already reads its R as the strength), and the cavity under
   // each scale's free margin is the roughness map's R, applied as ambient occlusion. Roughness itself is
@@ -503,7 +531,8 @@ export function swimMaterialFor(
   uniforms: SwimUniforms,
   tissue: Tissue | null,
   gpu: boolean,
+  gaze = false,
 ): THREE.Material {
-  if (gpu) return makeSwimNodeMaterial(params, uniforms, tissue);
+  if (gpu) return makeSwimNodeMaterial(params, uniforms, tissue, gaze);
   return makeSwimMaterial(new THREE.MeshPhysicalMaterial(params), uniforms, tissue);
 }
