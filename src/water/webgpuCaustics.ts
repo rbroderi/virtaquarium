@@ -250,12 +250,17 @@ export class WebGpuCaustics {
     const clearColor = r.getClearColor(new THREE.Color());
     const clearAlpha = r.getClearAlpha();
     r.setClearColor(0x000000, 0);
+    // Clear through render()'s own pass (autoClear), not renderer.clear(): three r170's clear() binds a
+    // view over every mip level of the target, which WebGPU rejects for these mipped targets, so the
+    // whole command buffer (the simulation draw included) was dropped. render() binds mip 0 only.
+    const { autoClear, autoClearColor, autoClearDepth, autoClearStencil } = this.renderer;
+    Object.assign(this.renderer, { autoClear: true, autoClearColor: true, autoClearDepth: false, autoClearStencil: false });
     this.targets.forEach((target, layer) => {
       this.depth.value = causticUniforms.uCauDepth.value.getComponent(layer);
       this.renderer.setRenderTarget(target);
-      this.renderer.clear(true, false, false);
       this.renderer.render(this.scene, this.camera);
     });
+    Object.assign(this.renderer, { autoClear, autoClearColor, autoClearDepth, autoClearStencil });
     r.setClearColor(clearColor, clearAlpha);
     this.renderer.setRenderTarget(prevTarget);
     this.renderer.setMRT(prevMRT);

@@ -86,14 +86,26 @@ function removeProfile(dir: string): void {
 /** Forwards the page's console lines from Chrome's stderr log, without Chrome's own logging. */
 function echoPageConsole(child: ChildProcess): void {
   let buffer = '';
+  let open: string | null = null;   // a console message spanning lines (WebGPU validation errors do)
+  const emit = (text: string): void => {
+    if (!text.startsWith('[object Object]')) console.log(`  page: ${text.slice(0, CONSOLE_LINE_LIMIT)}`);
+  };
   child.stderr?.on('data', (chunk: Buffer) => {
     buffer += chunk.toString('utf8');
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     for (const line of lines) {
+      if (open !== null) {
+        const end = line.indexOf('", source: ');
+        if (end < 0) { open += ` ${line.trim()}`; continue; }
+        emit(`${open} ${line.slice(0, end).trim()}`.trim());
+        open = null;
+        continue;
+      }
       const m = /:CONSOLE:\d+\] "(.*)", source: /.exec(line);
-      const text = m?.[1];
-      if (text !== undefined && !text.startsWith('[object Object]')) console.log(`  page: ${text.slice(0, CONSOLE_LINE_LIMIT)}`);
+      if (m?.[1] !== undefined) { emit(m[1]); continue; }
+      const start = /:CONSOLE:\d+\] "(.*)$/.exec(line);
+      if (start?.[1] !== undefined) open = start[1];
     }
   });
 }
