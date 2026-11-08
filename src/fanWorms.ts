@@ -20,9 +20,8 @@ import { makeCanvas, context2d, type Rng } from './util.js';
 import { organicPass, type OrganicOptions } from './core/organic.js';
 import type { SolidField } from './rockField.js';
 import { markNoHeight } from './reef/flags.js';
-import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
+import { gpuActive, tsl, webgpu, type FloatUniformNode, type Node, type UniformArrayNode, type Webgpu } from './webgpu/tsl.js';
 import { waterTimeNode } from './webgpu/timeUniform.js';
-import type { Node, ShaderNodeObject, UniformArrayNode, UniformNode } from 'three/webgpu';
 
 /** Worms (the uRetract uniform array's size). */
 const MAX_WORMS = 24;
@@ -291,21 +290,22 @@ export class FanWorms {
 
   /** The crown under WebGPU: the same base material plus a TSL vertex deformation (WebGPURenderer never
    *  runs onBeforeCompile GLSL, so the radioles would otherwise stay folded flat at the tube mouth). */
-  private crownNodeMaterial(tex: THREE.Texture): InstanceType<Tsl['MeshStandardNodeMaterial']> {
+  private crownNodeMaterial(tex: THREE.Texture): InstanceType<Webgpu['MeshStandardNodeMaterial']> {
     const t = tsl();
-    const uRetract = t.uniformArray(this.uRetract.value as unknown as unknown[], 'float');
-    const mat = new t.MeshStandardNodeMaterial({
+    const wg = webgpu();
+    const uRetract = t.uniformArray(this.uRetract.value as unknown as unknown[], 'float' as const);
+    const mat = new wg.MeshStandardNodeMaterial({
       // See crownMaterial(): blended, not cut out, so the mip-averaged pinnule alpha stays gauzy.
       map: tex, transparent: true, depthWrite: false, alphaTest: 0.03, side: THREE.DoubleSide, roughness: 0.6,
     });
     mat.positionNode = this.crownPositionNode(uRetract, waterTimeNode());
-    return installReefLight(mat) as InstanceType<Tsl['MeshStandardNodeMaterial']>;
+    return installReefLight(mat) as InstanceType<Webgpu['MeshStandardNodeMaterial']>;
   }
 
   /** TSL port of the radiole flare/curl/fold in crownMaterial()'s begin_vertex patch. */
   private crownPositionNode(
-    uRetract: ShaderNodeObject<UniformArrayNode>,
-    uTime: ShaderNodeObject<UniformNode<number>>,
+    uRetract: UniformArrayNode<'float'>,
+    uTime: FloatUniformNode,
   ): Node {
     const t = tsl();
     return t.Fn(() => {

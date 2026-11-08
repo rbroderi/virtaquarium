@@ -4,11 +4,8 @@
 // (red dies first), matching medium.ts's coefficients. Both read the live water colour (scene.fog.color,
 // written by app/lighting.ts) through a uniform, so day/dusk/night stays identical to the WebGL path.
 import * as THREE from 'three';
-import type { Node } from 'three/webgpu';
-import { tsl } from '../webgpu/tsl.js';
+import { tsl, type NodeObject, type Tsl } from '../webgpu/tsl.js';
 import { GLASS_Z } from './medium.js';
-
-type NodeObject = import('three/webgpu').ShaderNodeObject<Node>;
 
 /** Per-unit beam attenuation c (red/green/blue), from BEAM_ATTENUATION_PER_M * METRES_PER_UNIT. */
 const BEAM_PER_UNIT = [0.60 * 0.125, 0.17 * 0.125, 0.12 * 0.125] as const;
@@ -19,8 +16,8 @@ const CAMERA_Z = 15;
 const GLASS_DISTANCE = CAMERA_Z - GLASS_Z;
 
 /** The live water colour, white-balanced (scene.fog.color * UW_WB). */
-function whiteBalancedBase(t: ReturnType<typeof tsl>, base: THREE.Color): NodeObject {
-  return t.uniform(base).mul(t.vec3(WHITE_BALANCE[0], WHITE_BALANCE[1], WHITE_BALANCE[2]));
+function whiteBalancedBase(t: Tsl, base: THREE.Color): NodeObject {
+  return (t.uniform(base) as unknown as NodeObject).mul(t.vec3(WHITE_BALANCE[0], WHITE_BALANCE[1], WHITE_BALANCE[2]));
 }
 
 /**

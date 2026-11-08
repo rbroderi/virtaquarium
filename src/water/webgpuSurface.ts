@@ -3,13 +3,10 @@
 // reflection beyond the critical angle, the bright fixture overhead inside Snell's window, and the
 // same waves as the caustics. The renderer applies tone mapping and sRGB, so this outputs linear radiance.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject } from 'three/webgpu';
-import { tsl } from '../webgpu/tsl.js';
+import { tsl, webgpu, type NodeObject } from '../webgpu/tsl.js';
 import { waveGradNode } from './webgpuCaustics.js';
 import { GLASS_Z, INSCATTER_DAY, SURFACE_Y } from './medium.js';
 import type { SurfaceUniforms } from './surface.js';
-
-type NodeObject = ShaderNodeObject<Node>;
 
 const WIDTH_MARGIN = 1.8;          // the plane is this many tank widths across
 const DEPTH_BEHIND_GLASS = 10;     // how far the plane reaches back from the glass (units)
@@ -26,6 +23,7 @@ export type GpuWaterSurface = THREE.Mesh<THREE.PlaneGeometry, import('three/webg
 /** Its typed uniforms are on `surfaceUniforms` (the same objects lighting.ts writes, as the WebGL path). */
 export function makeGpuSurface(width: number): GpuWaterSurface {
   const t = tsl();
+  const wg = webgpu();
   const uniforms: SurfaceUniforms = {
     uLight: { value: 1 }, uBase: { value: INSCATTER_DAY.clone() },
     uSky: { value: new THREE.Color(2.4, 2.5, 2.6) }, uFloor: { value: new THREE.Color(0.30, 0.27, 0.21) },
@@ -64,7 +62,7 @@ export function makeGpuSurface(width: number): GpuWaterSurface {
       d);
   });
 
-  const material = new t.NodeMaterial();
+  const material = new wg.NodeMaterial();
   material.fragmentNode = t.Fn(() => {
     const vW = t.positionWorld as unknown as NodeObject;
     const cam = t.cameraPosition as unknown as NodeObject;

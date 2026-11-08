@@ -16,7 +16,7 @@ import { causticUniforms } from './water/caustics.js';
 import { waveUniforms } from './water/waves.js';
 import { installReefLight } from './reefLight/webgpu.js';
 import { reefLightUniforms } from './reefLight/uniforms.js';
-import { gpuActive, tsl } from './webgpu/tsl.js';
+import { gpuActive, webgpu } from './webgpu/tsl.js';
 import type { Fish } from './fish.js';
 import { context2d } from './util.js';
 import { paintPendingVariants } from './fishModel.js';
@@ -235,9 +235,10 @@ async function probeCausticField(aq: AquariumHandle, target: number): Promise<vo
 
 /** The sampler the lookup actually gets (three may not apply the options the target was built with). */
 function texInfo(t: THREE.Texture): Record<string, unknown> {
+  const image = t.image as { width: number; height: number };
   return {
     type: t.type, format: t.format, wrap: [t.wrapS, t.wrapT], filter: [t.magFilter, t.minFilter],
-    mips: t.generateMipmaps, size: [t.image.width, t.image.height],
+    mips: t.generateMipmaps, size: [image.width, image.height],
   };
 }
 
@@ -386,8 +387,8 @@ async function probeSphere(aq: AquariumHandle, target: number): Promise<void> {
   const mat = (wrap: boolean): THREE.Material => {
     const params = { color: 0xffffff, roughness: 0.8, metalness: 0 };
     if (gpuActive()) {
-      const t = tsl();
-      const m = new t.MeshStandardNodeMaterial(params) as unknown as THREE.Material;
+      const wg = webgpu();
+      const m = new wg.MeshStandardNodeMaterial(params) as unknown as THREE.Material;
       return wrap ? installReefLight(m) : m;
     }
     const m = new THREE.MeshStandardMaterial(params);
@@ -469,7 +470,7 @@ async function probeWrap(aq: AquariumHandle, target: number): Promise<void> {
   for (let t = 0; t < target - 1e-6; t += DT) aq.step(DT);
   if (!gpuActive()) { await postDone(JSON.stringify({ error: 'probe=wrap is WebGPU only' })); return; }
   const { scene, camera } = aq;
-  const t = tsl();
+  const wg = webgpu();
   const gate = auditGate();
   // Which material classes the scene actually uses: a reef material built while gpuActive() was false
   // would be a classic MeshStandardMaterial (converted internally by WebGPURenderer) and would never
@@ -507,7 +508,7 @@ async function probeWrap(aq: AquariumHandle, target: number): Promise<void> {
   const centre = camera.position.clone().add(dir.multiplyScalar(8));
   type NodeMat = { setupLightingModel?: () => unknown; customProgramCacheKey: () => string };
   const plainMat = (): THREE.Material =>
-    new t.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0 }) as unknown as THREE.Material;
+    new wg.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0 }) as unknown as THREE.Material;
   /** Node materials with identical params and the same customProgramCacheKey SHARE one shader program,
    *  so every variant here must carry its own key or it silently renders the first variant's program. */
   const uniq = (m: THREE.Material, k: string): THREE.Material => {
@@ -525,7 +526,7 @@ async function probeWrap(aq: AquariumHandle, target: number): Promise<void> {
     const prev = nm.setupLightingModel!.bind(m);
     nm.setupLightingModel = () => {
       const w = prev() as Model;
-      const plain = new t.PhysicalLightingModel() as unknown as Model;
+      const plain = new wg.PhysicalLightingModel() as unknown as Model;
       return {
         start: (...a: unknown[]) => (keep.start ? w : plain).start(...a),
         direct: (...a: unknown[]) => (keep.direct ? w : plain).direct(...a),
@@ -552,8 +553,8 @@ async function probeWrap(aq: AquariumHandle, target: number): Promise<void> {
     const nm = m as unknown as NodeMat;
     const prev = nm.setupLightingModel?.bind(m);
     nm.setupLightingModel = () => {
-      const inner = (prev ? prev() : new t.PhysicalLightingModel()) as Model;
-      class DelegatingModel extends t.PhysicalLightingModel {
+      const inner = (prev ? prev() : new wg.PhysicalLightingModel()) as Model;
+      class DelegatingModel extends wg.PhysicalLightingModel {
         override start(...a: unknown[]): void { inner.start(...a); }
         override direct(...a: unknown[]): void { inner.direct(...a); }
         override indirect(...a: unknown[]): void { inner.indirect(...a); }

@@ -4,11 +4,8 @@
 // that the standard node materials' EnvironmentNode samples directly (it is marked isPMREMTexture, so
 // the node path skips re-generating it). scene.environment then feeds the fish/shell speculars' IBL.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, WebGPURenderer } from 'three/webgpu';
-import { tsl } from '../webgpu/tsl.js';
+import { tsl, webgpu, type NodeObject, type WebGPURenderer } from '../webgpu/tsl.js';
 import { INSCATTER_DAY, SURFACE_Y } from './medium.js';
-
-type NodeObject = ShaderNodeObject<Node>;
 
 const ENVIRONMENT_RADIUS = 10;
 const ENVIRONMENT_SEGMENTS: readonly [number, number] = [64, 32];
@@ -21,11 +18,12 @@ const KD_PER_UNIT = [0.45 * 0.125, 0.07 * 0.125, 0.05 * 0.125] as const;
 /** Image-based ambient light for the underwater radiance field (backdrop.ts makeEnvironment, in TSL). */
 export function makeGpuEnvironment(renderer: WebGPURenderer): THREE.Texture {
   const t = tsl();
+  const wg = webgpu();
   const base = t.vec3(INSCATTER_DAY.r, INSCATTER_DAY.g, INSCATTER_DAY.b);
   const kd = t.vec3(KD_PER_UNIT[0], KD_PER_UNIT[1], KD_PER_UNIT[2]);
   const surfaceY = t.float(SURFACE_Y);
 
-  const material = new t.NodeMaterial();
+  const material = new wg.NodeMaterial();
   material.fragmentNode = t.Fn(() => {
     const dir = t.positionLocal.normalize() as unknown as NodeObject;   // the sphere sits at the origin
     // medium.ts uwInscatter(uBase, dir, 5.0): radiance scattered from an infinite water path.
@@ -46,10 +44,14 @@ export function makeGpuEnvironment(renderer: WebGPURenderer): THREE.Texture {
 
   const scene = new THREE.Scene();
   scene.add(new THREE.Mesh(new THREE.SphereGeometry(ENVIRONMENT_RADIUS, ...ENVIRONMENT_SEGMENTS), material));
-  const pmrem = new t.PMREMGenerator(renderer);
+  const pmrem = new wg.PMREMGenerator(renderer);
   const target = pmrem.fromScene(scene, ENVIRONMENT_BLUR_SIGMA);
   pmrem.dispose();
+  // r187's PMREM is a cube render target, not the old CubeUV texture; mark it so the standard node
+  // materials' EnvironmentNode samples it directly instead of re-running the PMREM generator.
+  const texture = target.texture as THREE.Texture & { isPMREMTexture?: boolean; __pmremTarget?: THREE.RenderTarget };
+  texture.isPMREMTexture = true;
   // Diagnostic hook for the look check's envtex probe (see lookCheck.ts).
-  (target.texture as THREE.Texture & { __pmremTarget?: THREE.RenderTarget }).__pmremTarget = target;
+  texture.__pmremTarget = target;
   return target.texture;
 }

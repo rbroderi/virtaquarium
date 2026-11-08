@@ -3,13 +3,12 @@
 // must be bridged exactly once (two bridges would each defineProperty over the other and leave one
 // node stale). The WebGL path never installs the bridge.
 import { waterUniforms } from '../water.js';
-import { tsl } from './tsl.js';
-import type { ShaderNodeObject, UniformNode } from 'three/webgpu';
+import { tsl, type FloatUniformNode } from './tsl.js';
 
-let node: ShaderNodeObject<UniformNode<number>> | null = null;
+let node: FloatUniformNode | null = null;
 
 /** The shared uTime uniform node (created on first use, which is always on the WebGPU path). */
-export function waterTimeNode(): ShaderNodeObject<UniformNode<number>> {
+export function waterTimeNode(): FloatUniformNode {
   if (node) return node;
   const t = tsl();
   const n = t.uniform(waterUniforms.uTime.value);

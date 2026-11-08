@@ -6,7 +6,7 @@
 // which gives the bright rim and see-through centre of real bubbles.
 import * as THREE from 'three';
 import { range, type Rng } from '../util.js';
-import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { gpuActive, tsl, webgpu } from '../webgpu/tsl.js';
 import { METRES_PER_UNIT, SURFACE_Y } from './medium.js';
 import { NO_FLOW, type FlowField } from './flow.js';
 
@@ -119,6 +119,7 @@ export class Bubbles {
   /** The WebGPU bubble material: the same Fresnel water-to-air rim (bubbles.ts BUBBLE_FRAG) in TSL. */
   private gpuMaterial(): import('three/webgpu').NodeMaterial {
     const t = tsl();
+    const wg = webgpu();
     // uLight is replaced wholesale each frame by update(), so bridge it to the uniform node; the
     // other uniforms are fixed and baked as constants.
     const uLight = t.uniform(this.uniforms.uLight.value);
@@ -131,7 +132,7 @@ export class Bubbles {
     const uSky = t.vec3(this.uniforms.uSky.value.r, this.uniforms.uSky.value.g, this.uniforms.uSky.value.b);
     const uSun = t.vec3(this.uniforms.uSun.value.x, this.uniforms.uSun.value.y, this.uniforms.uSun.value.z);
 
-    const material = new t.NodeMaterial();
+    const material = new wg.NodeMaterial();
     material.fragmentNode = t.Fn(() => {
       const n = t.normalWorld.normalize();
       const v = t.cameraPosition.sub(t.positionWorld).normalize();

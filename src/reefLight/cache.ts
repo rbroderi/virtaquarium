@@ -126,7 +126,7 @@ function readUniform(k: SavedUniform): number | number[] {
   const L = reefLightUniforms;
   if (isScalarUniform(k)) return L[k].value;
   if (isVectorUniform(k)) return L[k].value.toArray();
-  return L[k].value.toArray();
+  return Array.from(L[k].value.toArray());
 }
 
 const isNumberArray = (v: unknown): v is number[] => Array.isArray(v) && v.every((x) => typeof x === 'number');

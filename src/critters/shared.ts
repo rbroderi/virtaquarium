@@ -4,8 +4,7 @@ import { addCaustics } from '../water.js';
 import { addTranslucency } from '../softSkin.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
-import { gpuActive, tsl, type Tsl } from '../webgpu/tsl.js';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
+import { gpuActive, tsl, webgpu, type FloatUniformNode, type Vec3UniformNode, type Node, type Tsl } from '../webgpu/tsl.js';
 import type { CritterNeighbour, CritterThreatFish, CritterWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
@@ -53,14 +52,14 @@ export interface SkinNodes {
   colorNode?: Node | null;
 }
 
-export type NodeHook = (t: Tsl) => SkinNodes;
+export type NodeHook = (t: Tsl, mat: THREE.Material) => SkinNodes;
 
-const uniformNodes = new WeakMap<THREE.IUniform, ShaderNodeObject<UniformNode<unknown>>>();
+const uniformNodes = new WeakMap<THREE.IUniform, FloatUniformNode>();
 
 /** A scalar uniform bridged to a TSL uniform node exactly once (critters write `u.value = x`). */
-export function scalarNode(t: Tsl, entry: THREE.IUniform<number>): ShaderNodeObject<UniformNode<number>> {
+export function scalarNode(t: Tsl, entry: THREE.IUniform<number>): FloatUniformNode {
   const known = uniformNodes.get(entry);
-  if (known) return known as ShaderNodeObject<UniformNode<number>>;
+  if (known) return known;
   const node = t.uniform(entry.value);
   Object.defineProperty(entry, 'value', {
     get: (): number => node.value,
@@ -69,12 +68,12 @@ export function scalarNode(t: Tsl, entry: THREE.IUniform<number>): ShaderNodeObj
     enumerable: true,
   });
   uniformNodes.set(entry, node);
-  return node as ShaderNodeObject<UniformNode<number>>;
+  return node;
 }
 
 /** A Vector3 uniform read by reference (critters mutate `u.value.set(...)` in place). */
-export function vec3Node(t: Tsl, entry: THREE.IUniform<THREE.Vector3>): ShaderNodeObject<UniformNode<THREE.Vector3>> {
-  return t.uniform(entry.value, 'vec3') as ShaderNodeObject<UniformNode<THREE.Vector3>>;
+export function vec3Node(t: Tsl, entry: THREE.IUniform<THREE.Vector3>): Vec3UniformNode {
+  return t.uniform(entry.value, 'vec3') as Vec3UniformNode;
 }
 
 /**
@@ -87,9 +86,10 @@ export function vec3Node(t: Tsl, entry: THREE.IUniform<THREE.Vector3>): ShaderNo
 export function skin(opts: THREE.MeshStandardMaterialParameters, key: string, hook: ShaderHook | null = null, sss: TissueOptions | null = null, nodeHook: NodeHook | null = null): THREE.Material {
   if (gpuActive()) {
     const t = tsl();
-    let m: THREE.Material = new t.MeshStandardNodeMaterial(opts);
+    const wg = webgpu();
+    let m: THREE.Material = new wg.MeshStandardNodeMaterial(opts);
     if (nodeHook) {
-      const n = nodeHook(t);
+      const n = nodeHook(t, m);
       const nodeMat = m as unknown as { positionNode: Node | null; normalNode: Node | null; colorNode: Node | null };
       if (n.positionNode) nodeMat.positionNode = n.positionNode;
       if (n.normalNode) nodeMat.normalNode = n.normalNode;

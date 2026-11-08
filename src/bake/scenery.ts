@@ -183,7 +183,7 @@ export async function bakeScenery(renderer: THREE.WebGLRenderer, config: BakeCon
   waterUniforms.uTime.value = 0;
 
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMappingExposure = config.exposure;
   // Supersampled like the fish: the headless GPU's MSAA leaves about a quarter of the reef's outline
   // pixels hard-stepped, so the strip is rendered at SS x and filtered down when it is read back.

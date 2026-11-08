@@ -4,16 +4,15 @@
 // onto the text plane, fade by how near the flat normal is to the face normal), plus native
 // iridescence.
 import * as THREE from 'three';
-import type {
-  LightingModelIndirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode,
-} from 'three/webgpu';
-import { tsl, type Tsl } from '../webgpu/tsl.js';
+import {
+  tsl, webgpu,
+  type NodeBuilder, type NodeObject, type Tsl, type Webgpu,
+} from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { crystalBgUniforms } from './crystalBg.js';
 
-type NodeObject = ShaderNodeObject<Node>;
-/** A texture node re-sampleable at an explicit uv (the `.uv()` keeps the node's link). */
-type UvSamplerNode = NodeObject & { uv(uv: NodeObject): NodeObject };
+/** A texture node re-sampleable at an explicit uv (the `.sample()` keeps the node's link). */
+type UvSamplerNode = NodeObject & { sample(uv: NodeObject): NodeObject };
 
 const CRYSTAL_IOR = 1.54;
 /** The frame's etched letters mix toward this roughness (frosted), while the clear frame keeps its own. */
@@ -80,7 +79,8 @@ export interface GpuCrystalOptions {
 /** The lighting model's finish: mix the refracted sub-frustum background into the shaded radiance. */
 function crystalLightingModel(
   t: Tsl,
-  inner: InstanceType<Tsl['PhysicalLightingModel']>,
+  wg: Webgpu,
+  inner: InstanceType<Webgpu['PhysicalLightingModel']>,
   opts: {
     readonly transmission: NodeObject;
     readonly thickness: NodeObject;
@@ -98,12 +98,12 @@ function crystalLightingModel(
     readonly groove: NodeObject;
     readonly grooveBright: NodeObject;
   },
-): InstanceType<Tsl['PhysicalLightingModel']> {
+): InstanceType<Webgpu['PhysicalLightingModel']> {
   const { transmission, thickness, tint, f0, etchTrans, frost, darkStrength, tex, proj, etch, dark, engravedN, letter, groove, grooveBright } = opts;
-  class CrystalLightingModel extends t.PhysicalLightingModel {
-    override finish(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
-      inner.finish(input, stack, builder);
-      const outgoing = input.outgoingLight as unknown as NodeObject;
+  class CrystalLightingModel extends wg.PhysicalLightingModel {
+    override finish(builder: NodeBuilder): void {
+      inner.finish(builder);
+      const outgoing = (builder.context as unknown as { outgoingLight: NodeObject }).outgoingLight;
       const pw = t.positionWorld as unknown as NodeObject;
       const v = t.cameraPosition.sub(pw).normalize();
       // The etched groove's wall normal (already perturbed in world space): the cut walls catch light
@@ -114,7 +114,7 @@ function crystalLightingModel(
       const exit = pw.add(r.mul(thick));
       const ndc = proj.mul(t.vec4(exit, 1));
       const uv = ndc.xy.div(t.max(t.float(1e-5), ndc.w)).mul(t.float(0.5)).add(t.float(0.5)).clamp(t.vec2(0), t.vec2(1));
-      const transmitted = tex.uv(uv).rgb.mul(tint).mul(transmission);
+      const transmitted = tex.sample(uv).rgb.mul(tint).mul(transmission);
       // Frosted floors: partly transparent (the reef still shows through) plus a soft ice-white scatter,
       // and a touch brighter than the clear glass around them.
       const transmittedTerm = t.mix(transmitted, transmitted.mul(etchTrans).add(frost), etch)
@@ -139,7 +139,8 @@ export function gpuCrystalMaterial(
   fadeNode: { value: number } | null,
 ): THREE.MeshPhysicalMaterial {
   const t = tsl();
-  const mat = new t.MeshPhysicalNodeMaterial(params);
+  const wg = webgpu();
+  const mat = new wg.MeshPhysicalNodeMaterial(params);
   installReefLight(mat);
 
   const { tex, proj } = crystalBgNodes(t);
@@ -172,14 +173,14 @@ export function gpuCrystalMaterial(
   const du = localPos.sub(textCenter).dot(textU);
   const dv = localPos.sub(textCenter).dot(textV);
   const textUv = t.vec2(du.sub(u0).mul(invExtU), dv.sub(v0).mul(invExtV)) as unknown as NodeObject;
-  const sampled = maskTex.uv(textUv);
+  const sampled = maskTex.sample(textUv);
   // Blur the clarity channel into a distance-field-like groove height (0 outside, 1 inside).
   const blur = t.float(options.grooveBlur);
   const blurR = sampled.r
-    .add(maskTex.uv(textUv.add(t.vec2(blur, 0))).r)
-    .add(maskTex.uv(textUv.sub(t.vec2(blur, 0))).r)
-    .add(maskTex.uv(textUv.add(t.vec2(0, blur))).r)
-    .add(maskTex.uv(textUv.sub(t.vec2(0, blur))).r)
+    .add(maskTex.sample(textUv.add(t.vec2(blur, 0))).r)
+    .add(maskTex.sample(textUv.sub(t.vec2(blur, 0))).r)
+    .add(maskTex.sample(textUv.add(t.vec2(0, blur))).r)
+    .add(maskTex.sample(textUv.sub(t.vec2(0, blur))).r)
     .div(t.float(5));
   const letter = t.float(1).sub(blurR);
   const etch = letter.mul(facing).mul(fade);
@@ -194,7 +195,7 @@ export function gpuCrystalMaterial(
   const dletterdu = ldx.mul(dvdy).sub(ldy.mul(dvdx)).div(det);
   const dletterdv = dudx.mul(ldy).sub(dudy.mul(ldx)).div(det);
   const perturbWorld = (t.modelWorldMatrix.mul(t.vec4(textU.mul(dletterdu).add(textV.mul(dletterdv)), t.float(0)))).xyz as unknown as NodeObject;
-  const worldN = (t.transformedNormalWorld as unknown as NodeObject).normalize();
+  const worldN = (t.normalWorld as unknown as NodeObject).normalize();
   const engravedN = worldN.add(perturbWorld.mul(groove)).normalize();
 
   // Frost: the plaque polishes its clear area and keeps the rough letters; the frame keeps its clear
@@ -204,13 +205,13 @@ export function gpuCrystalMaterial(
     : t.mix(t.float(params.roughness as number), t.float(FROST_ROUGH), etch);
 
   const nodeMat = mat as unknown as {
-    setupLightingModel?: () => InstanceType<Tsl['PhysicalLightingModel']>;
+    setupLightingModel?: () => InstanceType<Webgpu['PhysicalLightingModel']>;
     customProgramCacheKey: () => string;
   };
   const prev = nodeMat.setupLightingModel?.bind(mat);
   nodeMat.setupLightingModel = () => {
-    const inner = prev ? prev() : new t.PhysicalLightingModel();
-    return crystalLightingModel(t, inner, {
+    const inner = prev ? prev() : new wg.PhysicalLightingModel();
+    return crystalLightingModel(t, wg, inner, {
       transmission, thickness, tint, f0, etchTrans, frost, darkStrength, tex, proj, etch, dark,
       engravedN, letter, groove, grooveBright: t.float(options.grooveBright),
     });

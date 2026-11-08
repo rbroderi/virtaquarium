@@ -3,14 +3,11 @@
 // pass's depth at half resolution with a depth-aware blur, published to reefLightUniforms.uRLAO for the
 // baked reef light's ambient term (reefLight/webgpu.ts) to read next frame — the same split as WebGL.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
-import type { WebGPURenderer } from 'three/webgpu';
-import { tsl } from '../webgpu/tsl.js';
+import { tsl, webgpu, type FloatUniformNode, type Mat4UniformNode, type NodeObject, type Vec2UniformNode, type WebGPURenderer } from '../webgpu/tsl.js';
 import { reefLightUniforms } from '../reefLight/uniforms.js';
 
-type NodeObject = ShaderNodeObject<Node>;
 /** A texture node we re-sample at a custom uv and whose value can be swapped between passes. */
-type AoSamplerNode = NodeObject & { uv(uv: NodeObject): NodeObject; value: THREE.Texture };
+type AoSamplerNode = NodeObject & { sample(uv: NodeObject): NodeObject; value: THREE.Texture };
 
 const DEFAULT_RADIUS = 0.3;
 const DEFAULT_STRENGTH = 0.65;
@@ -24,12 +21,12 @@ export class WebGpuScreenAO {
   private readonly ao: THREE.Scene;
   private readonly blur: THREE.Scene;
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  private readonly uTexel: ShaderNodeObject<UniformNode<THREE.Vector2>>;
-  private readonly uStep: ShaderNodeObject<UniformNode<THREE.Vector2>>;
-  private readonly uProj: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
-  private readonly uProjInv: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
-  private readonly uNear: ShaderNodeObject<UniformNode<number>>;
-  private readonly uFar: ShaderNodeObject<UniformNode<number>>;
+  private readonly uTexel: Vec2UniformNode;
+  private readonly uStep: Vec2UniformNode;
+  private readonly uProj: Mat4UniformNode;
+  private readonly uProjInv: Mat4UniformNode;
+  private readonly uNear: FloatUniformNode;
+  private readonly uFar: FloatUniformNode;
   private readonly aoTexture: AoSamplerNode;
   private readonly size = new THREE.Vector2();
 
@@ -37,11 +34,12 @@ export class WebGpuScreenAO {
     radius = DEFAULT_RADIUS, strength = DEFAULT_STRENGTH,
   }: WebGpuScreenAOOptions = {}) {
     const t = tsl();
+    const wg = webgpu();
     this.targets = [
       new THREE.RenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false }),
       new THREE.RenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false }),
     ];
-    const depth = depthNode as NodeObject & { uv(uv: NodeObject): NodeObject };
+    const depth = depthNode as NodeObject & { sample(uv: NodeObject): NodeObject };
     const uProjInv = this.uProjInv = t.uniform(new THREE.Matrix4());
     const uProj = this.uProj = t.uniform(new THREE.Matrix4());
     const uNear = this.uNear = t.uniform(0.1);
@@ -52,14 +50,14 @@ export class WebGpuScreenAO {
     this.uStep = t.uniform(new THREE.Vector2(1, 1));
     this.aoTexture = t.texture(new THREE.Texture()) as unknown as AoSamplerNode;
 
-    const vpos = t.Fn(([uv]: [NodeObject]) => t.getViewPosition(uv, depth.uv(uv), uProjInv));
+    const vpos = t.Fn(([uv]: [NodeObject]) => t.getViewPosition(uv, depth.sample(uv), uProjInv));
     const ign = t.Fn(([p]: [NodeObject]) => t.fract(t.float(52.9829189).mul(t.fract(t.dot(p, t.vec2(0.06711056, 0.00583715))))));
 
     // AO_FRAG.
-    const aoMaterial = new t.NodeMaterial();
+    const aoMaterial = new wg.NodeMaterial();
     aoMaterial.fragmentNode = t.Fn(() => {
       const uv = t.uv();
-      const dCenter = depth.uv(uv);
+      const dCenter = depth.sample(uv);
       const occ = t.float(0).toVar();
       t.If(dCenter.lessThan(t.float(0.9999)), () => {
         const P = vpos(uv) as unknown as NodeObject;
@@ -68,8 +66,8 @@ export class WebGpuScreenAO {
         const dy1 = (vpos(uv.add(t.vec2(t.float(0), this.uTexel.y))) as unknown as NodeObject).sub(P);
         const dy0 = P.sub(vpos(uv.sub(t.vec2(t.float(0), this.uTexel.y))) as unknown as NodeObject);
         let N: NodeObject = t.normalize(t.cross(
-          t.select(t.abs(dx1.z).lessThan(t.abs(dx0.z)), dx1, dx0),
-          t.select(t.abs(dy1.z).lessThan(t.abs(dy0.z)), dy1, dy0),
+          t.select(t.abs(dx1.z).lessThan(t.abs(dx0.z)) as unknown as NodeObject, dx1 as unknown as NodeObject, dx0 as unknown as NodeObject) as unknown as NodeObject,
+          t.select(t.abs(dy1.z).lessThan(t.abs(dy0.z)) as unknown as NodeObject, dy1 as unknown as NodeObject, dy0 as unknown as NodeObject) as unknown as NodeObject,
         )) as unknown as NodeObject;
         N = t.select(N.dot(P).greaterThan(t.float(0)), N.negate(), N) as unknown as NodeObject;
         const T = t.normalize(t.select(t.abs(N.x).lessThan(t.float(0.9)), t.cross(N, t.vec3(1, 0, 0)), t.cross(N, t.vec3(0, 1, 0))));
@@ -105,8 +103,8 @@ export class WebGpuScreenAO {
     this.ao = new THREE.Scene().add(aoQuad);
 
     // BLUR_FRAG (separable, depth-aware; the loop runs i = -4 .. 4).
-    const lz = t.Fn(([uv]: [NodeObject]) => (t.perspectiveDepthToViewZ(depth.uv(uv), uNear, uFar) as NodeObject));
-    const blurMaterial = new t.NodeMaterial();
+    const lz = t.Fn(([uv]: [NodeObject]) => (t.perspectiveDepthToViewZ(depth.sample(uv), uNear, uFar) as NodeObject));
+    const blurMaterial = new wg.NodeMaterial();
     blurMaterial.fragmentNode = t.Fn(() => {
       const uv = t.uv();
       const z0 = lz(uv) as unknown as NodeObject;
@@ -117,7 +115,7 @@ export class WebGpuScreenAO {
         const uvi = uv.add(this.uStep.mul(o));
         const g = t.exp(o.mul(o).div(t.float(8)).negate())
           .mul(t.exp(t.abs((lz(uvi) as unknown as NodeObject).sub(z0)).mul(t.float(6)).negate()));
-        s.addAssign(this.aoTexture.uv(uvi).r.mul(g));
+        s.addAssign(this.aoTexture.sample(uvi).r.mul(g));
         w.addAssign(g);
       });
       return t.vec4(t.vec3(s.div(w)), t.float(1));

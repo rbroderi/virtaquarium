@@ -3,10 +3,9 @@
 import * as THREE from 'three';
 import { addCaustics, waterUniforms } from '../water.js';
 import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishPushBend, fishUniforms } from './fishPush.js';
-import { gpuActive, tsl } from '../webgpu/tsl.js';
+import { gpuActive, tsl, webgpu, type FloatUniformNode, type Node, type NodeObject } from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
 
 const GLSL_DIGITS = 4;
 
@@ -14,8 +13,8 @@ const GLSL_DIGITS = 4;
  *  so the same parameters become a plain MeshStandardNodeMaterial. */
 export function stdMat(params: THREE.MeshStandardMaterialParameters): THREE.Material {
   if (gpuActive()) {
-    const t = tsl();
-    return installReefLight(new t.MeshStandardNodeMaterial(params));
+    const wg = webgpu();
+    return installReefLight(new wg.MeshStandardNodeMaterial(params));
   }
   return addCaustics(new THREE.MeshStandardMaterial(params));
 }
@@ -35,7 +34,7 @@ export interface SwayOptions {
   readonly instanced?: boolean;
   /** A storage-buffer node over the instance matrix (WebGPU), for a material used by one instanced mesh;
    *  reading this instead of aInst0..aInst3 keeps the draw under the vertex-buffer limit. */
-  readonly instanceMatrixNode?: ShaderNodeObject<Node> | undefined;
+  readonly instanceMatrixNode?: NodeObject | undefined;
   /** GLSL declarations prepended to the vertex shader, for the attributes the deform reads. */
   readonly prelude?: string;
   /** GLSL run inside the bend block after the sway (h is in scope), e.g. a per-instance curl. */
@@ -43,7 +42,7 @@ export interface SwayOptions {
   /** Distinguishes program cache entries that share a key but not a deform. */
   readonly variant?: string;
   /** TSL counterpart of `deform`, run after the sway bend on the WebGPU path: (swayedLocal, h) => position. */
-  readonly deformNode?: (p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>) => ShaderNodeObject<Node>;
+  readonly deformNode?: (p: NodeObject, h: NodeObject) => NodeObject;
 }
 
 const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
@@ -52,29 +51,25 @@ const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
  *  The bend runs in the blade/tentacle's own space (the authored position, not the instance-transformed
  *  one), exactly like the GLSL, and the renderer's InstanceNode prepass applies the instance matrix to
  *  the result afterwards, so the position node returns model-space and never applies the matrix itself. */
-function swayNode(options: { ax: number; az: number; hz: number; hTop: number; fishPush: boolean; instanced: boolean; instanceMatrixNode: ShaderNodeObject<Node> | undefined; deformNode: ((p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>) => ShaderNodeObject<Node>) | undefined }): Node {
+function swayNode(options: { ax: number; az: number; hz: number; hTop: number; fishPush: boolean; instanced: boolean; instanceMatrixNode: NodeObject | undefined; deformNode: ((p: NodeObject, h: NodeObject) => NodeObject) | undefined }): Node {
   const t = tsl();
   const { ax, az, hz, hTop, fishPush, instanced, instanceMatrixNode, deformNode } = options;
   const time = waterTimeNode();
   // The per-species sway numbers arrive as uniforms, not float() literals, so every swayed material
   // shares one vertex program instead of one per (ax, az, hz, hTop) combination.
-  const uAx = t.uniform(ax, 'float') as ShaderNodeObject<UniformNode<number>>;
-  const uAz = t.uniform(az, 'float') as ShaderNodeObject<UniformNode<number>>;
-  const uHz = t.uniform(hz, 'float') as ShaderNodeObject<UniformNode<number>>;
-  const uHTop = t.uniform(hTop, 'float') as ShaderNodeObject<UniformNode<number>>;
+  const uAx = t.uniform(ax, 'float') as FloatUniformNode;
+  const uAz = t.uniform(az, 'float') as FloatUniformNode;
+  const uHz = t.uniform(hz, 'float') as FloatUniformNode;
+  const uHTop = t.uniform(hTop, 'float') as FloatUniformNode;
   return t.Fn(() => {
     const p = t.positionGeometry.toVar();   // the authored position: h is the model's own height
     const h = t.clamp(p.y.div(uHTop), t.float(0), t.float(1));
     // The instance matrix's four columns: a storage-buffer node when the caller supplied one (a single
     // mesh per material), else the aInst0..aInst3 per-instance attributes.
-    const i0 = instanceMatrixNode ? (t.element(instanceMatrixNode, 0) as ShaderNodeObject<Node>)
-      : t.attribute('aInst0', 'vec4');
-    const i1 = instanceMatrixNode ? (t.element(instanceMatrixNode, 1) as ShaderNodeObject<Node>)
-      : t.attribute('aInst1', 'vec4');
-    const i2 = instanceMatrixNode ? (t.element(instanceMatrixNode, 2) as ShaderNodeObject<Node>)
-      : t.attribute('aInst2', 'vec4');
-    const i3 = instanceMatrixNode ? (t.element(instanceMatrixNode, 3) as ShaderNodeObject<Node>)
-      : t.attribute('aInst3', 'vec4');
+    const i0 = (instanceMatrixNode ? t.element(instanceMatrixNode, 0) : t.attribute('aInst0', 'vec4')) as unknown as NodeObject;
+    const i1 = (instanceMatrixNode ? t.element(instanceMatrixNode, 1) : t.attribute('aInst1', 'vec4')) as unknown as NodeObject;
+    const i2 = (instanceMatrixNode ? t.element(instanceMatrixNode, 2) : t.attribute('aInst2', 'vec4')) as unknown as NodeObject;
+    const i3 = (instanceMatrixNode ? t.element(instanceMatrixNode, 3) : t.attribute('aInst3', 'vec4')) as unknown as NodeObject;
     const ph = instanced
       ? i3.x.mul(t.float(1.7)).add(i3.z.mul(t.float(2.3)))
       : t.modelPosition.x.mul(t.float(1.7)).add(t.modelPosition.z.mul(t.float(2.3)));

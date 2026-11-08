@@ -8,8 +8,7 @@
 //         a constant or the per-vertex aThin attribute (thin: 'attr').
 // No extra pass and no screen-space history, so the Roku bake renders it as is.
 import type * as THREE from 'three';
-import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
-import type { LightingModelDirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode } from 'three/webgpu';
+import { gpuActive, tsl, webgpu, type LightingModelDirectInput, type NodeBuilder, type NodeObject, type Tsl, type Webgpu } from './webgpu/tsl.js';
 
 const GLSL_DIGITS = 4;
 const f = (x: number): string => x.toFixed(GLSL_DIGITS);
@@ -36,8 +35,9 @@ export function addTranslucency<M extends THREE.Material>(mat: M, options: Trans
     // WebGPURenderer never runs onBeforeCompile, so the GLSL below is dead; the same wrap + transmission
     // lobes go through a per-instance lighting model instead (the node material has no fragment hook).
     const t = tsl();
+    const wg = webgpu();
     const nodeMat = mat as unknown as {
-      setupLightingModel?: () => InstanceType<Tsl['PhysicalLightingModel']>;
+      setupLightingModel?: () => InstanceType<Webgpu['PhysicalLightingModel']>;
       customProgramCacheKey: () => string;
     };
     // Compose with whatever model the material already has (the reef-light wrapper from installReefLight,
@@ -45,7 +45,7 @@ export function addTranslucency<M extends THREE.Material>(mat: M, options: Trans
     // WebGL path stacks onBeforeCompile hooks, so overwriting here made soft bodies lose the reef light.
     const prev = nodeMat.setupLightingModel?.bind(mat);
     nodeMat.setupLightingModel = () =>
-      translucencyLightingModel(t, wrap, back, tint, thin, prev ? prev() : new t.PhysicalLightingModel());
+      translucencyLightingModel(t, wrap, back, tint, thin, prev ? prev() : new wg.PhysicalLightingModel());
     const prevKey = nodeMat.customProgramCacheKey.bind(mat);
     nodeMat.customProgramCacheKey = () => prevKey() + `|sss${wrap},${back},${tint.join(',')},${thin}`;
     return mat;
@@ -75,22 +75,22 @@ export function addTranslucency<M extends THREE.Material>(mat: M, options: Trans
  *  that, so the terms live here and run per directional light before the stock Lambert + GGX). Every
  *  other method goes to `inner`, the model the material already had, so the lobes stack on top of the
  *  reef light instead of replacing it. */
-function translucencyLightingModel(t: Tsl, wrap: number, back: number, tint: TissueTint, thin: number | 'attr', inner: InstanceType<Tsl['PhysicalLightingModel']>): InstanceType<Tsl['PhysicalLightingModel']> {
+function translucencyLightingModel(t: Tsl, wrap: number, back: number, tint: TissueTint, thin: number | 'attr', inner: InstanceType<Webgpu['PhysicalLightingModel']>): InstanceType<Webgpu['PhysicalLightingModel']> {
   const thinNode = thin === 'attr' ? t.attribute('aThin', 'float') : t.float(thin);
   type AnyArgs = unknown[];
   type AnyFn = (...x: AnyArgs) => void;
   const call = (fn: unknown, a: AnyArgs): void => (fn as AnyFn).apply(inner, a);
-  class TranslucencyLightingModel extends t.PhysicalLightingModel {
+  class TranslucencyLightingModel extends (webgpu().PhysicalLightingModel) {
     override start(...a: AnyArgs): void { call(inner.start, a); }
     override indirect(...a: AnyArgs): void { call(inner.indirect, a); }
     override finish(...a: AnyArgs): void { call(inner.finish, a); }
-    override direct(input: LightingModelDirectInput, stack: StackNode, builder: NodeBuilder): void {
+    override direct(input: LightingModelDirectInput, builder: NodeBuilder): void {
       // The inner model runs first: the reef light scales input.lightColor by the baked sun term as it
       // goes, and the lobes below must see that scaled colour (the GLSL multiplies the same light).
-      inner.direct(input, stack, builder);
-      const L = input.lightDirection as unknown as ShaderNodeObject<Node>;
-      const lc = input.lightColor as unknown as ShaderNodeObject<Node>;
-      const N = t.transformedNormalView;
+      inner.direct(input, builder);
+      const L = input.lightDirection as unknown as NodeObject;
+      const lc = input.lightColor as unknown as NodeObject;
+      const N = t.normalView;
       const ndl = N.dot(L);
       // Only the extra light past the terminator is added (the standard Lambert keeps its own N.L).
       const wrapped = ndl.add(t.float(wrap)).div(t.float(1 + wrap)).max(t.float(0)).sub(ndl.max(t.float(0)));
@@ -99,9 +99,9 @@ function translucencyLightingModel(t: Tsl, wrap: number, back: number, tint: Tis
         .mul(t.float(0.15).add(t.float(0.85).mul(thinNode)));
       const irr = lc.div(Math.PI);
       const alb = t.diffuseColor.rgb;
-      (input.reflectedLight.directDiffuse as unknown as ShaderNodeObject<Node>)
+      (input.reflectedLight.directDiffuse as unknown as NodeObject)
         .addAssign(alb.mul(irr).mul(wrapped));
-      (input.reflectedLight.directDiffuse as unknown as ShaderNodeObject<Node>)
+      (input.reflectedLight.directDiffuse as unknown as NodeObject)
         .addAssign(alb.mul(irr).mul(lobe).mul(t.float(back)).mul(t.vec3(tint[0], tint[1], tint[2])));
     }
   }

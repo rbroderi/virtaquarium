@@ -13,8 +13,7 @@
 // own UV rate, so differing repeats are fine).
 //   depth: how deep the darkest texel lies below the brightest, in world units (1 unit = 12.5 cm).
 import * as THREE from 'three';
-import { gpuActive, tsl, type Tsl } from './webgpu/tsl.js';
-import type { Node, ShaderNodeObject } from 'three/webgpu';
+import { gpuActive, tsl, type Tsl, type Node, type NodeObject } from './webgpu/tsl.js';
 
 /** ?pom=0 leaves materials as they were (to compare). Read once, at load. */
 const PARALLAX_DISABLED_BY_URL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pom') === '0';
@@ -147,8 +146,6 @@ export function addParallax<M extends THREE.Material>(mat: M, depth: number, opt
   return mat;
 }
 
-type NodeObject = ShaderNodeObject<Node>;
-
 /** Calls a TSL Fn once (the type of Fn() doesn't expose the runtime .once(), which caches the call). */
 function once(fn: () => NodeObject): NodeObject {
   return ((fn as unknown as { once(): () => NodeObject }).once())();
@@ -233,9 +230,9 @@ function parallaxNodeMaterial(mat: THREE.Material, depth: number, steps: number,
   const pomRate = once(t.Fn(() => t.uv().dFdx().length()));
   const shift = (uvNode: NodeObject): NodeObject => pomOff.mul(uvNode.dFdx().length()).div(pomRate.max(1e-8));
 
-  if (m.map) m.colorNode = t.materialReference('color', 'color').mul(t.texture(m.map, t.uv().add(shift(t.uv()))).rgb);
-  if (m.roughnessMap) m.roughnessNode = t.materialReference('roughness', 'float').mul(t.texture(m.roughnessMap, t.uv().add(shift(t.uv()))).g);
-  if (m.metalnessMap) m.metalnessNode = t.materialReference('metalness', 'float').mul(t.texture(m.metalnessMap, t.uv().add(shift(t.uv()))).b);
+  if (m.map) m.colorNode = (t.materialReference('color', 'color', mat) as unknown as NodeObject).mul(t.texture(m.map, t.uv().add(shift(t.uv()))).rgb);
+  if (m.roughnessMap) m.roughnessNode = (t.materialReference('roughness', 'float') as unknown as NodeObject).mul(t.texture(m.roughnessMap, t.uv().add(shift(t.uv()))).g);
+  if (m.metalnessMap) m.metalnessNode = (t.materialReference('metalness', 'float') as unknown as NodeObject).mul(t.texture(m.metalnessMap, t.uv().add(shift(t.uv()))).b);
   if (m.normalMap) {
     m.normalNode = t.normalMap(t.texture(m.normalMap, t.uv().add(shift(t.uv()))), t.materialReference('normalScale', 'vec2'));
   } else if (m.bumpMap) {

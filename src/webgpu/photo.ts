@@ -4,13 +4,11 @@
 // front glass. It consumes the water post's linear HDR composite and its depth; the output stays linear
 // and PostProcessing's renderOutput() tone-maps it, matching the WebGL chain.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
-import { tsl } from './tsl.js';
+import { tsl, type FloatUniformNode, type Mat3UniformNode, type NodeObject, type Vec2UniformNode } from './tsl.js';
 import { METRES_PER_UNIT } from '../water/medium.js';
 
-type NodeObject = ShaderNodeObject<Node>;
-/** A pass texture node: `.uv()` re-samples the same texture (keeping the pass-node link). */
-type SamplerNode = NodeObject & { uv(uv: NodeObject): NodeObject };
+/** A pass texture node: `.sample()` re-samples the same texture (keeping the pass-node link). */
+type SamplerNode = NodeObject & { sample(uv: NodeObject): NodeObject };
 
 const TAPS = 24;
 const GOLDEN_ANGLE = 2.39996323;
@@ -47,14 +45,14 @@ export class GpuPhotoCamera {
   /** The photo output node (linear HDR), for PostProcessing.outputNode. */
   readonly outputNode: NodeObject;
 
-  private readonly uNear: ShaderNodeObject<UniformNode<number>>;
-  private readonly uFar: ShaderNodeObject<UniformNode<number>>;
-  private readonly uCocK: ShaderNodeObject<UniformNode<number>>;
-  private readonly uFocus: ShaderNodeObject<UniformNode<number>>;
-  private readonly uRes: ShaderNodeObject<UniformNode<THREE.Vector2>>;
-  private readonly uTanHalf: ShaderNodeObject<UniformNode<THREE.Vector2>>;
-  private readonly uSeed: ShaderNodeObject<UniformNode<number>>;
-  private readonly uCamRot: ShaderNodeObject<UniformNode<THREE.Matrix3>>;
+  private readonly uNear: FloatUniformNode;
+  private readonly uFar: FloatUniformNode;
+  private readonly uCocK: FloatUniformNode;
+  private readonly uFocus: FloatUniformNode;
+  private readonly uRes: Vec2UniformNode;
+  private readonly uTanHalf: Vec2UniformNode;
+  private readonly uSeed: FloatUniformNode;
+  private readonly uCamRot: Mat3UniformNode;
 
   constructor(colorNode: NodeObject, depthNode: NodeObject, {
     fNumber = DEFAULTS.fNumber, sensorMM = DEFAULTS.sensorMM, ca = DEFAULTS.ca, iso = DEFAULTS.iso, glass = true,
@@ -78,19 +76,19 @@ export class GpuPhotoCamera {
       glass ? 1 : 0, PANE_THICKNESS_M / METRES_PER_UNIT, ROOM_DISTANCE_M / METRES_PER_UNIT,
     ));
     const uCamRot = this.uCamRot = t.uniform(new THREE.Matrix3(), 'mat3');
-    const uDisc = t.uniformArray(DISC, 'vec2');
+    const uDisc = t.uniformArray(DISC, 'vec2' as const);
 
     // viewDist / coc / sampleCA from PHOTO_FRAG.
-    const viewDist = t.Fn(([uv]: [NodeObject]) => (t.perspectiveDepthToViewZ(depth.uv(uv), uNear, uFar) as NodeObject).negate());
+    const viewDist = t.Fn(([uv]: [NodeObject]) => (t.perspectiveDepthToViewZ(depth.sample(uv), uNear, uFar) as NodeObject).negate());
     const coc = t.Fn(([d]: [NodeObject]) =>
       t.min(t.float(0.5).mul(uCocK).mul(t.abs(t.float(1).sub(uFocus.div(t.max(d, t.float(1e-3)))))), t.float(14)));
     const sampleCA = t.Fn(([uv]: [NodeObject]) => {
       const c = uv.sub(t.vec2(0.5));
       const k = uCA.mul(t.dot(c, c)).mul(t.float(4));
       return t.vec3(
-        color.uv(t.vec2(0.5).add(c.mul(t.float(1).add(k)))).r,
-        color.uv(uv).g,
-        color.uv(t.vec2(0.5).add(c.mul(t.float(1).sub(k)))).b,
+        color.sample(t.vec2(0.5).add(c.mul(t.float(1).add(k)))).r,
+        color.sample(uv).g,
+        color.sample(t.vec2(0.5).add(c.mul(t.float(1).sub(k)))).b,
       );
     });
     // The room behind the camera (photo.ts roomAt / glassReflection).
@@ -153,9 +151,9 @@ export class GpuPhotoCamera {
 
       const px = t.floor(uv.mul(uRes));
       const noise = t.vec3(
-        grainChannel(hash(px), hash(px.add(t.vec2(5))), col.x),
-        grainChannel(hash(px.add(t.vec2(17))), hash(px.add(t.vec2(36))), col.y),
-        grainChannel(hash(px.add(t.vec2(34))), hash(px.add(t.vec2(67))), col.z),
+        grainChannel(hash(px), hash(px.add(t.vec2(5))), col.x) as unknown as NodeObject,
+        grainChannel(hash(px.add(t.vec2(17))), hash(px.add(t.vec2(36))), col.y) as unknown as NodeObject,
+        grainChannel(hash(px.add(t.vec2(34))), hash(px.add(t.vec2(67))), col.z) as unknown as NodeObject,
       );
       col.assign(t.max(col.add(noise.mul(uIso)), t.vec3(0)));
 

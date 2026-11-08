@@ -10,15 +10,10 @@
 //     app/stage.ts) that multiplies the sun's irradiance by the caustic factor at the surface point,
 //     exactly where materials.ts patches directLight.color on the WebGL path.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
-import type { WebGPURenderer } from 'three/webgpu';
-import { tsl, type Tsl } from '../webgpu/tsl.js';
+import { tsl, webgpu, type FloatUniformNode, type NodeObject, type Tsl, type Vec3UniformNode, type Webgpu, type WebGPURenderer } from '../webgpu/tsl.js';
 import { causticUniforms, CAUSTIC_RES, CAUSTIC_GAIN, CAUSTIC_LOW_LOD, GREEN_IOR, refractDir, SEAWATER_IOR } from './caustics.js';
 import { SURFACE_Y } from './medium.js';
 import { waveUniforms, WAVE_COUNT, WAVE_TILE } from './waves.js';
-
-type NodeObject = ShaderNodeObject<Node>;
-type Vec3UniformNode = ShaderNodeObject<UniformNode<THREE.Vector3>>;
 
 const DEPTH_LAYERS = 3;
 /** Sim grid: WAVE_TILE plus a margin so neighbours' refracted light lands inside (caustics.ts). */
@@ -30,9 +25,9 @@ export interface GpuCausticState {
   readonly textures: readonly [THREE.Texture, THREE.Texture, THREE.Texture];
   readonly uCauR0: Vec3UniformNode;
   readonly uCauDepth: Vec3UniformNode;
-  readonly uCauTile: ShaderNodeObject<UniformNode<number>>;
-  readonly uCauBlur: ShaderNodeObject<UniformNode<number>>;
-  readonly uCauOn: ShaderNodeObject<UniformNode<number>>;
+  readonly uCauTile: FloatUniformNode;
+  readonly uCauBlur: FloatUniformNode;
+  readonly uCauOn: FloatUniformNode;
 }
 
 let gpuCausticState: GpuCausticState | null = null;
@@ -58,7 +53,7 @@ function fresnelT(I: NodeObject, n: NodeObject, r: NodeObject, eta: NodeObject):
 
 /** The wave surface gradient (waves.ts WAVE_GLSL), shared with the water surface. */
 export function waveGradNode(t: Tsl): (p: NodeObject) => NodeObject {
-  const waves = t.uniformArray(waveUniforms.uWaves.value as unknown as unknown[], 'vec4');
+  const waves = t.uniformArray(waveUniforms.uWaves.value as unknown as unknown[], 'vec4' as const);
   return t.Fn(([p]: [NodeObject]) => {
     const g = t.vec2(0).toVar();
     t.Loop(WAVE_COUNT, ({ i }: { i: NodeObject }) => {
@@ -117,15 +112,15 @@ export function causticFactorNode(t: Tsl): (p: NodeObject) => NodeObject {
  *  into the reef-light lighting model (reefLight/webgpu.ts direct), exactly where the WebGL patch
  *  multiplies directLight.color, so it reaches every wrapped material whether or not it receives a
  *  shadow. This node stays a plain DirectionalLightNode. */
-export function causticDirectionalLightNode(t: Tsl): typeof t.DirectionalLightNode {
-  return t.DirectionalLightNode;
+export function causticDirectionalLightNode(wg: Webgpu): typeof wg.DirectionalLightNode {
+  return wg.DirectionalLightNode;
 }
 
 export class WebGpuCaustics {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private readonly targets: THREE.RenderTarget[];
-  private readonly depth: ShaderNodeObject<UniformNode<number>>;
+  private readonly depth: FloatUniformNode;
   private readonly r0 = new THREE.Vector3(0, -1, 0);
 
   constructor(private readonly renderer: WebGPURenderer) {
@@ -161,6 +156,7 @@ export class WebGpuCaustics {
    *  positionLocal and divides the two screen-space derivative areas (the same construction as the
    *  WebGL grid, without custom varyings). */
   private buildSim(t: Tsl): void {
+    const wg = webgpu();
     const uSunAir = t.uniform(waveUniforms.uSunAir.value) as unknown as NodeObject;
     const uDepth = this.depth;
     const uTile = t.uniform(WAVE_TILE);
@@ -176,7 +172,7 @@ export class WebGpuCaustics {
       const eta = t.float(1 / (SEAWATER_IOR[c] as number)) as unknown as NodeObject;
       const mask = new THREE.Vector3(c === 0 ? 1 : 0, c === 1 ? 1 : 0, c === 2 ? 1 : 0);
 
-      const material = new t.NodeMaterial();
+      const material = new wg.NodeMaterial();
       material.vertexNode = t.Fn(() => {
         const p = t.positionGeometry.xz as unknown as NodeObject;
         const g = waveGrad(p) as unknown as NodeObject;

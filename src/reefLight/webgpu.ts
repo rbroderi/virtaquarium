@@ -10,21 +10,19 @@
 //     lighting model) differ only in that the small bounce term is not cavity-occluded.
 // Screen AO (uRLAOOn) stays off under WebGPU (ScreenAO is WebGL-only), but the term is kept for parity.
 import * as THREE from 'three';
-import type {
-  LightingModelDirectInput, LightingModelIndirectInput, Node, NodeBuilder,
-  ShaderNodeObject, StackNode, TextureNode,
-} from 'three/webgpu';
-import { tsl, type Tsl } from '../webgpu/tsl.js';
+import {
+  tsl, webgpu,
+  type LightingModelDirectInput, type NodeBuilder,
+  type NodeObject, type TextureNodeObject,
+  type Tsl, type Webgpu,
+} from '../webgpu/tsl.js';
 import { reefLightUniforms } from './uniforms.js';
 import { causticFactorNode } from '../water/webgpuCaustics.js';
 
-type NodeObject = ShaderNodeObject<Node>;
-type TextureNodeObject = ShaderNodeObject<TextureNode>;
+/** A lighting model the reef light wraps (the material's own: stock, translucency or the fish's). */
+type InnerLightingModel = InstanceType<Webgpu['PhysicalLightingModel']>;
 
 const RL_Y = [0.2126, 0.7152, 0.0722] as const;
-
-/** A lighting model the reef light wraps (the material's own: stock, translucency or the fish's). */
-type InnerLightingModel = InstanceType<Tsl['PhysicalLightingModel']>;
 
 /** The live uniform nodes; the bake/cache replaces the map textures and mutates the rest in place. */
 interface GpuReefLightState {
@@ -91,7 +89,7 @@ function getGpuReefLight(t: Tsl): GpuReefLightState {
 function rlAtlas(t: Tsl, tex: NodeObject, layer: number): (p01: NodeObject, res: NodeObject, tiles: NodeObject) => NodeObject {
   const layerI = t.int(layer);
   const sampler = tex as unknown as TextureNodeObject;
-  const sample = (uv: NodeObject): NodeObject => (sampler.uv(uv) as unknown as TextureNodeObject).depth(layerI);
+  const sample = (uv: NodeObject): NodeObject => (sampler.sample(uv) as unknown as TextureNodeObject).depth(layerI);
   return t.Fn(([p01, res, tiles]: [NodeObject, NodeObject, NodeObject]) => {
     const c = p01.mul(res).sub(t.float(0.5));
     const z0 = t.floor(c.z).clamp(t.float(0), res.z.sub(t.float(1)));
@@ -107,21 +105,20 @@ function rlAtlas(t: Tsl, tex: NodeObject, layer: number): (p01: NodeObject, res:
 }
 
 /** A PhysicalLightingModel wrapper that applies the baked reef light around `inner`. */
-function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightingModel {
+function reefLightLightingModel(t: Tsl, wg: Webgpu, inner: InnerLightingModel): InnerLightingModel {
   const s = getGpuReefLight(t);
   const [atlasA, atlasB, atlasC] = [rlAtlas(t, s.grid, 0), rlAtlas(t, s.grid, 1), rlAtlas(t, s.grid, 2)];
   const scrTex = s.scr as unknown as TextureNodeObject;
   const aoTex = s.ao as unknown as TextureNodeObject;
   const scrSample = (uv: NodeObject, layer: number): NodeObject =>
-    (scrTex.uv(uv) as unknown as TextureNodeObject).depth(t.int(layer));
+    (scrTex.sample(uv) as unknown as TextureNodeObject).depth(t.int(layer));
   const caustic = causticFactorNode(t);
-  class ReefLightLightingModel extends t.PhysicalLightingModel {
+  class ReefLightLightingModel extends wg.PhysicalLightingModel {
     private rlSky: NodeObject = t.float(1).toVar('rlSky');
     private rlBounce: NodeObject = t.vec3(0).toVar('rlBounce');
     private rlSun: NodeObject = t.float(1).toVar('rlSun');
 
-    override start(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
-      inner.start(input, stack, builder);
+    override start(builder: NodeBuilder): void {
       const pw = t.positionWorld as unknown as NodeObject;
       // Read the world normal HERE, in the function's own flow. transformedNormalWorld is a lazy TSL
       // var: its declaration lands at the function top but its assignment is emitted at the first
@@ -129,11 +126,13 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
       // nothing ever initialised it, so the environment IBL's getFace(), the shadow bias term and the
       // grid lookups all saw (0,0,0): the whole reef went dark under the sun and rendered the env's
       // seam colour. Reading it before the branch emits the assignment outside it.
-      const nw = (t.transformedNormalWorld as unknown as NodeObject).toVar('rlWorldNormal');
+      const nw = (t.normalWorld as unknown as NodeObject).toVar('rlWorldNormal');
       // The on/off gate is uniform (uRLOn), so this branch is fine; inside it WGSL still forbids
       // textureSample in divergent (per-pixel) control flow, so every sample is taken unconditionally
       // at clamped coordinates and the branch results are selected afterwards. Sampling outside the
       // gate with the bake off also wedged the D3D12 device, so keep all of it inside the uniform If.
+      // This runs BEFORE inner.start(): the renderer now evaluates the direct lights inside start(),
+      // and direct() below reads rlSun, so it must be ready before the lights are set up.
       const on = s.uRLOn.greaterThan(t.float(0.5));
       t.If(on, () => {
       const p = pw.add(nw.mul(s.uRLCell.mul(t.float(1.5)))).sub(s.uRLMin).div(s.uRLSize) as unknown as NodeObject;
@@ -161,7 +160,7 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
       const inScreen = s.uRLScrOn.greaterThan(t.float(0.5)).and(clip.w.greaterThan(t.float(0)))
         .and(ndcUV.x.greaterThan(t.float(0))).and(ndcUV.x.lessThan(t.float(1)))
         .and(ndcUV.y.greaterThan(t.float(0))).and(ndcUV.y.lessThan(t.float(1)))
-        .and(t.abs(b.g.sub(dist)).lessThan(t.float(0.03).add(t.float(0.004).mul(dist))));
+        .and((t.abs(b.g.sub(dist)) as unknown as NodeObject).lessThan(t.float(0.03).add(t.float(0.004).mul(dist))));
       const useGrid = insideBox.and(inScreen.not());
       this.rlSky.assign(t.select(inScreen, a.a, t.select(useGrid, skyGrid, t.float(1))));
       this.rlBounce.assign(t.select(inScreen, a.rgb, t.select(useGrid, bounceGrid, t.vec3(0))));
@@ -169,36 +168,37 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
       });
       // Screen AO: off under WebGPU (ScreenAO is WebGL-only), kept for parity.
       t.If(s.uRLAOOn.greaterThan(t.float(0.5)), () => {
-        const ao = aoTex.uv(t.screenUV).r;
+        const ao = aoTex.sample(t.screenUV).r;
         this.rlSky.assign(this.rlSky.mul(ao));
         this.rlBounce.assign(this.rlBounce.mul(ao));
       });
+
+      // inner.start() builds the direct lights (calling direct() below) and runs inner.indirect(),
+      // which accumulates the ambient into reflectedLight.
+      inner.start(builder);
+
+      // REEF_LIGHT_APPLY (reefLight/glsl.ts): the ambient is occluded by rlSky and the bounce added; the
+      // specular occlusion commutes with the material AO, so the ordering is exact.
+      const reflected = (builder.context as unknown as { reflectedLight: { indirectDiffuse: NodeObject; indirectSpecular: NodeObject } }).reflectedLight;
+      const id = reflected.indirectDiffuse;
+      id.assign(id.mul(this.rlSky).add(t.diffuseColor.rgb.mul(this.rlBounce).mul(s.uRLLight)));
+      reflected.indirectSpecular.assign(reflected.indirectSpecular.mul(t.mix(t.float(1), this.rlSky, t.float(0.8))));
     }
 
-    override direct(input: LightingModelDirectInput, stack: StackNode, builder: NodeBuilder): void {
+    override direct(input: LightingModelDirectInput, builder: NodeBuilder): void {
       // Baked soft shadow on the key light only (rlSunFor): the LED fills stay unshadowed.
-      const dirWorld = t.cameraWorldMatrix.mul(t.vec4(input.lightDirection, t.float(0))).xyz.normalize() as unknown as NodeObject;
+      const dirWorld = t.cameraWorldMatrix.mul(t.vec4(input.lightDirection as unknown as NodeObject, t.float(0))).xyz.normalize() as unknown as NodeObject;
       const isSun = dirWorld.dot(s.uRLSunDir).greaterThan(t.float(0.999));
       // The simulated caustic irradiance (water/materials.ts causticAt(vCW) on WebGL): applied to every
       // directional light before the BRDF, alongside the baked soft shadow.
       input.lightColor = (input.lightColor as unknown as NodeObject)
         .mul(caustic(t.positionWorld as unknown as NodeObject))
         .mul(t.select(isSun, this.rlSun, t.float(1)));
-      inner.direct(input, stack, builder);
+      inner.direct(input, builder);
     }
 
-    override indirect(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
-      inner.indirect(input, stack, builder);
-      // REEF_LIGHT_APPLY (reefLight/glsl.ts): the ambient is occluded by rlSky and the bounce added; the
-      // specular occlusion commutes with the material AO, so the ordering is exact.
-      const id = input.reflectedLight.indirectDiffuse as unknown as NodeObject;
-      id.assign(id.mul(this.rlSky).add(t.diffuseColor.rgb.mul(this.rlBounce).mul(s.uRLLight)));
-      const is = input.reflectedLight.indirectSpecular as unknown as NodeObject;
-      is.assign(is.mul(t.mix(t.float(1), this.rlSky, t.float(0.8))));
-    }
-
-    override finish(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
-      inner.finish(input, stack, builder);
+    override finish(builder: NodeBuilder): void {
+      inner.finish(builder);
     }
   }
   return new ReefLightLightingModel();
@@ -207,14 +207,15 @@ function reefLightLightingModel(t: Tsl, inner: InnerLightingModel): InnerLightin
 /** Installs the baked reef light on a lit material's node lighting model (WebGL path: addCaustics). */
 export function installReefLight<M extends THREE.Material>(mat: M): M {
   const t = tsl();
+  const wg = webgpu();
   const nodeMat = mat as unknown as {
     setupLightingModel?: () => InnerLightingModel;
     customProgramCacheKey: () => string;
   };
   const prev = nodeMat.setupLightingModel?.bind(mat);
   nodeMat.setupLightingModel = () => {
-    const inner = prev ? prev() : new t.PhysicalLightingModel();
-    return reefLightLightingModel(t, inner);
+    const inner = prev ? prev() : new wg.PhysicalLightingModel();
+    return reefLightLightingModel(t, wg, inner);
   };
   const prevKey = nodeMat.customProgramCacheKey.bind(mat);
   nodeMat.customProgramCacheKey = () => prevKey() + '|reeflight';

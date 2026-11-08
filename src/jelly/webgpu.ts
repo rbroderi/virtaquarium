@@ -3,13 +3,10 @@
 // node materials: each vertex deformation is a positionNode (the group's scale is applied after), and
 // each rim/backlight colour is a fragmentNode (additive, alpha 1, exactly like gl_FragColor).
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
-import { type Tsl } from '../webgpu/tsl.js';
+import { webgpu, type FloatUniformNode, type Node, type NodeObject, type Tsl, type Vec3UniformNode, type Webgpu } from '../webgpu/tsl.js';
 
-type NodeObject = ShaderNodeObject<Node>;
-type FloatNode = ShaderNodeObject<UniformNode<number>>;
-type Vec3Node = ShaderNodeObject<UniformNode<THREE.Vector3>>;
-type ColourNode = ShaderNodeObject<UniformNode<THREE.Color>>;
+type FloatNode = FloatUniformNode;
+type Vec3Node = Vec3UniformNode;
 
 /** Beam attenuation per unit (shaders.ts WATER_C: metres x METRES_PER_UNIT x 1.6 path gain). */
 const WATER_C = [0.6 * 0.125 * 1.6, 0.17 * 0.125 * 1.6, 0.12 * 0.125 * 1.6] as const;
@@ -24,8 +21,8 @@ export interface JellyNodes {
   readonly uTime: FloatNode;
   readonly uSeed: FloatNode;
   readonly uLight: FloatNode;
-  readonly uTint: ColourNode;
-  readonly uGonad: ColourNode;
+  readonly uTint: NodeObject;
+  readonly uGonad: NodeObject;
 }
 
 /** The per-jelly uniform bag (jelly.ts JellyUniforms, written every frame). */
@@ -122,8 +119,8 @@ function bellPositionNode(t: Tsl, n: JellyNodes, uInner: number): Node {
     const uv = t.uv() as unknown as NodeObject;
     const s = uv.y;
     const r = t.length(pos.xz);
-    const rs = bellShape(r, pos.y, s).toVar();
-    const dxz = t.select(r.greaterThan(t.float(1e-5)), pos.xz.div(r), t.vec2(0));
+    const rs = bellShape(r, pos.y, s).toVar() as NodeObject;
+    const dxz = t.select(r.greaterThan(t.float(1e-5)), pos.xz.div(r), t.vec2(0)) as NodeObject;
     const a = uv.x.mul(t.float(6.2831853));
     rs.x.assign(rs.x.mul(marginCut(uv.x, s)));
     rs.y.assign(rs.y.add(n.uR.mul(t.float(0.035)).mul(t.smoothstep(t.float(0.85), t.float(1), s))
@@ -269,14 +266,15 @@ function armFragmentNode(t: Tsl, n: JellyNodes): Node {
 
 /** Builds the five additive node materials for one jelly (bell, subumbrella, tentacles, four arms). */
 export function makeGpuJellyMaterials(t: Tsl, u: JellyUniformBag): {
-  readonly bell: InstanceType<Tsl['NodeMaterial']>;
-  readonly sub: InstanceType<Tsl['NodeMaterial']>;
-  readonly tent: InstanceType<Tsl['NodeMaterial']>;
-  readonly arms: InstanceType<Tsl['NodeMaterial']>;
+  readonly bell: InstanceType<Webgpu['NodeMaterial']>;
+  readonly sub: InstanceType<Webgpu['NodeMaterial']>;
+  readonly tent: InstanceType<Webgpu['NodeMaterial']>;
+  readonly arms: InstanceType<Webgpu['NodeMaterial']>;
 } {
+  const wg = webgpu();
   const n = jellyNodes(t, u);
-  const mat = (positionNode: Node, fragmentNode: Node): InstanceType<Tsl['NodeMaterial']> => {
-    const m = new t.NodeMaterial();
+  const mat = (positionNode: Node, fragmentNode: Node): InstanceType<Webgpu['NodeMaterial']> => {
+    const m = new wg.NodeMaterial();
     m.positionNode = positionNode;
     m.fragmentNode = fragmentNode;
     Object.assign(m, ADDITIVE);
@@ -291,7 +289,8 @@ export function makeGpuJellyMaterials(t: Tsl, u: JellyUniformBag): {
 }
 
 /** The jelly tank's backdrop: a light panel behind and above, falling off to navy (shaders.ts). */
-export function makeGpuJellyBackdrop(t: Tsl): THREE.Mesh<THREE.SphereGeometry, InstanceType<Tsl['NodeMaterial']>> {
+export function makeGpuJellyBackdrop(t: Tsl): THREE.Mesh<THREE.SphereGeometry, InstanceType<Webgpu['NodeMaterial']>> {
+  const wg = webgpu();
   const uLight = t.uniform(1);
   const uniforms = { uBase: { value: new THREE.Color(1, 1, 1) }, uLight: { value: 1 } };
   Object.defineProperty(uniforms.uLight, 'value', {
@@ -299,7 +298,7 @@ export function makeGpuJellyBackdrop(t: Tsl): THREE.Mesh<THREE.SphereGeometry, I
     set: (v: number): void => { uLight.value = v; },
     configurable: true, enumerable: true,
   });
-  const mat = new t.NodeMaterial();
+  const mat = new wg.NodeMaterial();
   mat.fragmentNode = t.Fn(() => {
     // d points from the eye to the dome (shaders.ts: normalize(vW - cameraPosition)), so the glow sits
     // behind and above the tank rather than mirrored and below.

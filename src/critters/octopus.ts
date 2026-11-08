@@ -11,6 +11,7 @@ import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js'
 import { OCTO_SAC } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, type ShaderHook, type NodeHook } from './shared.js';
+import type { NodeObject } from '../webgpu/tsl.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
@@ -178,10 +179,10 @@ export class Octopus implements Critter {
 
   /** TSL form of the shade hook (SHADE_FRAG): tint the mapped albedo towards the resting shade. */
   private shadeNodeHook(): NodeHook {
-    return (t) => {
+    return (t, mat) => {
       const uShade = scalarNode(t, this.u.uShade);
       const colorNode = t.Fn(() =>
-        t.materialColor.rgb.mul(t.mix(t.vec3(1), t.vec3(0.62, 0.55, 0.5), uShade)))();
+        (t.materialReference('color', 'color', mat) as unknown as NodeObject).rgb.mul(t.mix(t.vec3(1), t.vec3(0.62, 0.55, 0.5), uShade)))();
       return { colorNode };
     };
   }

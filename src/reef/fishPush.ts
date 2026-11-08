@@ -4,8 +4,7 @@
 // bends with the water; this adds a horizontal push on top, so the two compose in the vertex shader.
 import * as THREE from 'three';
 import { clamp } from '../util.js';
-import { tsl } from '../webgpu/tsl.js';
-import type { Node, ShaderNodeObject, UniformArrayNode, UniformNode } from 'three/webgpu';
+import { tsl, type FloatUniformNode, type Node, type NodeObject, type UniformArrayNode } from '../webgpu/tsl.js';
 
 /** How many fish the shader considers at once (the uniform array size). */
 export const MAX_FISH = 16;
@@ -203,9 +202,9 @@ export function updateFishPush(world: FishPushWorld, camera: FishPushCamera, dt:
 // --- WebGPU (TSL) counterparts ---
 
 interface FishPushNodes {
-  readonly uFishPos: ShaderNodeObject<UniformArrayNode>;
-  readonly uFishVel: ShaderNodeObject<UniformArrayNode>;
-  readonly uFishCount: ShaderNodeObject<UniformNode<number>>;
+  readonly uFishPos: UniformArrayNode<'vec4'>;
+  readonly uFishVel: UniformArrayNode<'vec4'>;
+  readonly uFishCount: FloatUniformNode;
 }
 
 let fishPushNodesCache: FishPushNodes | null = null;
@@ -233,8 +232,8 @@ export function fishPushNodes(): FishPushNodes {
     enumerable: true,
   });
   fishPushNodesCache = {
-    uFishPos: t.uniformArray(vec4UniformArray(fishUniforms.uFishPos) as unknown as THREE.Vector4[], 'vec4'),
-    uFishVel: t.uniformArray(vec4UniformArray(fishUniforms.uFishVel) as unknown as THREE.Vector4[], 'vec4'),
+    uFishPos: t.uniformArray(vec4UniformArray(fishUniforms.uFishPos) as unknown as THREE.Vector4[], 'vec4' as const),
+    uFishVel: t.uniformArray(vec4UniformArray(fishUniforms.uFishVel) as unknown as THREE.Vector4[], 'vec4' as const),
     uFishCount: count,
   };
   return fishPushNodesCache;
@@ -246,7 +245,7 @@ export function fishPushNodes(): FishPushNodes {
  * model's own space. inst0..inst3 are the instance matrix's four columns (the WebGL shader reads
  * instanceMatrix); pass identity columns for a non-instanced mesh.
  */
-export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>, inst0: ShaderNodeObject<Node>, inst1: ShaderNodeObject<Node>, inst2: ShaderNodeObject<Node>, inst3: ShaderNodeObject<Node>): Node {
+export function fishPushBend(p: NodeObject, h: NodeObject, inst0: NodeObject, inst1: NodeObject, inst2: NodeObject, inst3: NodeObject): Node {
   const t = tsl();
   const { uFishPos, uFishVel, uFishCount } = fishPushNodes();
   return t.Fn(() => {
@@ -258,7 +257,7 @@ export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node
     // fishPushWorld (FISH_PUSH_HEADER): the loop's break/continue are folded into gates so the TSL
     // Loop needs no control flow.
     const push = t.vec3(0).toVar();
-    t.Loop({ start: t.int(0), end: t.int(MAX_FISH), type: 'int', condition: '<' }, ({ i }: { i: ShaderNodeObject<Node> }) => {
+    t.Loop({ start: t.int(0), end: t.int(MAX_FISH), type: 'int', condition: '<' }, ({ i }: { i: NodeObject }) => {
       const fp = uFishPos.element(i);
       const fv = uFishVel.element(i);
       const s = fv.w;
@@ -276,8 +275,8 @@ export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node
     // Bend in world space, keeping each vertex its distance from the plant's base (FISH_PUSH_APPLY):
     // fpM is the full model*instance rotation-scale, so its column scales are the plant's world size and
     // the renormalisation cannot mistake a blade's width for its length.
-    const fpM = t.mat3(t.modelWorldMatrix).mul(t.mat3(inst0.xyz, inst1.xyz, inst2.xyz));
-    const fpC0 = t.element(fpM, 0), fpC1 = t.element(fpM, 1), fpC2 = t.element(fpM, 2);
+    const fpM = t.mat3(t.modelWorldMatrix).mul(t.mat3(inst0.xyz, inst1.xyz, inst2.xyz)) as unknown as NodeObject;
+    const fpC0 = t.element(fpM, 0) as NodeObject, fpC1 = t.element(fpM, 1) as NodeObject, fpC2 = t.element(fpM, 2) as NodeObject;
     const fs = t.vec3(t.length(fpC0), t.length(fpC1), t.length(fpC2)).max(t.vec3(1e-3));
     const mag = t.length(push);
     const capped = push.mul(t.min(t.float(1), fs.y.mul(t.float(BEND_CHORD)).div(t.max(mag, t.float(1e-5)))));
@@ -287,7 +286,7 @@ export function fishPushBend(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node
     const bent = fpOff.add(capped);
     const rl = t.length(bent);
     const off = t.select(rl.greaterThan(t.float(1e-5)), bent.mul(r.div(t.max(rl, t.float(1e-5)))), fpOff);
-    const outLocal = t.transpose(rot).mul(off).div(fs);
+    const outLocal = (t.transpose(rot).mul(off) as unknown as NodeObject).div(fs);
     return t.select(mag.greaterThan(t.float(1e-5)), outLocal, local);
   })();
 }
@@ -312,7 +311,7 @@ export function addSwayInstanceAttrs(inst: THREE.InstancedMesh): void {
 /** A storage-buffer node over an InstancedMesh's instance matrix (the same buffer InstanceNode reads),
  *  indexed by the built-in instance index. A material used by exactly one mesh can read its instance
  *  matrix this way without spending four vertex-buffer slots on aInst0..aInst3. */
-export function instanceMatrixNode(inst: THREE.InstancedMesh): ShaderNodeObject<Node> {
+export function instanceMatrixNode(inst: THREE.InstancedMesh): NodeObject {
   const t = tsl();
-  return t.buffer(inst.instanceMatrix.array as Float32Array, 'mat4', inst.count).element(t.instanceIndex);
+  return (t.buffer(inst.instanceMatrix.array as Float32Array, 'mat4' as const, inst.count) as unknown as NodeObject).element(t.instanceIndex) as NodeObject;
 }

@@ -6,17 +6,18 @@
 // with an override material like the WebGL velocity pass). The composite outputs linear radiance;
 // PostProcessing's renderOutput() tone-maps and encodes to sRGB exactly like the WebGL chain.
 import * as THREE from 'three';
-import type { Node, ShaderNodeObject, UniformNode } from 'three/webgpu';
-import type { WebGPURenderer } from 'three/webgpu';
-import { tsl, type Tsl } from '../webgpu/tsl.js';
+import {
+  tsl, webgpu,
+  type ColorUniformNode, type FloatUniformNode, type Mat4UniformNode, type NodeObject,
+  type PassNode, type ShaderNodeObject, type Tsl, type Vec3UniformNode, type Webgpu, type WebGPURenderer,
+} from '../webgpu/tsl.js';
 import { getGpuCausticState, shaftCausticNode } from './webgpuCaustics.js';
 import { GpuPhotoCamera, type GpuPhotoOptions } from '../webgpu/photo.js';
 import { METRES_PER_UNIT, SURFACE_Y, GLASS_Z } from './medium.js';
 import type { ShaftLight } from './renderer.js';
 
-type NodeObject = ShaderNodeObject<Node>;
-/** A pass texture node: its `.uv()` re-samples the same texture (keeping the pass-node link). */
-type UvSamplerNode = NodeObject & { uv(uv: NodeObject): NodeObject };
+/** A pass texture node: its `.sample()` re-samples the same texture (keeping the pass-node link). */
+type UvSamplerNode = NodeObject & { sample(uv: NodeObject): NodeObject };
 
 const MSAA_SAMPLES = 4;
 const DEFAULT_SCATTER_PER_METRE = 0.35;
@@ -59,7 +60,7 @@ export interface WebGpuWaterPostOptions {
 
 /** The WebGPU counterpart of WaterRenderer: the HDR scene pass and the shaft/motion-blur composite. */
 export class WebGpuWaterPost {
-  readonly scenePass: ShaderNodeObject<import('three/webgpu').PassNode>;
+  readonly scenePass: ShaderNodeObject<PassNode>;
   /** The raw (perspective NDC) depth texture node, read by the photo and AO passes. */
   readonly depthNode: NodeObject;
   /** The linear HDR composite (shafts + motion blur), before tone mapping. */
@@ -69,18 +70,18 @@ export class WebGpuWaterPost {
   /** Shutter time / step time; 0 turns the motion blur off. Set by the caller. */
   blurScale = 0;
 
-  private readonly post: InstanceType<Tsl['PostProcessing']>;
-  private readonly uBlur: ShaderNodeObject<UniformNode<number>>;
-  private readonly uSunColor: ShaderNodeObject<UniformNode<THREE.Color>>;
-  private readonly uProjInv: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
-  private readonly uViewInv: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
-  private readonly uCamPos: ShaderNodeObject<UniformNode<THREE.Vector3>>;
+  private readonly post: InstanceType<Webgpu['RenderPipeline']>;
+  private readonly uBlur: FloatUniformNode;
+  private readonly uSunColor: ColorUniformNode;
+  private readonly uProjInv: Mat4UniformNode;
+  private readonly uViewInv: Mat4UniformNode;
+  private readonly uCamPos: Vec3UniformNode;
   private readonly size = new THREE.Vector2();
   private readonly velocityTarget: THREE.RenderTarget | null = null;
-  private readonly velocityMaterial: InstanceType<Tsl['NodeMaterial']> | null = null;
+  private readonly velocityMaterial: InstanceType<Webgpu['NodeMaterial']> | null = null;
   /** Previous-vertex uniforms of the velocity pass (mirrors the WebGL VELOCITY_VERT uniforms). */
-  private readonly uPrevModel: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
-  private readonly uPrevVP: ShaderNodeObject<UniformNode<THREE.Matrix4>>;
+  private readonly uPrevModel: Mat4UniformNode;
+  private readonly uPrevVP: Mat4UniformNode;
   /** Each tracked model's pose at the start of the last step, and the camera's previous view-projection. */
   private readonly prevWorld = new WeakMap<THREE.Object3D, THREE.Matrix4>();
   private readonly prevViewProjection = new THREE.Matrix4();
@@ -93,7 +94,8 @@ export class WebGpuWaterPost {
     { scatterPerMetre = DEFAULT_SCATTER_PER_METRE, motionBlur = false, photo = null }: WebGpuWaterPostOptions = {},
   ) {
     const t = tsl();
-    this.scenePass = t.pass(scene, camera, { samples: MSAA_SAMPLES }) as ShaderNodeObject<import('three/webgpu').PassNode>;
+    const wg = webgpu();
+    this.scenePass = t.pass(scene, camera, { samples: MSAA_SAMPLES }) as ShaderNodeObject<PassNode>;
     this.depthNode = this.scenePass.getTextureNode('depth');
     const colorNode = this.scenePass.getTextureNode('output') as UvSamplerNode;
 
@@ -101,15 +103,15 @@ export class WebGpuWaterPost {
     const uPrevVP = this.uPrevVP = t.uniform(new THREE.Matrix4());
     if (motionBlur) {
       this.velocityTarget = new THREE.RenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: true });
-      const velocityMaterial = this.velocityMaterial = new t.NodeMaterial();
+      const velocityMaterial = this.velocityMaterial = new wg.NodeMaterial();
       velocityMaterial.side = THREE.DoubleSide;
       // The same velocity as the WebGL VELOCITY_VERT / VELOCITY_FRAG: clip positions now and at the previous
       // step (uPrevModel / uPrevVP, set per mesh draw from track()), motion in texture units, and this
       // surface's NDC depth (so the composite blurs only where the fish is what's seen). The built-in
       // `velocity` node cannot be used here: it advances its previous matrices only when the pass renders,
       // but the checks step the simulation many times per present, so it would blend against a stale pose.
-      const vCur = t.cameraProjectionMatrix.mul(t.modelViewMatrix).mul(t.positionLocal).varying();
-      const vPrev = uPrevVP.mul(uPrevModel).mul(t.positionLocal).varying();
+      const vCur = t.cameraProjectionMatrix.mul(t.modelViewMatrix).mul(t.positionLocal).toVarying();
+      const vPrev = uPrevVP.mul(uPrevModel).mul(t.positionLocal).toVarying();
       velocityMaterial.fragmentNode = t.Fn(() => {
         const vel = vCur.xy.div(vCur.w).sub(vPrev.xy.div(vPrev.w)).mul(t.float(0.5));
         const depth = vCur.z.div(vCur.w);
@@ -147,12 +149,12 @@ export class WebGpuWaterPost {
       // the shutter time (a video camera's ~1/100 s), centred on the pixel. The velocity pass is
       // depth-tested against itself, so its marker (w) already isolates the visible fish surface.
       if (motionBlur) {
-        const vel = velocityTex!.uv(uv);
+        const vel = velocityTex!.sample(uv);
         const v = vel.xy.mul(uBlur);
         const acc = t.vec3(0).toVar();
         t.Loop(BLUR_TAPS, ({ i }: { i: NodeObject }) => {
           const offset = v.mul(t.float(i).div(t.float(BLUR_TAPS - 1)).sub(t.float(0.5)));
-          acc.addAssign(colorNode.uv(uv.add(offset)).xyz);
+          acc.addAssign(colorNode.sample(uv.add(offset)).xyz);
         });
         const moving = vel.w.greaterThan(t.float(0.5))
           .and(t.dot(v, v).greaterThan(t.float(1e-8)))
@@ -192,7 +194,7 @@ export class WebGpuWaterPost {
         });
       });
       const phase = t.float(0.8).mul(phaseFn(t.dot(uCauR0, rd.negate()), t.float(0.75))).add(t.float(0.2).div(t.float(PI4)));
-      acc.mulAssign(uScatter).mulAssign(phase).mulAssign(uSunColor);
+      (acc as unknown as NodeObject).mulAssign(uScatter).mulAssign(phase).mulAssign(uSunColor);
 
       return t.vec4(t.max(col.add(acc.mul(WB)), t.vec3(0)), t.float(1));
     })();
@@ -203,7 +205,7 @@ export class WebGpuWaterPost {
       const compositeTex = t.convertToTexture(this.compositeNode) as unknown as NodeObject;
       this.photo = new GpuPhotoCamera(compositeTex, this.depthNode, photo);
     }
-    this.post = new t.PostProcessing(renderer, this.photo ? this.photo.outputNode : this.compositeNode);
+    this.post = new wg.RenderPipeline(renderer, this.photo ? this.photo.outputNode : this.compositeNode);
   }
 
   /** Publish the current sun colour (times its intensity), as the shaft pass sees it. */

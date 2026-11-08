@@ -10,9 +10,8 @@ import { addSway, stdMat } from './materials.js';
 import { fishPushBend } from './fishPush.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { color } from './geometry.js';
-import { gpuActive, tsl, type Tsl } from '../webgpu/tsl.js';
+import { gpuActive, tsl, webgpu, type Node, type NodeObject, type Webgpu } from '../webgpu/tsl.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
-import type { Node, ShaderNodeObject } from 'three/webgpu';
 
 const SEGMENTS = 10;
 
@@ -125,8 +124,6 @@ export function grassMaterial(): THREE.Material {
 
 // --- WebGPU (TSL) grass ---
 
-type NodeObject = ShaderNodeObject<Node>;
-
 /** The blade's per-instance fields: the colour the WebGL shader got from instanceColor, and the
  *  instance matrix columns the sway/fish push read. builder.ts fills them instead of setColorAt. */
 export function grassInstanceAttrs(inst: THREE.InstancedMesh, tints: Float32Array): void {
@@ -194,7 +191,7 @@ function grassPositionNode(): Node {
 }
 
 /** The FRAG_COLOUR patch: worn edges (discard), sheath/brown/green variation and epiphyte specks. */
-function grassColorNode(): Node {
+function grassColorNode(): NodeObject {
   const t = tsl();
   const hash: (c: NodeObject) => NodeObject = t.Fn(([c]: [NodeObject]) =>
     t.fract(t.sin(t.dot(c, t.vec2(127.1, 311.7))).mul(43758.5453))) as unknown as (c: NodeObject) => NodeObject;
@@ -242,10 +239,10 @@ function grassColorNode(): Node {
 }
 
 /** The grass under WebGPU: the same blade shape + colour, in TSL (WebGPURenderer never runs the GLSL). */
-function grassNodeMaterial(): InstanceType<Tsl['MeshStandardNodeMaterial']> {
-  const t = tsl();
-  const mat = new t.MeshStandardNodeMaterial({ roughness: 0.55, side: THREE.DoubleSide });
+function grassNodeMaterial(): InstanceType<Webgpu['MeshStandardNodeMaterial']> {
+  const wg = webgpu();
+  const mat = new wg.MeshStandardNodeMaterial({ roughness: 0.55, side: THREE.DoubleSide });
   mat.positionNode = grassPositionNode();
   mat.colorNode = grassColorNode();
-  return installReefLight(mat) as InstanceType<Tsl['MeshStandardNodeMaterial']>;
+  return installReefLight(mat) as InstanceType<Webgpu['MeshStandardNodeMaterial']>;
 }

@@ -8,9 +8,9 @@ import {
 } from '../water.js';
 import { underwaterBackgroundNode, underwaterFogNode } from '../water/webgpuMedium.js';
 import { makeGpuEnvironment } from '../water/webgpuBackdrop.js';
-import { causticDirectionalLightNode, WebGpuCaustics } from '../water/webgpuCaustics.js';
+import { WebGpuCaustics } from '../water/webgpuCaustics.js';
 import { WebGpuWaterPost } from '../water/webgpuPost.js';
-import { loadTsl } from '../webgpu/tsl.js';
+import { loadWebgpu } from '../webgpu/tsl.js';
 import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
 import { setView, panAt } from '../view.js';
 import { PhotoCamera } from '../photo.js';
@@ -142,7 +142,7 @@ export class StageBuilder {
     renderer.toneMappingExposure = BASE_EXPOSURE * this.options.tone.gain;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     return renderer;
   }
 
@@ -150,20 +150,13 @@ export class StageBuilder {
   private async webgpuRenderer(): Promise<WebGPURenderer | null> {
     if (typeof navigator === 'undefined' || !('gpu' in navigator) || !navigator.gpu) return null;
     try {
-      const wg = await loadTsl();
+      const wg = await loadWebgpu();
       const renderer = new wg.WebGPURenderer({
         canvas: this.canvas, antialias: true, powerPreference: 'high-performance',
       });
       await renderer.init();
-      // three/webgpu is a self-contained build, so its node library is keyed by that build's light
-      // classes; register the core-three light classes (the scene graph's) so the lights actually
-      // light the auto-converted node materials instead of being skipped as "not found".
-      renderer.library.addLight(causticDirectionalLightNode(wg), THREE.DirectionalLight);
-      renderer.library.addLight(wg.HemisphereLightNode, THREE.HemisphereLight);
-      renderer.library.addLight(wg.PointLightNode, THREE.PointLight);
-      renderer.library.addLight(wg.SpotLightNode, THREE.SpotLight);
-      renderer.library.addLight(wg.AmbientLightNode, THREE.AmbientLight);
-      renderer.library.addLight(wg.RectAreaLightNode, THREE.RectAreaLight);
+      // r187's three/webgpu build auto-registers every standard light's node class on the shared core
+      // classes (Light.registerNode), so the scene graph's lights light the node materials with no work.
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
       renderer.setSize(window.innerWidth, window.innerHeight, false);
       renderer.toneMapping = this.options.tone.mapping;
@@ -228,10 +221,7 @@ export class StageBuilder {
 
 /** With the baked reef light, switch to soft variance shadows (before anything compiles). */
 export function useSoftFishShadows(stage: Stage): void {
-  // three r170's WebGPU VSM blur samples the depth shadow map through a filtering sampler, which strict
-  // adapters reject (invalid VSMVertical pipeline: no shadows at all, and hundreds of errors a second).
-  // WebGPU keeps PCF soft shadows instead.
-  if (stage.gpu) return;
+  // r187 rebuilt the WebGPU shadow-node path; variance soft shadows now work on both backends.
   stage.renderer.shadowMap.type = THREE.VSMShadowMap;
   stage.sun.shadow.radius = SOFT_SHADOW.radius;
   stage.sun.shadow.blurSamples = SOFT_SHADOW.blurSamples;

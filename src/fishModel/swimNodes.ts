@@ -8,18 +8,14 @@
 // variance, the normal-map edge fade and the grazing specular guard. The packed-map second channels are
 // read through iridescenceThicknessNode/aoNode.
 import * as THREE from 'three';
-import type {
-  LightingModelDirectInput, LightingModelIndirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode, UniformArrayNode, UniformNode,
-} from 'three/webgpu';
-import { tsl, type Tsl } from '../webgpu/tsl.js';
+import {
+  tsl, webgpu,
+  type LightingModelDirectInput, type Node, type NodeBuilder,
+  type FloatUniformNode, type Vec2UniformNode, type Vec3UniformNode, type PathArrayNode, type NodeObject,
+  type Tsl, type Webgpu,
+} from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { makeSwimMaterial, PATH_POINTS, type SwimUniforms, type Tissue } from './swimShader.js';
-
-type NodeObject = ShaderNodeObject<Node>;
-type FloatUniformNode = ShaderNodeObject<UniformNode<number>>;
-type Vec2UniformNode = ShaderNodeObject<UniformNode<THREE.Vector2>>;
-type Vec3UniformNode = ShaderNodeObject<UniformNode<THREE.Vector3>>;
-type PathArrayNode = ShaderNodeObject<UniformArrayNode>;
 
 /** Brightest linear radiance a fish fragment may write, as swimShader.ts's HDR_CLAMP. */
 const HDR_CLAMP = 4;
@@ -164,16 +160,16 @@ function swimCtx(t: Tsl, u: SwimNodes): SwimCtx {
     pectWave: (q, pBend, pWave) => {
       const r = t.length(q).div(pBend.z);
       return pWave.y.mul(pBend.z).mul(r).mul(r)
-        .mul(t.sin(pWave.x.add(t.float(PECT_WAVE_K).mul(t.atan2(q.y, t.max(q.x, 1e-4))))));
+        .mul(t.sin(pWave.x.add(t.float(PECT_WAVE_K).mul(t.atan(q.y, t.max(q.x, 1e-4))))));
     },
     pathFrame: (x) => {
       const f = t.clamp(t.float(0.5).sub(x).mul(23), 0, 22.999);
       const i = t.int(t.floor(f));
       const tt = f.sub(t.float(i));
-      const p1 = u.uPath.element(i);
-      const p2 = u.uPath.element(i.add(1));
-      const iPrev = t.max(i.sub(1), 0);
-      const iNext = t.min(i.add(2), PATH_POINTS - 1);
+      const p1 = u.uPath.element(i) as unknown as NodeObject;
+      const p2 = u.uPath.element(i.add(1)) as unknown as NodeObject;
+      const iPrev = t.max(i.sub(1) as unknown as NodeObject, 0);
+      const iNext = t.min(i.add(2) as unknown as NodeObject, PATH_POINTS - 1);
       const p0 = t.select(t.greaterThan(i, t.int(0)), u.uPath.element(iPrev), p2.mul(2).sub(p1));
       const p3 = t.select(t.lessThan(i, t.int(PATH_POINTS - 2)), u.uPath.element(iNext), p2.mul(2).sub(p1));
       const c1 = p2.sub(p0);
@@ -181,8 +177,8 @@ function swimCtx(t: Tsl, u: SwimNodes): SwimCtx {
       const c3 = p1.sub(p2).mul(3).add(p3).sub(p0);
       const P = p1.add(t.float(0.5).mul(tt).mul(c1.add(tt.mul(c2.add(tt.mul(c3))))));
       const T = t.negate(t.normalize(c1.add(tt.mul(c2.mul(2).add(c3.mul(3).mul(tt)))).add(t.vec3(1e-6, 0, 0))));
-      const up = t.mix(u.uPathUp.element(i), u.uPathUp.element(i.add(1)), tt);
-      const U = t.normalize(up.sub(T.mul(t.dot(up, T))).add(t.vec3(0, 1e-6, 0)));
+      const up = t.mix(u.uPathUp.element(i) as unknown as NodeObject, u.uPathUp.element(i.add(1)) as unknown as NodeObject, tt) as unknown as NodeObject;
+      const U = t.normalize(up.sub(T.mul(t.dot(up, T))).add(t.vec3(0, 1e-6, 0)) as unknown as NodeObject);
       return { P, T, U };
     },
   };
@@ -211,7 +207,7 @@ export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null =
     if (tissue?.erect && u.uErect) {
       const aErect = t.attribute('aErect', 'vec4');
       const e = t.min(u.uErect, t.float(2).sub(t.float(1.8).mul(u.uFold)));
-      const a = t.select(t.lessThan(e, 1), aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
+      const a = t.select(t.lessThan(e, 1) as unknown as NodeObject, aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
       const cs = t.cos(a), sn = t.sin(a);
       const d = p0.xy.sub(aErect.xy);
       erSpine = t.step(1e-5, t.abs(aErect.z));
@@ -307,7 +303,7 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
     if (tissue?.erect && u.uErect) {
       const aErect = t.attribute('aErect', 'vec4');
       const e = t.min(u.uErect, t.float(2).sub(t.float(1.8).mul(u.uFold)));
-      const a = t.select(t.lessThan(e, 1), aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
+      const a = t.select(t.lessThan(e, 1) as unknown as NodeObject, aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
       const cs = t.cos(a), sn = t.sin(a);
       const nx = cs.mul(n.x).sub(sn.mul(n.y));
       const ny = sn.mul(n.x).add(cs.mul(n.y));
@@ -320,7 +316,7 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
       const r = t.clamp(rest.x.div(u.uPBend.z), 0, 1);
       const dzdx = t.float(2).mul(u.uPBend.x).mul(r).mul(c.pectFlex(rest.y, u.uPBend));
       const dzdy = t.select(
-        t.lessThan(t.abs(rest.y), t.float(0.5).mul(u.uPBend.z)),
+        t.lessThan(t.abs(rest.y), t.float(0.5).mul(u.uPBend.z)) as unknown as NodeObject,
         t.negate(t.float(0.9).mul(u.uPBend.x).mul(r).mul(r)),
         t.float(0),
       );
@@ -365,7 +361,7 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
  *  wrapped diffusion are added to each directional light before the stock Lambert + GGX; specular
  *  anti-aliasing widens the roughness by the perturbed-normal variance (Tokuyoshi & Kaplanyan 2019),
  *  matching the GLSL patch after lights_physical_fragment. */
-function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['PhysicalLightingModel']> {
+function fishLightingModel(t: Tsl, wg: Webgpu, tissue: Tissue | null): InstanceType<Webgpu['PhysicalLightingModel']> {
   const body = tissue?.kind === 'body';
   const sigma = tissue ? (body ? t.vec3(0.38, 0.8, 1.05) : t.vec3(0.9, 1.4, 1.8)) : null;
   const wrap = tissue ? (body ? t.vec3(0.45, 0.22, 0.14) : t.vec3(0, 0, 0)) : null;
@@ -382,18 +378,18 @@ function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['Phy
     }
   }
 
-  class FishLightingModel extends t.PhysicalLightingModel {
+  class FishLightingModel extends wg.PhysicalLightingModel {
     /** The grazing specular guard's fade factor (swimShader.ts opaque_fragment patch). */
     private specularCover(): NodeObject {
-      const nvG = t.transformedNormalView.dot(t.positionViewDirection).saturate();
+      const nvG = t.normalView.dot(t.positionViewDirection).saturate();
       return t.smoothstep(t.float(0), t.float(0.15), nvG);
     }
 
-    override direct(input: LightingModelDirectInput, stack: StackNode, builder: NodeBuilder): void {
+    override direct(input: LightingModelDirectInput, builder: NodeBuilder): void {
       if (tissue && sigma && wrap && thick) {
         const L = input.lightDirection as unknown as NodeObject;
         const lc = input.lightColor as unknown as NodeObject;
-        const Nn = t.transformedNormalView;
+        const Nn = t.normalView;
         // Beer-Lambert transmission: red survives furthest, so thin parts glow warm when backlit.
         const Tt = t.exp(sigma.mul(thick).negate());
         const alb = t.diffuseColor.rgb;
@@ -412,25 +408,26 @@ function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['Phy
         const wrapped = t.vec3(ndl).add(wrap).div(wrap.add(1)).saturate().sub(ndl.saturate()).max(0);
         d.addAssign(alb.mul(irr).mul(wrapped).mul(leu));
       }
-      super.direct(input, stack, builder);
+      super.direct(input, builder);
       // Grazing specular guard: a silhouette pixel spans a long arc, so fade the main GGX lobe over the
       // outermost sliver (body highlights and scale detail at NdotV > 0.15 are untouched).
       (input.reflectedLight.directSpecular as unknown as NodeObject).mulAssign(this.specularCover());
     }
 
-    override indirect(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
-      super.indirect(input, stack, builder);
+    override indirect(builder: NodeBuilder): void {
+      super.indirect(builder);
       // The same grazing fade on the IBL lobe (a scalar multiply, so it commutes with the reef light's
       // later rlSky scaling of indirectSpecular).
-      (input.reflectedLight.indirectSpecular as unknown as NodeObject).mulAssign(this.specularCover());
+      const reflected = (builder.context as unknown as { reflectedLight: { indirectSpecular: NodeObject } }).reflectedLight;
+      reflected.indirectSpecular.mulAssign(this.specularCover());
     }
 
-    override finish(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
-      super.finish(input, stack, builder);
+    override finish(builder: NodeBuilder): void {
+      super.finish(builder);
       // swimShader.ts's opaque_fragment patch also guards against NaN/Inf and clamps the fish's outgoing
       // radiance to HDR_CLAMP, so one overbright texel (a rim firefly or an isolated normal-map peak)
       // cannot reach the shaft/motion-blur composite and bloom into a white speck.
-      const out = (input as unknown as { outgoingLight: NodeObject }).outgoingLight;
+      const out = (builder.context as unknown as { outgoingLight: NodeObject }).outgoingLight;
       const finite = (c: NodeObject): NodeObject =>
         t.select(c.equal(c).and(c.abs().lessThanEqual(t.float(1e20))), c, t.float(0));
       out.assign(t.vec3(finite(out.x), finite(out.y), finite(out.z)).max(t.vec3(0)).min(t.vec3(HDR_CLAMP)));
@@ -446,16 +443,17 @@ export function makeSwimNodeMaterial(
   uniforms: SwimUniforms,
   tissue: Tissue | null = null,
   gaze = false,
-): InstanceType<Tsl['MeshPhysicalNodeMaterial']> {
+): InstanceType<Webgpu['MeshPhysicalNodeMaterial']> {
   const t = tsl();
+  const wg = webgpu();
   const anisotropic = (params.anisotropy as number | undefined) !== 0;
-  class SwimNodeMaterial extends t.MeshPhysicalNodeMaterial {
+  class SwimNodeMaterial extends wg.MeshPhysicalNodeMaterial {
     constructor(p: object) {
       super(p);
     }
 
-    override setupLightingModel(): InstanceType<Tsl['PhysicalLightingModel']> {
-      return fishLightingModel(t, tissue);
+    override setupLightingModel(): InstanceType<Webgpu['PhysicalLightingModel']> {
+      return fishLightingModel(t, wg, tissue);
     }
 
     override setupVariants(builder: NodeBuilder): void {
@@ -463,7 +461,7 @@ export function makeSwimNodeMaterial(
       // Specular anti-aliasing (swimShader.ts lights_physical_fragment patch): widen the lobe by the
       // pixel footprint's normal variance, plus a grazing variance that only grows below NdotV ~0.4,
       // where the lobe is under-sampled and one pixel can catch the whole specular line.
-      const N = t.transformedNormalView;
+      const N = t.normalView;
       const ndx = N.dFdx(), ndy = N.dFdy();
       const nvA = N.dot(t.positionViewDirection).saturate();
       const graze = t.float(1).sub(nvA);
@@ -483,16 +481,16 @@ export function makeSwimNodeMaterial(
   const mat = new SwimNodeMaterial(params as object);
   mat.positionNode = swimPositionNode(uniforms, tissue);
   mat.normalNode = swimNormalNode(uniforms, tissue, params);
-  if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, nodesFor(uniforms).uNight!, tissue.night);
+  if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, mat, nodesFor(uniforms).uNight!, tissue.night);
   // Eye gaze (builder.ts addGaze on WebGL): the iris, pupil and iridophore ring slide across the cap.
   // The eyeSide attribute (+1 right, -1 left) turns the shared gaze vector into each eye's texture shift.
   if (gaze && params.map && uniforms.uGaze) {
     const u = nodesFor(uniforms).uGaze!;
     const gazeUv = t.uv().add(t.vec2(u.x.mul(t.attribute('eyeSide', 'float')), u.y.negate()));
-    mat.colorNode = t.materialReference('color', 'color').mul(t.texture(params.map, gazeUv).rgb);
+    mat.colorNode = (t.materialReference('color', 'color', mat) as unknown as NodeObject).mul(t.texture(params.map, gazeUv).rgb);
     if (params.iridescenceMap) {
       // The ring mask modulates iridescence strength (three's GLSL iridescenceMap, shifted by the same gaze).
-      mat.iridescenceNode = t.materialReference('iridescence', 'float').mul(t.texture(params.iridescenceMap, gazeUv).r);
+      mat.iridescenceNode = (t.materialReference('iridescence', 'float', mat) as unknown as NodeObject).mul(t.texture(params.iridescenceMap, gazeUv).r);
     }
   }
   // Packed body maps' second channels (swimShader.ts's `packed`): the film thickness is the iridescence
@@ -512,10 +510,10 @@ export function makeSwimNodeMaterial(
 
 /** The night (and stress) colour patch from swimShader.ts, in TSL: chromatophores contract or expand
  *  over minutes at dusk, paling or darkening the fish. uNight 0..1 is written by fish.ts. */
-function nightColourNode(t: Tsl, uNight: FloatUniformNode, kind: 'pale' | 'dark'): Node {
-  const c = t.materialColor.rgb;   // the standard colour incl. map, before the patch
+function nightColourNode(t: Tsl, mat: THREE.Material, uNight: FloatUniformNode, kind: 'pale' | 'dark'): NodeObject {
+  const c = (t.materialReference('color', 'color', mat) as unknown as NodeObject).rgb;   // the standard colour incl. map, before the patch
   const l = c.dot(t.vec3(0.2126, 0.7152, 0.0722));
-  const night: Node = kind === 'pale'
+  const night: NodeObject = kind === 'pale'
     ? t.mix(t.vec3(l), t.vec3(t.float(0.75).add(t.float(0.2).mul(
         t.float(0.5).add(t.float(0.5).mul(t.sin(t.uv().x.mul(23).add(t.sin(t.uv().y.mul(9)).mul(2))))),
       ))), 0.45)

@@ -11,7 +11,7 @@ import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js'
 import { mantleR } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, type ShaderHook, type NodeHook, type SpringState } from './shared.js';
-import type { Node, ShaderNodeObject } from 'three/webgpu';
+import type { NodeObject } from '../webgpu/tsl.js';
 import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
 import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
@@ -142,7 +142,7 @@ export class Cuttlefish implements Critter {
 
   /** TSL form of mantleHook(): the mantle squeeze (position) and the head/cloud/mottle/pale patch. */
   private mantleNodeHook(): NodeHook {
-    return (t) => {
+    return (t, mat) => {
       const uSqueeze = vec3Node(t, this.u.uSqueeze);
       const uTime = scalarNode(t, this.u.uTime), uCloud = scalarNode(t, this.u.uCloud);
       const uMottle = scalarNode(t, this.u.uMottle), uPale = scalarNode(t, this.u.uPale);
@@ -153,7 +153,7 @@ export class Cuttlefish implements Critter {
         const dors = t.smoothstep(0.35, 0, t.min(t.abs(uv.x.sub(0.75)), t.float(1).sub(t.abs(uv.x.sub(0.75)))));
         const head = t.mix(
           t.vec3(0.3, 0.16, 0.11).mul(t.float(1.1).sub(t.float(0.35).mul(dors))),
-          t.materialColor.rgb,
+          (t.materialReference('color', 'color', mat) as unknown as NodeObject).rgb,
           t.smoothstep(0.15, 0.7, aWeight),
         );
         const cloud = t.smoothstep(0.55, 0.95, t.sin(uv.y.mul(18).sub(uTime.mul(3)).add(t.sin(uv.x.mul(30)).mul(0.6))));
@@ -172,7 +172,7 @@ export class Cuttlefish implements Critter {
    *  same frame applied to the authored arm normals. */
   private armNodeHook(): NodeHook {
     return (t) => {
-      type N = ShaderNodeObject<Node>;
+      type N = NodeObject;
       const uExt = scalarNode(t, this.u.uExt);
       const aSec = t.attribute('aSec', 'vec4');
       const aArm = t.attribute('aArm', 'vec3');
@@ -194,7 +194,7 @@ export class Cuttlefish implements Critter {
       const positionNode = t.Fn(() => {
         const du = s.div(t.float(10));
         const c = t.vec2(0).toVar('armC');
-        t.Loop({ start: 0, end: 10 }, ({ i }: { i: ShaderNodeObject<Node> }) => {
+        t.Loop({ start: 0, end: 10 }, ({ i }: { i: NodeObject }) => {
           const qi = t.min(t.float(i).add(0.5).mul(du), L).div(L);
           const thi = bend(qi, curl, straight);
           c.addAssign(t.vec2(t.cos(thi), t.sin(thi).negate()).mul(du));

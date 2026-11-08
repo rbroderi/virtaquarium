@@ -16,8 +16,7 @@ import { Noise, TAU, clamp, mulberry32, pick, range, type Rng } from '../util.js
 import { addTranslucency } from '../softSkin.js';
 import { addSway, stdMat } from './materials.js';
 import { instanceMatrixNode } from './fishPush.js';
-import { gpuActive, tsl } from '../webgpu/tsl.js';
-import type { Node, ShaderNodeObject } from 'three/webgpu';
+import { gpuActive, tsl, type Node, type NodeObject } from '../webgpu/tsl.js';
 import { GOLDEN_ANGLE, UP, color, lathe, scratch } from './geometry.js';
 
 /** Own seeded streams, so the reef's rng draws stay as they were before the anemone was reworked. */
@@ -122,7 +121,7 @@ const CURL_DEFORM = /* glsl */`
 const CURL_PRELUDE = 'attribute vec4 aCurl;\n';
 
 /** TSL counterpart of CURL_DEFORM (WebGPU): the static per-tentacle curl, applied after the sway. */
-function curlDeformNode(p: ShaderNodeObject<Node>, h: ShaderNodeObject<Node>): ShaderNodeObject<Node> {
+function curlDeformNode(p: NodeObject, h: NodeObject): NodeObject {
   const t = tsl();
   const aCurl = t.attribute('aCurl', 'vec4');
   const curlH = h.mul(h).mul(t.float(0.7).add(t.float(0.3).mul(h)));
