@@ -22,7 +22,7 @@ type Vec3UniformNode = ShaderNodeObject<UniformNode<THREE.Vector3>>;
 type PathArrayNode = ShaderNodeObject<UniformArrayNode>;
 
 /** Brightest linear radiance a fish fragment may write, as swimShader.ts's HDR_CLAMP. */
-const HDR_CLAMP = 16;
+const HDR_CLAMP = 4;
 
 /** TSL uniform nodes shared by every material of one fish (they all read the same SwimUniforms). */
 interface SwimNodes {
@@ -405,7 +405,9 @@ function fishLightingModel(t: Tsl, tissue: Tissue | null): InstanceType<Tsl['Phy
         const lobe = t.positionViewDirection.dot(L.negate()).saturate().pow(6);
         const irr = lc.div(Math.PI);
         const d = input.reflectedLight.directDiffuse as unknown as NodeObject;
-        d.addAssign(alb.mul(TtLeu).mul(irr).mul(back).mul(t.float(1).add(t.float(2.5).mul(lobe))));
+        // Grazing fade on the transmission lobe, matching TISSUE_GLSL's transCover.
+        const transCover = t.smoothstep(t.float(0), t.float(0.15), Nn.dot(t.positionViewDirection).saturate());
+        d.addAssign(alb.mul(TtLeu).mul(irr).mul(back).mul(t.float(1).add(t.float(2.5).mul(lobe))).mul(transCover));
         // Wrapped Lambert: only the light past the terminator (wider for red), softened under the skin.
         const wrapped = t.vec3(ndl).add(wrap).div(wrap.add(1)).saturate().sub(ndl.saturate()).max(0);
         d.addAssign(alb.mul(irr).mul(wrapped).mul(leu));
@@ -466,8 +468,8 @@ export function makeSwimNodeMaterial(
       const nvA = N.dot(t.positionViewDirection).saturate();
       const graze = t.float(1).sub(nvA);
       const nVar = ndx.dot(ndx).add(ndy.dot(ndy))
-        .add(t.float(0.2).mul(graze).mul(graze).mul(graze).mul(graze))
-        .min(0.3);
+        .add(t.float(0.35).mul(graze).mul(graze).mul(graze).mul(graze))
+        .min(0.5);
       const r = t.roughness.toVar('specAaRoughness');
       t.roughness.assign(t.sqrt(r.mul(r).add(nVar)).min(1));
       if (anisotropic) {

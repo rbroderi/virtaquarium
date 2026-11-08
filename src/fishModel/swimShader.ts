@@ -78,7 +78,7 @@ function pathUps(): Float32Array {
 export const IN_WATER_IOR = 1.04;
 
 /** Brightest linear radiance a fish fragment may write (legit highlights are < ~10). */
-const HDR_CLAMP = '16.0';
+const HDR_CLAMP = '4.0';
 
 // The swim shader's uniforms (SWIM_GLSL) with their resting values; every swim material needs the full set.
 export function swimUniforms(over: Partial<SwimUniforms> = {}): SwimUniforms {
@@ -201,12 +201,15 @@ const TISSUE_GLSL = /* glsl */`
   float leu = 1.0 - 0.8 * smoothstep(0.55, 0.85, min(alb.r, min(alb.g, alb.b)));
   Tt *= leu;
   #if NUM_DIR_LIGHTS > 0
+  // The transmission lobe glows strongest on a fin's silhouette, where one edge-on pixel can span a long
+  // arc of the membrane; fade it at grazing angles like the specular guard, so the rim stays soft.
+  float transCover = smoothstep(0.0, 0.15, saturate(dot(Nn, geometryViewDir)));
   for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
     vec3 L = directionalLights[i].direction;
     float ndl = dot(Nn, L);
     float back = saturate(-ndl);
     float lobe = pow(saturate(dot(geometryViewDir, -L)), 6.0);
-    reflectedLight.directDiffuse += alb * Tt * directionalLights[i].color * RECIPROCAL_PI * back * (1.0 + 2.5 * lobe);
+    reflectedLight.directDiffuse += alb * Tt * directionalLights[i].color * RECIPROCAL_PI * back * (1.0 + 2.5 * lobe) * transCover;
     vec3 wrapped = saturate((vec3(ndl) + uWrap) / (1.0 + uWrap));
     reflectedLight.directDiffuse += alb * directionalLights[i].color * RECIPROCAL_PI * max(wrapped - saturate(ndl), 0.0) * leu;
   }
@@ -354,8 +357,8 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
         float nVar = dot( ndx, ndx ) + dot( ndy, ndy );
         float nvA = saturate( dot( normal, normalize( vViewPosition ) ) );
         float graze = 1.0 - nvA;
-        nVar += 0.20 * graze * graze * graze * graze;
-        nVar = min( nVar, 0.30 );
+        nVar += 0.35 * graze * graze * graze * graze;
+        nVar = min( nVar, 0.50 );
         material.roughness = min( sqrt( material.roughness * material.roughness + nVar ), 1.0 );
         #ifdef USE_ANISOTROPY
           material.alphaT = mix( pow2( material.roughness ), 1.0, pow2( material.anisotropy ) );
