@@ -2507,6 +2507,39 @@
       "sideOn": true,
       "traced": "first pass: hand rough outline snapped with GrabCut (2026-11-04); check in the lab",
       "rot": 3
+    },
+    {
+      "file": "vasenin_gilibanta.jpg",
+      "source": "https://commons.wikimedia.org/w/index.php?curid=25523559",
+      "author": "Alexander Vasenin",
+      "license": "CC BY-SA 3.0",
+      "mirror": false,
+      "yaw": -30,
+      "pitch": -10,
+      "fov": 30,
+      "note": "three-quarter view from below and in front, open water off Gili Banta, Indonesia; snout points right; head and face: eye high under the long banded supraocular tentacle, oblique mouth, fringed lappets on the lip and chin, dark narrow-gapped bars on the head; no outline (not side-on)",
+      "view": "closeup",
+      "patches": [
+        {
+          "name": "band_white",
+          "x": 700,
+          "y": 520,
+          "r": 2
+        },
+        {
+          "name": "stripe_red",
+          "x": 732,
+          "y": 536,
+          "r": 2
+        },
+        {
+          "name": "head",
+          "x": 770,
+          "y": 555,
+          "r": 3
+        }
+      ],
+      "sideOn": false
     }
   ]
 }

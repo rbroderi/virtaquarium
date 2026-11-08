@@ -230,12 +230,16 @@ add((s) => s.body.depth / s.body.len, (s, v) => { s.body.depth = v * s.body.len;
 bodyKey('m', 0.25, 0.6); bodyKey('headP', 0.3, 1.6); bodyKey('tailP', 0.5, 2.5); bodyKey('ped', 0.25, 0.65); bodyKey('hump', 0, 0.16); bodyKey('mouth', -0.7, 0.2);
 if (base.body.snout) { bodyKey('snout', 0.06, 0.32); bodyKey('snoutH', 0.01, 0.05); }   // butterflyfish beaks
 const FIN_SHIFT = 0.15, FIN_GROW = 0.1, FIN_PT_MAX = 0.35;
+// Spines thinner than this don't survive the photo traces (they read as background), so their height
+// stays as written in species.ts instead of being fitted down to the membrane's outline.
+const THIN_SPINE_R = 0.004;
+const fitsHeight = (f: Fin): boolean => f.kind === 'spines' && f.r >= THIN_SPINE_R;
 base.fins.forEach((f, fi) => {
   add((s) => finAt(s, fi).u0, (s, v) => { finAt(s, fi).u0 = v; }, Math.max(0.05, f.u0 - FIN_SHIFT), Math.min(0.95, f.u0 + FIN_SHIFT));
   add((s) => finAt(s, fi).u1, (s, v) => { finAt(s, fi).u1 = v; }, Math.max(0.1, f.u1 - FIN_SHIFT), Math.min(1, f.u1 + FIN_GROW));
   if (f.kind === 'spines') {
     const spines = (s: Species): { h: number } => { const g = finAt(s, fi); return g.kind === 'spines' ? g : fail(`fin ${fi} changed kind`); };
-    add((s) => spines(s).h, (s, v) => { spines(s).h = v; }, f.h * 0.5, f.h * 1.6);
+    if (fitsHeight(f)) add((s) => spines(s).h, (s, v) => { spines(s).h = v; }, f.h * 0.5, f.h * 1.6);
     return;
   }
   add((s) => membrane(s, fi).sweep ?? 0, (s, v) => { membrane(s, fi).sweep = v; }, 0, 1);
@@ -394,7 +398,7 @@ for (const k of BODY_KEYS) {
   fitBody[k] = r3(sp.body[k] ?? 0);
 }
 const fitFin = (f: Fin): FittedFin => f.kind === 'spines'
-  ? { u0: r3(f.u0), u1: r3(f.u1), h: r3(f.h) }
+  ? { u0: r3(f.u0), u1: r3(f.u1), ...(fitsHeight(f) ? { h: r3(f.h) } : {}) }
   : { u0: r3(f.u0), u1: r3(f.u1), sweep: r3(f.sweep ?? 0), pts: f.pts.map(([t, h]): [number, number] => [t, r3(h)]) };
 const fit: FittedAnatomy = {
   bands: bands.map((b) => ({ index: b.index, u: r3(b.u), w: r3(b.w) })),

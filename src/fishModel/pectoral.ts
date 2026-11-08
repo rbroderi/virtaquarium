@@ -33,6 +33,10 @@ function pectShape(p: Pectoral): PectShape {
 const pectoralRays = (sp: Species): number => (sp.anatomy?.pectoralRays ?? (pectoralOf(sp).kind === 'fan' ? FAN_RAYS : BLADE_RAYS)) - 1;
 // Fan pectoral ray lengths (fraction of p.len): longest in the middle of the fan, slightly irregular.
 const fanLen = (sp: Species, i: number): number => { const n = pectoralRays(sp); return 0.8 + 0.15 * Math.sin(Math.PI * (0.2 + (0.7 * i) / n)) + 0.04 * Math.sin(i * 1.7); };
+// Fan rays rise from a short vertical base, not one point (in fractions of the fin length, canvas y down):
+// spread evenly along it, so the rays don't bunch into a hub where they meet the body.
+const FAN_BASE = 0.05;
+const fanBase = (a: number, spread: number): number => FAN_BASE * (a / (spread / 2));
 const pectBands = (sp: Species, i: number): number => Math.max(3, Math.round((fanLen(sp, i) * pectoralOf(sp).len) / BAND_SPACING));
 
 // Pleat and cup of the pectoral surface at (x, y) in its own plane (base at the origin, x outwards).
@@ -50,7 +54,7 @@ export function pectoralOutline(sp: Species, prof: Profile, open = 0.9): P2[] { 
   const pts: P2[] = [[px, py + 0.01]];
   for (let i = 0; i <= n; i++) {
     const a = -spread / 2 + (spread * i) / n, r = fanLen(sp, i) * pw;
-    pts.push([px - Math.cos(a) * r * k, py - Math.sin(a) * r * yk]);
+    pts.push([px - Math.cos(a) * r * k, py - Math.sin(a) * r * yk - fanBase(a, spread) * pw]);
   }
   pts.push([px, py - 0.01]);
   return pts;
@@ -64,7 +68,7 @@ export function pectoralTubes(sp: Species): TubeSpec[] {
   for (let i = 0; i <= n; i++) {
     const a = -spread / 2 + (spread * i) / n, L = fanLen(sp, i), pts: P3[] = [];
     for (let q = 0; q <= 6; q++) {
-      const r = (L * q) / 6, x = Math.cos(a) * r * pw, y = -Math.sin(a) * r * yk * pw;
+      const r = (L * q) / 6, x = Math.cos(a) * r * pw, y = -(Math.sin(a) * r * yk + fanBase(a, spread)) * pw;
       pts.push([x, y, pectZ(sp, x, y)]);
     }
     out.push({ pts, r0: p.rayR ?? DEFAULT_RAY_RADIUS, r1: (p.rayR ?? DEFAULT_RAY_RADIUS) * 0.25, color: p.rayColor || p.fill, stripes: p.stripes, nb: p.stripes ? pectBands(sp, i) : 0 });
@@ -94,7 +98,7 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
     } else if (fan) {
       // Through each ray tip, the membrane incised deeply between them so the tips stand free.
       const nr = pectoralRays(sp), ang = (i: number): number => -spread / 2 + (spread * i) / nr;
-      const pt = (a: number, r: number): P2 => [Math.cos(a) * r * W, Math.sin(a) * r * W * yk];
+      const pt = (a: number, r: number): P2 => [Math.cos(a) * r * W, (Math.sin(a) * r * yk + fanBase(a, spread)) * W];
       g.moveTo(0, -H * 0.06);
       for (let i = 0; i <= nr; i++) {
         g.lineTo(...pt(ang(i), fanLen(sp, i)));
@@ -118,7 +122,7 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   g.fillStyle = mg; g.fillRect(0, -H / 2, W, H);
   g.globalCompositeOperation = 'source-over';
   const n = pectoralRays(sp), a0r = -spread / 2, span = spread;
-  const dir = (a: number, r: number): P2 => [Math.cos(a) * r, Math.sin(a) * r * yk];
+  const dir = (a: number, r: number): P2 => [Math.cos(a) * r, Math.sin(a) * r * yk + (fan ? fanBase(a, spread) * W : 0)];
   for (let i = 0; i <= n; i++) {
     const a = a0r + (span * i) / n;
     if (fan) {
