@@ -174,16 +174,16 @@ export function gpuCrystalMaterial(
   const dv = localPos.sub(textCenter).dot(textV);
   const textUv = t.vec2(du.sub(u0).mul(invExtU), dv.sub(v0).mul(invExtV)) as unknown as NodeObject;
   const sampled = maskTex.sample(textUv);
-  // Blur the clarity channel into a distance-field-like groove height (0 outside, 1 inside).
-  const blur = t.float(options.grooveBlur);
-  const blurR = sampled.r
-    .add(maskTex.sample(textUv.add(t.vec2(blur, 0))).r)
-    .add(maskTex.sample(textUv.sub(t.vec2(blur, 0))).r)
-    .add(maskTex.sample(textUv.add(t.vec2(0, blur))).r)
-    .add(maskTex.sample(textUv.sub(t.vec2(0, blur))).r)
-    .div(t.float(5));
-  const letter = t.float(1).sub(blurR);
-  const etch = letter.mul(facing).mul(fade);
+  // Blur the clarity channel (3x3 box, a fraction of a stroke wide) into a groove height (0 outside,
+  // 1 inside) for the wall normal and the parallax only; the frost itself uses the sharp glyph, so
+  // the blur's taps never show as shifted copies of the letters.
+  let blurR: NodeObject = sampled.r;
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+    if (i === 0 && j === 0) continue;
+    blurR = blurR.add(maskTex.sample(textUv.add(t.vec2(i * options.grooveBlur, j * options.grooveBlur))).r);
+  }
+  const letter = t.float(1).sub(blurR.div(t.float(9)));
+  const etch = t.float(1).sub(sampled.r).mul(facing).mul(fade);
   const dark = sampled.b.mul(facing).mul(fade);
 
   // The groove height's gradient in the text plane, then the engraved wall normal in world space.

@@ -2,7 +2,7 @@
 // (rotating messages). One canvas drives the etch and frost:
 //   red   = clarity (255 clear, 0 etched/opaque)
 //   green = frost (255 rough/frosted, ~16 smooth)
-//   blue  = the faint darker inner edge on each glyph
+//   blue  = the shadowed upper wall just inside each glyph
 // The text is sized against the whole rock's projected silhouette (its 2D extent on the etched
 // plane), inset ~12% so glyphs never reach the rock's outline, and drawn centred. layoutCrystalText
 // is unit-tested.
@@ -13,8 +13,8 @@ export const DEFAULT_LABEL = '';
 
 const CLEAR = 'rgb(255,16,0)';
 const FROST = 'rgb(0,255,0)';
-/** The faint darker inner edge on each glyph (B channel; R/G stay frosted, not a clear halo). */
-const EDGE = 'rgb(0,255,255)';
+/** The shadowed upper wall inside each glyph, added into the B channel alone (R/G untouched). */
+const EDGE_BLUE = 'rgb(0,0,255)';
 const FONT = `system-ui, 'Segoe UI', sans-serif`;
 const LABEL_RATIO = 0.45;
 /** Fallback line-height ratio (of the font size) when the canvas reports no glyph bounds. */
@@ -138,31 +138,41 @@ export function renderMask(canvas: HTMLCanvasElement, lines: readonly string[], 
   const blockH = wrapped.length * lineHpx + (label ? labelSize * 1.7 : 0);
   let y = cyTop - blockH / 2 + lineHpx / 2;
 
+  // Scratch canvas for the shadowed wall, built per glyph run and added into the blue channel only.
+  const wall = document.createElement('canvas');
+  wall.width = W;
+  wall.height = H;
+  const w = context2d(wall);
+  w.textAlign = 'center';
+  w.textBaseline = 'middle';
+
   const etch = (text: string, cy: number, fontPx: number): void => {
     const font = `600 ${Math.round(fontPx)}px ${FONT}`;
-    const bevel = Math.max(1, Math.round(fontPx * 0.08));
-    const edgeSoft = Math.max(1, Math.round(fontPx * 0.06));
-    const frostSoft = Math.max(1, Math.round(fontPx * 0.03));
+    const bevel = Math.max(1, Math.round(fontPx * 0.05));
+    const frostSoft = Math.max(1, Math.round(fontPx * 0.015));
     g.font = font;
-    // Faint darker inner edge first (the B channel), dropped a hair below the glyph: light from above
-    // leaves the recess's lower lip in shadow, so the letters read as etched into the glass, not
-    // printed on it. Soft, not a heavy halo.
-    g.shadowColor = EDGE;
-    g.shadowBlur = edgeSoft;
-    g.fillStyle = EDGE;
-    g.fillText(text, cx, cy + bevel);
-    g.shadowColor = 'transparent';
-    g.shadowBlur = 0;
-    g.fillStyle = EDGE;
-    g.fillText(text, cx, cy + bevel);
-    // The frosted white/ice glyph on top (the R/G channels), with a soft edge.
+    // The frosted glyph (the R/G channels), with a slightly soft edge.
     g.shadowColor = FROST;
     g.shadowBlur = frostSoft;
     g.fillStyle = FROST;
     g.fillText(text, cx, cy);
     g.shadowBlur = 0;
-    g.fillStyle = FROST;
     g.fillText(text, cx, cy);
+    // The recess's upper wall, in the B channel only: light from above leaves a band just inside each
+    // glyph's top edges in shadow, so the letters read as cut into the glass. It is the glyph minus
+    // the glyph dropped by the bevel, so it never reaches outside the letter or prints a second copy.
+    w.clearRect(0, 0, W, H);
+    w.font = font;
+    w.globalCompositeOperation = 'source-over';
+    w.fillStyle = EDGE_BLUE;
+    w.fillText(text, cx, cy);
+    w.globalCompositeOperation = 'destination-out';
+    w.fillText(text, cx, cy + bevel);
+    g.globalCompositeOperation = 'lighter';
+    g.filter = `blur(${frostSoft}px)`;
+    g.drawImage(wall, 0, 0);
+    g.filter = 'none';
+    g.globalCompositeOperation = 'source-over';
   };
 
   for (const line of wrapped) {

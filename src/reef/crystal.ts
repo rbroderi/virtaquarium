@@ -43,8 +43,9 @@ const FROST_COLOR = new THREE.Color(0.36, 0.44, 0.54);
 const FROST_ROUGH = 0.85;
 /** Recessed groove depth (local units): drives the engraved normal tilt and the cheap parallax. */
 const GROOVE_DEPTH = 0.05;
-/** Blur radius of the etched mask's red channel (text UVs), turning the glyph edge into a groove slope. */
-const GROOVE_BLUR = 0.02;
+/** Blur tap spacing on the etched mask's red channel (text UVs), turning the glyph edge into a groove
+ *  slope. Kept well under a stroke width: wider taps show as offset copies of each letter. */
+const GROOVE_BLUR = 0.003;
 /** The frosted letter floor is this much brighter than the surrounding clear glass. */
 const GROOVE_BRIGHT = 1.07;
 /** Max refraction displacement along the face normal, world units (the cluster's real depth is ~1). */
@@ -506,13 +507,16 @@ varying vec3 vCrystalLocal;
       ( dot( vCrystalLocal - uTextCenter, uTextU ) - uTextU0 ) * uTextInvExtU,
       ( dot( vCrystalLocal - uTextCenter, uTextV ) - uTextV0 ) * uTextInvExtV );
     vec4 crystalMask = texture2D( uEtchTex, crystalTextUv );
-    // Blur the clarity channel into a distance-field-like groove height (0 outside, 1 inside).
-    float crystalBlurR = ( crystalMask.r
-      + texture2D( uEtchTex, crystalTextUv + vec2( uCrystalGrooveBlur, 0.0 ) ).r
-      + texture2D( uEtchTex, crystalTextUv - vec2( uCrystalGrooveBlur, 0.0 ) ).r
-      + texture2D( uEtchTex, crystalTextUv + vec2( 0.0, uCrystalGrooveBlur ) ).r
-      + texture2D( uEtchTex, crystalTextUv - vec2( 0.0, uCrystalGrooveBlur ) ).r ) / 5.0;
-    float crystalLetter = 1.0 - crystalBlurR;
+    // Blur the clarity channel (3x3 box, a fraction of a stroke wide) into a groove height (0 outside,
+    // 1 inside) for the wall normal and the parallax only; the frost itself uses the sharp glyph, so
+    // the blur's taps never show as shifted copies of the letters.
+    float crystalBlurR = 0.0;
+    for ( int crystalI = -1; crystalI <= 1; crystalI++ ) {
+      for ( int crystalJ = -1; crystalJ <= 1; crystalJ++ ) {
+        crystalBlurR += texture2D( uEtchTex, crystalTextUv + vec2( float( crystalI ), float( crystalJ ) ) * uCrystalGrooveBlur ).r;
+      }
+    }
+    float crystalLetter = 1.0 - crystalBlurR / 9.0;
     // The groove height's gradient in the text plane, from screen derivatives of the letter mask and
     // the projected plane coordinates (du, dv).
     float crystalDu = dot( vCrystalLocal - uTextCenter, uTextU );
@@ -524,7 +528,7 @@ varying vec3 vCrystalLocal;
     float crystalDletterdu = ( crystalLdx * crystalDvdy - crystalLdy * crystalDvdx ) / crystalDet;
     float crystalDletterdv = ( crystalDudx * crystalLdy - crystalDudy * crystalLdx ) / crystalDet;
     vec3 crystalPerturbW = ( modelMatrix * vec4( uTextU * crystalDletterdu + uTextV * crystalDletterdv, 0.0 ) ).xyz;
-    float crystalEtch = crystalLetter * crystalFacing * uCrystalFade;
+    float crystalEtch = ( 1.0 - crystalMask.r ) * crystalFacing * uCrystalFade;
     float crystalDark = crystalMask.b * crystalFacing * uCrystalFade;`);
 
     const roughness = THREE.ShaderChunk['roughnessmap_fragment'];
