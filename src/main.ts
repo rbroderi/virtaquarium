@@ -176,6 +176,11 @@ function bindKeys(loop: TankLoop, daylight: DaylightSource, ui: UI, toggleReefLi
     if (e.key === '>') { daylight.speedUp(); ui.showClock(daylight); }
     if (e.key === 'r' || e.key === 'R') { daylight.reset(); ui.showClock(daylight); }
   });
+  // The same controls for touch screens (ui.ts shows its menu only there).
+  ui.addMenuItems([
+    { label: 'Noon / midnight', run: () => { loop.toggleDayNight(); ui.showClock(daylight); } },
+    { label: 'Pause', run: () => loop.togglePause(), on: () => loop.isPaused },
+  ]);
 }
 
 async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle): Promise<void> {
@@ -285,7 +290,7 @@ async function main(): Promise<void> {
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
   const bus = new EventBus<TankEvents>();
   bus.on('feed', ({ x }) => world.dropFood(x));
-  const ui = new UI({ world, inspectables: [...critters, ...jellies], camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null, crystal });
+  const ui = new UI({ world, inspectables: [...critters, ...jellies], camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null, crystal, pan: stage.pan });
   trackViewer(stage.canvas, stage.camera, world, bounds);
 
   const lighting = new LightingController({ stage, surface, reef, toneGain: options.tone.gain });

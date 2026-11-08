@@ -18,6 +18,8 @@ export interface InspectRow {
 
 export interface InspectPanel {
   readonly title: string;
+  /** Common name under the title (when the title is the animal's own name). */
+  readonly species?: string;
   readonly sci?: string;
   /** One user-facing line on what it is doing now. */
   readonly note?: string;
@@ -63,13 +65,41 @@ export function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
+/** A brain as the panel shows it: drives (label, 0..1, bar class), option scores, mode, traits. */
+export interface BrainView {
+  readonly drives: readonly (readonly [string, number, string])[];
+  readonly scores: readonly (readonly [string, number])[];
+  readonly mode: string;
+  readonly traits: readonly (readonly [string, number])[];
+}
+
+/** Options shown, the smallest score worth showing, and the least the bars are scaled to. */
+const TOP_OPTIONS = 5, MIN_SCORE = 0.01, MIN_SCORE_SCALE = 1.5;
+
+/** The shared brain sections of every panel (fish and critters): Drives, Options considered, Personality. */
+export function brainRows(b: BrainView): InspectRow[] {
+  const rows: InspectRow[] = [{ heading: 'Drives' }];
+  for (const [label, v, cls] of b.drives) rows.push({ label, bar: v, cls });
+  const opts = b.scores.filter(([, s]) => s > MIN_SCORE).sort((x, y) => y[1] - x[1]).slice(0, TOP_OPTIONS);
+  if (opts.length) {
+    const max = Math.max(MIN_SCORE_SCALE, ...opts.map(([, s]) => s));
+    rows.push({ heading: 'Options considered' });
+    for (const [m, s] of opts) rows.push({ label: m + (m === b.mode ? ' ✓' : ''), bar: s / max, cls: m === b.mode ? 'on' : 'opt' });
+  }
+  if (b.traits.length) {
+    rows.push({ heading: 'Personality' });
+    for (const [label, v] of b.traits) rows.push({ label, bar: v, cls: 'trait' });
+  }
+  return rows;
+}
+
 const ESCAPES: Readonly<Record<string, string>> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ESCAPES[c] ?? c);
 
 /** Panel markup in the same style as the fish brain panel (#brain). */
 export function inspectHtml(p: InspectPanel): string {
   let html = `<h2>${esc(p.title)}</h2>`;
-  if (p.sci) html += `<div class="sp"><em>${esc(p.sci)}</em></div>`;
+  if (p.species || p.sci) html += `<div class="sp">${p.species ? esc(p.species) + ' ' : ''}${p.sci ? `<em>${esc(p.sci)}</em>` : ''}</div>`;
   if (p.note) html += `<div class="thought">“${esc(p.note)}”</div>`;
   for (const row of p.rows) {
     if (row.heading !== undefined) html += `<h3>${esc(row.heading)}</h3>`;

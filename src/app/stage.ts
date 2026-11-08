@@ -12,7 +12,7 @@ import { WebGpuCaustics } from '../water/webgpuCaustics.js';
 import { WebGpuWaterPost } from '../water/webgpuPost.js';
 import { loadWebgpu } from '../webgpu/tsl.js';
 import { LightRig, LIGHTS, SUN_NOON } from '../rig.js';
-import { setView, panAt } from '../view.js';
+import { setView, PanControl } from '../view.js';
 import { PhotoCamera } from '../photo.js';
 import type { AppOptions } from './options.js';
 
@@ -70,8 +70,10 @@ export interface Stage {
   /** The WebGPU scene pass + shaft/motion-blur composite (null on the WebGL path). */
   readonly post: WebGpuWaterPost | null;
   readonly photo: PhotoCamera | null;
-  /** Re-aim the camera's zoomed window for time t (view.ts pan). */
-  frameView(t: number): void;
+  /** The zoomed window's pan: a slow sweep, and dragging (view.ts). */
+  readonly pan: PanControl;
+  /** Re-aim the camera's zoomed window at the pan's position. */
+  frameView(): void;
 }
 
 export function tankWidthFor(aspect: number): number {
@@ -95,10 +97,12 @@ export class StageBuilder {
       : window.innerWidth > 0 && window.innerHeight > 0 ? window.innerWidth / window.innerHeight : FALLBACK_ASPECT;
     const tankWidth = tankWidthFor(aspect);
     const camera = this.camera(aspect);
-    const frameView = (t: number): void => setView(
+    // The live view can be dragged across the tank; checks hold the window still.
+    const pan = new PanControl(this.options.view, this.options.check === null);
+    const frameView = (): void => setView(
       camera, this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight,
-      this.options.view, panAt(t, this.options.view));
-    frameView(0);
+      this.options.view, pan.position);
+    frameView();
     const sun = this.sun(tankWidth);
     scene.add(sun);
     // The fixture's light refracts through the moving surface: simulated caustics on every surface,
@@ -119,7 +123,7 @@ export class StageBuilder {
     const photo = !gpu && this.options.photo
       ? new PhotoCamera(renderer as THREE.WebGLRenderer, { fNumber: this.options.fNumber, iso: PHOTO_ISO, glass: this.options.glass })
       : null;
-    return { canvas: this.canvas, renderer, gpu, scene, fog, backdrop, camera, tankWidth, sun, hemi, rig, caustics, water, post, photo, frameView };
+    return { canvas: this.canvas, renderer, gpu, scene, fog, backdrop, camera, tankWidth, sun, hemi, rig, caustics, water, post, photo, pan, frameView };
   }
 
   private async renderer(): Promise<{ renderer: RendererLike; gpu: boolean }> {

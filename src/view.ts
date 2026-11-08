@@ -38,6 +38,49 @@ export function panAt(t: number, view: ViewOptions): number {
   return view.pan ? PAN_CENTRE - PAN_CENTRE * Math.cos((2 * Math.PI * t) / PAN_PERIOD) : PAN_CENTRE;
 }
 
+/** After a drag, the slow sweep waits this long (s) before it picks up again from where it was left. */
+const SWEEP_RESUME_SECONDS = 30;
+
+/**
+ * The live view's pan position. It sweeps slowly by itself (as panAt), and a drag takes it over:
+ * the window follows the pointer, and after a pause the sweep carries on from there in the direction
+ * it was going. Dragging needs a zoomed view; the sweep also needs view.pan.
+ */
+export class PanControl {
+  private phase = 0;
+  private p = PAN_CENTRE;
+  private idle = Infinity;
+
+  constructor(private readonly view: ViewOptions, private readonly draggable: boolean) {
+    this.p = panAt(0, view);
+  }
+
+  get position(): number {
+    return this.p;
+  }
+
+  get canDrag(): boolean {
+    return this.draggable && this.view.zoom > 1;
+  }
+
+  advance(dt: number): void {
+    this.idle += dt;
+    if (!this.view.pan || this.idle < SWEEP_RESUME_SECONDS) return;
+    this.phase = (this.phase + (2 * Math.PI * dt) / PAN_PERIOD) % (2 * Math.PI);
+    this.p = PAN_CENTRE - PAN_CENTRE * Math.cos(this.phase);
+  }
+
+  /** Drag by dx screen pixels on a screen w pixels wide: the tank moves with the pointer. */
+  drag(dx: number, w: number): void {
+    if (!this.canDrag || w <= 0) return;
+    this.p = Math.min(1, Math.max(0, this.p - dx / (w * (this.view.zoom - 1))));
+    this.idle = 0;
+    // The sweep's phase for this position, on the half of the cycle it was on (keeps its direction).
+    const a = Math.acos(1 - 2 * this.p);
+    this.phase = this.phase <= Math.PI ? a : 2 * Math.PI - a;
+  }
+}
+
 /** Point `camera` (whose aspect is w / h) at the window for pan position p, for a w x h screen. */
 export function setView(camera: THREE.PerspectiveCamera, wIn: number, hIn: number, view: ViewOptions, p: number): void {
   if (view.zoom <= 1) {

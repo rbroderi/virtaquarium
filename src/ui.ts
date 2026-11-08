@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { MODES, type Drives, type Personality, type Mode } from './brain.js';
 import { requireElement } from './util.js';
-import { inspectHtml, type Inspectable } from './inspect.js';
+import { brainRows, inspectHtml, type Inspectable, type InspectPanel } from './inspect.js';
 import type { Fish } from './fish.js';
 import { crystalPieces } from './reef/crystal.js';
 import { crystalClickAction, type CrystalSign } from './reef/crystalText.js';
@@ -25,9 +25,9 @@ const CLOCK_FADE_MS = 2500;
 const PICK_RADIUS = 0.6;
 /** The F key drops food within +-half this of the tank's centre. */
 const KEY_FEED_SPREAD = 8;
-/** Options shown in the brain panel, and the smallest score worth showing. */
-const TOP_OPTIONS = 5, MIN_SCORE = 0.01, MIN_SCORE_SCALE = 1.5;
 const TAG_LIFT_PX = 28;
+/** A press that moves further than this (px) is a drag (panning), not a click. */
+const DRAG_THRESHOLD_PX = 8;
 
 /** What the overlay reads from the running tank. */
 export interface UIWorld {
@@ -50,6 +50,15 @@ export interface UIOptions {
   readonly switcher: boolean;
   /** The crystal sign (null when absent, or during checks where clicks are disabled). */
   readonly crystal: CrystalSign | null;
+  /** The view's pan, which a drag across the tank moves (view.ts). */
+  readonly pan: { readonly canDrag: boolean; drag(dx: number, w: number): void };
+}
+
+/** A touch-menu entry; `on` (when given) shows it as a toggle that is currently on. */
+export interface MenuItem {
+  readonly label: string;
+  readonly run: () => void;
+  readonly on?: () => boolean;
 }
 
 /** The tanks the switcher offers. */
@@ -64,10 +73,6 @@ function switchTank(to: TankKind): void {
 
 const typedEntries = <K extends string, V>(o: Readonly<Record<K, V>>): [K, V][] => Object.entries(o) as [K, V][];
 
-function bar(label: string, v: number, cls = ''): string {
-  return `<div class="row"><span>${label}</span><div class="bar ${cls}"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
-}
-
 export class UI {
   private selected: Fish | Inspectable | null = null;
   private showTags = false;
@@ -75,6 +80,13 @@ export class UI {
   private readonly ray = new THREE.Raycaster();
   private readonly projected = new THREE.Vector3();
   private readonly panel = requireElement('brain', HTMLDivElement);
+  private readonly panelBody = requireElement('brain-body', HTMLDivElement);
+  private readonly menuBtn = requireElement('menu-btn', HTMLButtonElement);
+  private readonly menu = requireElement('menu', HTMLDivElement);
+  private readonly menuItems: MenuItem[] = [];
+  private readonly pan: UIOptions['pan'];
+  /** The press in progress on the canvas: where it started and was last, and whether it became a drag. */
+  private press: { id: number; x0: number; y0: number; x: number; drag: boolean } | null = null;
   private readonly tags = requireElement('tags', HTMLDivElement);
   private readonly help = requireElement('help', HTMLDivElement);
   private readonly hint = requireElement('hint', HTMLDivElement);
@@ -94,7 +106,8 @@ export class UI {
   private readonly cardGo: HTMLButtonElement;
   private readonly cardDisclosure: HTMLDivElement;
 
-  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher, crystal }: UIOptions) {
+  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher, crystal, pan }: UIOptions) {
+    this.pan = pan;
     this.scenery = scenery;
     this.switcher = switcher;
     this.world = world;
@@ -128,11 +141,101 @@ export class UI {
       this.tags.appendChild(el);
       this.tagOf.set(f, el);
     }
-    renderer.domElement.addEventListener('pointerdown', (e) => this.click(e));
-    renderer.domElement.addEventListener('pointermove', (e) => this.hover(e));
+    this.bindPointer(renderer.domElement);
     window.addEventListener('keydown', (e) => this.key(e));
+    requireElement('brain-close', HTMLButtonElement).addEventListener('click', () => this.select(null));
     this.hideIdleCursor();
     if (switcher) this.showSwitcher();
+    this.setUpMenu();
+  }
+
+  /**
+   * A press on the tank is a click (feed, select, close) when it lifts where it went down; one that
+   * slides sideways first is a drag, which pans the view along the tank.
+   */
+  private bindPointer(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || this.press) return;
+      this.press = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, drag: false };
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      const p = this.press;
+      if (!p || p.id !== e.pointerId) { this.hover(e); return; }
+      if (!p.drag && this.pan.canDrag && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > DRAG_THRESHOLD_PX) {
+        p.drag = true;
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = 'grabbing';
+      }
+      if (p.drag) this.pan.drag(e.clientX - p.x, canvas.clientWidth);
+      p.x = e.clientX;
+    });
+    const end = (e: PointerEvent, cancelled: boolean): void => {
+      const p = this.press;
+      if (!p || p.id !== e.pointerId) return;
+      this.press = null;
+      if (p.drag) { canvas.style.cursor = ''; return; }
+      if (!cancelled) this.click(e);
+    };
+    canvas.addEventListener('pointerup', (e) => end(e, false));
+    canvas.addEventListener('pointercancel', (e) => end(e, true));
+  }
+
+  /**
+   * Touch screens have no keyboard: the keys' controls go in a menu behind a translucent button,
+   * bottom right. Main adds the clock and pause entries (addMenuItems).
+   */
+  private setUpMenu(): void {
+    if (!window.matchMedia('(pointer: coarse)').matches) return;
+    document.body.classList.add('touch');
+    this.hint.textContent = 'Tap to feed · tap a fish or critter to inspect it · drag to look along the tank';
+    this.menuItems.push(
+      { label: 'Feed', run: () => this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD) },
+      { label: 'Next fish', run: () => this.cycle() },
+      { label: 'Show thoughts', run: () => this.toggleTags(), on: () => this.showTags },
+    );
+    if (this.switcher) this.menuItems.push({ label: this.scenery === 'jelly' ? 'Reef tank' : 'Moon jelly tank', run: () => switchTank(this.scenery === 'jelly' ? 'reef' : 'jelly') });
+    if (document.fullscreenEnabled) {
+      this.menuItems.push({ label: 'Full screen', run: () => { void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()); }, on: () => !!document.fullscreenElement });
+    }
+    this.menuBtn.addEventListener('click', () => this.toggleMenu(!this.menu.classList.contains('open')));
+    document.addEventListener('pointerdown', (e) => {
+      if (this.menu.classList.contains('open') && !this.menu.contains(e.target as Node) && !this.menuBtn.contains(e.target as Node)) this.toggleMenu(false);
+    });
+    this.renderMenu();
+  }
+
+  /** Further touch-menu entries (the page's own controls: the day/night clock, pause). */
+  addMenuItems(items: readonly MenuItem[]): void {
+    this.menuItems.push(...items);
+    this.renderMenu();
+  }
+
+  private renderMenu(): void {
+    if (!document.body.classList.contains('touch')) return;
+    this.menu.replaceChildren(...this.menuItems.map((item) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.textContent = item.label;
+      if (item.on) b.setAttribute('aria-pressed', String(item.on()));
+      b.addEventListener('click', () => {
+        item.run();
+        // Toggles stay open to show their new state; actions close the menu.
+        if (item.on) setTimeout(() => this.renderMenu(), 100); else this.toggleMenu(false);
+      });
+      return b;
+    }));
+  }
+
+  private toggleMenu(open: boolean): void {
+    if (open) this.renderMenu();
+    this.menu.classList.toggle('open', open);
+    this.menuBtn.setAttribute('aria-expanded', String(open));
+  }
+
+  private toggleTags(): void {
+    this.showTags = !this.showTags;
+    this.tags.style.display = this.showTags ? 'block' : 'none';
   }
 
   private showSwitcher(): void {
@@ -150,10 +253,7 @@ export class UI {
 
   private key(e: KeyboardEvent): void {
     const k = e.key.toLowerCase();
-    if (k === 'b') {
-      this.showTags = !this.showTags;
-      this.tags.style.display = this.showTags ? 'block' : 'none';
-    }
+    if (k === 'b') this.toggleTags();
     if (k === 'h' || k === '?') this.help.classList.toggle('show');
     if (k === 'f') this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD);
     if (k === 'escape') { this.select(null); this.closeCard(); }
@@ -218,7 +318,12 @@ export class UI {
       this.openCard(e);
       return;
     }
-    this.closeCard();
+    // A click on open water while a panel or card is up just closes it.
+    if (this.selected || this.card.classList.contains('open')) {
+      this.select(null);
+      this.closeCard();
+      return;
+    }
     // Otherwise sprinkle food where the click ray meets the middle of the tank.
     const { origin, direction } = this.ray.ray;
     const t = (0 - origin.z) / direction.z;
@@ -274,24 +379,22 @@ export class UI {
     this.panel.classList.toggle('show', !!f);
   }
 
-  private panelHtml(f: Fish): string {
+  /** A fish's panel, through the same rows and markup as every other creature (inspect.ts). */
+  private fishPanel(f: Fish): InspectPanel {
     const b = f.brain;
-    const scores = (Object.entries(b.scores) as [Mode, number | undefined][])
-      .filter((e): e is [Mode, number] => (e[1] ?? 0) > MIN_SCORE)
-      .sort((x, y) => y[1] - x[1])
-      .slice(0, TOP_OPTIONS);
-    const max = Math.max(MIN_SCORE_SCALE, ...scores.map((s) => s[1]));
-    return `
-        <h2>${f.name}</h2>
-        <div class="sp">${f.sp.name} <em>${f.sp.sci}</em></div>
-        <div class="thought">“${b.thought}”</div>
-        <h3>Drives</h3>
-        ${typedEntries(b.drives).map(([k, v]) => bar(DRIVE_LABELS[k], v, k)).join('')}
-        <h3>Options considered</h3>
-        ${scores.map(([k, v]) => bar(k + (k === b.mode ? ' ✓' : ''), v / max, k === b.mode ? 'on' : 'opt')).join('')}
-        <h3>Personality</h3>
-        ${typedEntries(b.traits).map(([k, v]) => bar(TRAIT_LABELS[k], v, 'trait')).join('')}
-        <p class="fact">${f.sp.fact}</p>`;
+    return {
+      title: f.name,
+      species: f.sp.name,
+      sci: f.sp.sci,
+      note: b.thought,
+      rows: brainRows({
+        drives: typedEntries(b.drives).map(([k, v]) => [DRIVE_LABELS[k], v, k]),
+        scores: (Object.entries(b.scores) as [Mode, number | undefined][]).map(([k, v]) => [k, v ?? 0]),
+        mode: b.mode,
+        traits: typedEntries(b.traits).map(([k, v]) => [TRAIT_LABELS[k], v]),
+      }),
+      fact: f.sp.fact,
+    };
   }
 
   private updateTags(): void {
@@ -309,7 +412,7 @@ export class UI {
 
   update(): void {
     const selected = this.selected;
-    if (selected) this.panel.innerHTML = 'brain' in selected ? this.panelHtml(selected) : inspectHtml(selected.inspect());
+    if (selected) this.panelBody.innerHTML = inspectHtml('brain' in selected ? this.fishPanel(selected) : selected.inspect());
     if (this.showTags) this.updateTags();
   }
 }

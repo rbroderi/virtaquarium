@@ -21,9 +21,11 @@
   #tags { position: fixed; inset: 0; pointer-events: none; display: none; }
   .tag { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 12px; padding: 2px 8px; border-radius: 10px; background: rgba(0, 25, 35, 0.55); }
   .tag.sel { background: rgba(255, 200, 80, 0.75); color: #111; }
-  #brain { position: fixed; top: 20px; right: 20px; width: 290px; padding: 16px 18px; border-radius: 14px; background: rgba(4, 24, 34, 0.78); backdrop-filter: blur(6px); font-size: 13px; display: none; }
+  #brain { position: fixed; top: 20px; right: 20px; width: min(290px, calc(100vw - 76px)); max-height: calc(100vh - 40px); overflow-y: auto; padding: 16px 18px; border-radius: 14px; background: rgba(4, 24, 34, 0.78); backdrop-filter: blur(6px); font-size: 13px; display: none; }
   #brain.show { display: block; }
-  #brain h2 { margin: 0; font-size: 20px; }
+  #brain-close { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; padding: 0; font: inherit; font-size: 20px; line-height: 26px; color: #cfe6f2; background: none; border: 0; border-radius: 14px; cursor: pointer; }
+  #brain-close:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+  #brain h2 { margin: 0 24px 0 0; font-size: 20px; }
   #brain h3 { margin: 12px 0 4px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #9fc8dc; }
   #brain .sp { color: #bfe0ee; margin-bottom: 8px; }
   #brain .sp em { color: #8fb2c4; }
@@ -63,13 +65,29 @@
   #tanks button { font: inherit; font-size: 13px; color: #cfe6f2; background: none; border: 0; border-radius: 14px; padding: 6px 12px; cursor: pointer; }
   #tanks button:hover { background: rgba(255, 255, 255, 0.1); }
   #tanks button[aria-pressed="true"] { background: rgba(92, 200, 255, 0.3); color: #fff; cursor: default; }
+  /* Touch screens: the canvas takes drags (panning) rather than scrolling the page. */
+  canvas#tank { touch-action: none; }
+  /* Touch screens: the keyboard's controls in a translucent menu, bottom right (ui.ts adds body.touch). */
+  #menu-btn { position: fixed; right: 16px; bottom: 16px; width: 48px; height: 48px; padding: 0 13px; display: none; flex-direction: column; justify-content: center; gap: 5px; border: 0; border-radius: 24px; background: rgba(0, 20, 30, 0.35); backdrop-filter: blur(4px); cursor: pointer; }
+  #menu-btn i { display: block; height: 2px; border-radius: 1px; background: rgba(234, 246, 255, 0.85); }
+  #menu-btn[aria-expanded="true"] { background: rgba(0, 20, 30, 0.6); }
+  body.touch #menu-btn { display: flex; }
+  body.touch #tanks { display: none; }
+  body.touch #brain { max-height: calc(100vh - 104px); }
+  #menu { position: fixed; right: 16px; bottom: 72px; min-width: 190px; padding: 6px; border-radius: 14px; background: rgba(4, 24, 34, 0.8); backdrop-filter: blur(6px); display: none; flex-direction: column; }
+  #menu.open { display: flex; }
+  #menu button { font: inherit; font-size: 15px; text-align: left; color: #eaf6ff; background: none; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+  #menu button:active, #menu button[aria-pressed="true"] { background: rgba(92, 200, 255, 0.25); }
+  #menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid rgba(255, 255, 255, 0.12); }
 </style>
 </head>
 <body>
 <canvas id="tank"></canvas>
 <div id="glass"></div>
 <div id="tags"></div>
-<div id="brain"></div>
+<div id="brain"><button type="button" id="brain-close" aria-label="Close">×</button><div id="brain-body"></div></div>
+<button type="button" id="menu-btn" aria-label="Menu" aria-expanded="false"><i></i><i></i><i></i></button>
+<div id="menu" role="menu"></div>
 <div id="loading" role="progressbar" aria-label="Loading the aquarium">
   <div class="box">
     <img class="logo" src="./brand/logo.webp" alt="Virtual Aquarium" width="800" height="276">
@@ -84,7 +102,8 @@
   <button type="button" data-scenery="jelly">Moon jellies</button>
 </div>
 <div id="help">
-  <div><kbd>click</kbd>drop food (or select a fish or critter)</div>
+  <div><kbd>click</kbd>drop food (or select a fish or critter; click the water to close its panel)</div>
+  <div><kbd>drag</kbd>look along the tank</div>
   <div><kbd>click</kbd>the crystal sign to see its current product</div>
   <div>About the crystal: As an Amazon Associate I earn from qualifying purchases.</div>
   <div><kbd>Tab</kbd>inspect next fish's brain</div>

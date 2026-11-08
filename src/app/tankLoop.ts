@@ -74,6 +74,10 @@ export class TankLoop {
     return this.time;
   }
 
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
   togglePause(): void {
     this.paused = !this.paused;
   }
@@ -96,6 +100,7 @@ export class TankLoop {
     this.fitCanvas();
     const dt = Math.min(this.timer.update().getDelta(), MAX_STEP);
     if (!this.paused) this.step(dt);
+    else this.parts.stage.frameView();   // the view can still be dragged while paused
     this.present();
   }
 
@@ -125,7 +130,8 @@ export class TankLoop {
     snow.update(dt, this.time, this.flow);
     bubbles?.update(dt, this.time, this.flow, world.light);
     if (this.parts.drift) this.driftCamera();
-    stage.frameView(this.time);
+    stage.pan.advance(dt);
+    stage.frameView();
     this.parts.afterStep(dt);
     if (stage.photo ?? stage.post?.photo) this.autofocus(dt);
   }
@@ -169,7 +175,7 @@ export class TankLoop {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    this.parts.stage.frameView(this.time);
+    this.parts.stage.frameView();
   }
 
   private updateLight(dt: number): void {
