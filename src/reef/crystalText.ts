@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { isRecord } from '../util.js';
 import { crystalFaceMaterial } from './crystal.js';
-import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
+import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask, type CrystalTextRegion } from './crystalMask.js';
 
 /** One message a source can show on the crystal. */
 export interface CrystalMessage {
@@ -97,6 +97,7 @@ export class CrystalSign {
   private readonly fadeSeconds: number;
   private readonly mask: THREE.CanvasTexture;
   private readonly fadeUniform: { value: number };
+  private readonly textRegion: CrystalTextRegion | undefined;
   private hover = false;
 
   constructor(private readonly material: THREE.MeshPhysicalMaterial, private readonly source: CrystalAdSource, options: { intervalSeconds?: number; fadeSeconds?: number } = {}) {
@@ -104,6 +105,7 @@ export class CrystalSign {
     this.fadeSeconds = options.fadeSeconds ?? DEFAULT_FADE_S;
     this.mask = material.userData['crystalMask'] as THREE.CanvasTexture;
     this.fadeUniform = material.userData['crystalFade'] as { value: number };
+    this.textRegion = material.userData['crystalTextRegion'] as CrystalTextRegion | undefined;
     this.show(0, false);
   }
 
@@ -143,6 +145,17 @@ export class CrystalSign {
     this.show(0, true);
   }
 
+  /** Shows message `i` immediately and stops rotation (the look check captures one ad at a time). */
+  select(i: number): void {
+    if (!this.messages.length) return;
+    this.index = ((i % this.messages.length) + this.messages.length) % this.messages.length;
+    this.time = 0;
+    this.phase = 'hold';
+    this.fade = 1;
+    this.pendingImpression = false;
+    this.show(this.index, true);
+  }
+
   /** Advances the rotation and fade; wired into the tank loop's afterStep. */
   update(dt: number): void {
     if (!this.messages.length) return;
@@ -180,7 +193,7 @@ export class CrystalSign {
     this.index = ((i % this.messages.length) + this.messages.length) % this.messages.length;
     const msg = this.messages[this.index];
     if (!msg) return;
-    renderMask(this.mask.image as HTMLCanvasElement, Array.isArray(msg.text) ? msg.text : [msg.text], msg.label ?? DEFAULT_LABEL);
+    renderMask(this.mask.image as HTMLCanvasElement, Array.isArray(msg.text) ? msg.text : [msg.text], msg.label ?? DEFAULT_LABEL, this.textRegion);
     this.mask.needsUpdate = true;
     this.fade = force ? 1 : this.fade;
   }

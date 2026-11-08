@@ -7,7 +7,7 @@ import * as THREE from 'three';
 /** Target size (px, square is fine: the wedge is small and the shader maps it with a projection). */
 const BG_SIZE = 256;
 /** Margin around the crystal's bounding box, as a fraction of its radius. */
-const MARGIN = 0.35;
+const MARGIN = 0.55;
 
 export const crystalBgUniforms = {
   uCrystalBg: { value: null as THREE.Texture | null },

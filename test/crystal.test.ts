@@ -49,6 +49,16 @@ describe('layoutCrystalText', () => {
     const totalH = layout.lines.length * layout.size * 1.24;
     expect(totalH).toBeLessThanOrEqual(maxH + 0.001);
   });
+
+  it('keeps the longest crystal.json entry inside the face with a realistic line height', () => {
+    // The plaque's drawn area: 84% of a 1024 x (1024 / 3) face (a wide cleavage plane).
+    const maxW = 860, maxH = 286;
+    const lineHeight = (s: number): number => s * 1.34;   // Segoe UI's line box is taller than 1.24 em
+    const layout = layoutCrystalText(measure, ['Seachem Prime water conditioner'], '', maxW, maxH, lineHeight);
+    expect(layout.lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of layout.lines) expect(measure(line, layout.size)).toBeLessThanOrEqual(maxW);
+    expect(layout.lines.length * lineHeight(layout.size)).toBeLessThanOrEqual(maxH + 0.001);
+  });
 });
 
 describe('crystalClickAction', () => {

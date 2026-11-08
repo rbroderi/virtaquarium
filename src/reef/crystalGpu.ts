@@ -1,6 +1,6 @@
 // The crystal's glass shader on the WebGPU path, in TSL (the WebGL path is crystal.ts's
 // onBeforeCompile patch, which WebGPURenderer never runs). The same sub-frustum transmission
-// background, the face's etched/frosted mask and its dark halo, plus native iridescence.
+// background, the face's etched/frosted mask and its faint inner edge, plus native iridescence.
 import * as THREE from 'three';
 import type {
   LightingModelIndirectInput, Node, NodeBuilder, ShaderNodeObject, StackNode,
@@ -46,7 +46,15 @@ export interface GpuCrystalOptions {
   readonly transmission: number;
   readonly thickness: number;
   readonly tint: THREE.Color;
-  /** The face's etched mask (red clarity / green frost / blue halo), and its fade uniform. */
+  /** Fresnel F0 (normal-incidence reflectance); grazing edges turn mirror-like. */
+  readonly f0: number;
+  /** Frosted letters keep this fraction of the refracted background (translucent, not opaque). */
+  readonly etchTrans: number;
+  /** The frosted letters' soft ice-white scatter. */
+  readonly frost: THREE.Color;
+  /** Inner-edge darkening strength on the frosted letters. */
+  readonly dark: number;
+  /** The face's etched mask (red clarity / green frost / blue inner edge), and its fade uniform. */
   readonly mask?: THREE.Texture;
   readonly fade?: { value: number };
 }
@@ -60,13 +68,17 @@ function crystalLightingModel(
     readonly transmission: NodeObject;
     readonly thickness: NodeObject;
     readonly tint: NodeObject;
+    readonly f0: NodeObject;
+    readonly etchTrans: NodeObject;
+    readonly frost: NodeObject;
+    readonly darkStrength: NodeObject;
     readonly tex: UvSamplerNode;
     readonly proj: NodeObject;
     readonly etch: NodeObject | null;
-    readonly halo: NodeObject | null;
+    readonly dark: NodeObject | null;
   },
 ): InstanceType<Tsl['PhysicalLightingModel']> {
-  const { face, transmission, thickness, tint, tex, proj, etch, halo } = opts;
+  const { face, transmission, thickness, tint, f0, etchTrans, frost, darkStrength, tex, proj, etch, dark } = opts;
   class CrystalLightingModel extends t.PhysicalLightingModel {
     override finish(input: LightingModelIndirectInput, stack: StackNode, builder: NodeBuilder): void {
       inner.finish(input, stack, builder);
@@ -78,14 +90,18 @@ function crystalLightingModel(
       const r = t.refract(v.negate(), n, t.float(1 / CRYSTAL_IOR));
       const exit = pw.add(r.mul(thickness));
       const ndc = proj.mul(t.vec4(exit, 1));
-      const uv = ndc.xy.div(t.max(t.float(1e-5), ndc.w)).mul(t.float(0.5)).add(t.float(0.5));
-      const transmitted = tex.uv(uv).rgb.mul(tint);
-      const mixAmt = face && etch ? transmission.mul(t.float(1).sub(etch)) : transmission;
-      outgoing.assign(t.mix(outgoing, transmitted, mixAmt));
-      if (face && etch && halo) {
-        const glow = t.smoothstep(t.float(0.6), t.float(0.95), etch);
-        outgoing.addAssign(glow.mul(t.vec3(1, 1, 1)));
-        outgoing.mulAssign(t.float(1).sub(halo));
+      const uv = ndc.xy.div(t.max(t.float(1e-5), ndc.w)).mul(t.float(0.5)).add(t.float(0.5)).clamp(t.vec2(0), t.vec2(1));
+      const transmitted = tex.uv(uv).rgb.mul(tint).mul(transmission);
+      // Frosted letters: partly transparent (the reef still shows through) plus a soft ice-white scatter.
+      const transmittedTerm = face && etch
+        ? t.mix(transmitted, transmitted.mul(etchTrans).add(frost), etch)
+        : transmitted;
+      // Fresnel: near-normal facets stay clear, grazing facets reflect their PBR lighting (edge glints).
+      const cosT = n.dot(v).max(t.float(0));
+      const fresnel = f0.add(t.float(1).sub(f0).mul(t.pow(t.float(1).sub(cosT), t.float(5))));
+      outgoing.assign(t.mix(transmittedTerm, outgoing, fresnel));
+      if (face && dark) {
+        outgoing.mulAssign(t.float(1).sub(dark.mul(darkStrength)));
       }
     }
   }
@@ -94,7 +110,7 @@ function crystalLightingModel(
 
 /**
  * The crystal glass as a MeshPhysicalNodeMaterial: caustic-lit like the reef, with the transmission
- * background mixed in after shading, and (for the face) the etched frost, halo and glow.
+ * background mixed in after shading, and (for the face) the etched frost and its faint inner edge.
  */
 export function gpuCrystalMaterial(params: THREE.MeshPhysicalMaterialParameters, options: GpuCrystalOptions): THREE.MeshPhysicalMaterial {
   const t = tsl();
@@ -105,9 +121,13 @@ export function gpuCrystalMaterial(params: THREE.MeshPhysicalMaterialParameters,
   const transmission = t.float(options.transmission);
   const thickness = t.float(options.thickness);
   const tint = t.vec3(options.tint.r, options.tint.g, options.tint.b);
+  const f0 = t.float(options.f0);
+  const etchTrans = t.float(options.etchTrans);
+  const frost = t.vec3(options.frost.r, options.frost.g, options.frost.b);
+  const darkStrength = t.float(options.dark);
 
   let etch: NodeObject | null = null;
-  let halo: NodeObject | null = null;
+  let dark: NodeObject | null = null;
   if (options.face && options.mask && options.fade) {
     const fade = t.uniform(options.fade.value);
     Object.defineProperty(options.fade, 'value', {
@@ -118,7 +138,7 @@ export function gpuCrystalMaterial(params: THREE.MeshPhysicalMaterialParameters,
     });
     const mask = t.texture(options.mask, t.uv());
     etch = t.float(1).sub(mask.r).mul(fade);
-    halo = mask.b.mul(fade);
+    dark = mask.b.mul(fade);
     // Frost: the etched letters read rough against the smooth clear face (roughnessmap_fragment patch).
     mat.roughnessNode = t.float(params.roughness as number).mul(t.mix(t.float(1), mask.g, fade));
   }
@@ -130,7 +150,7 @@ export function gpuCrystalMaterial(params: THREE.MeshPhysicalMaterialParameters,
   const prev = nodeMat.setupLightingModel?.bind(mat);
   nodeMat.setupLightingModel = () => {
     const inner = prev ? prev() : new t.PhysicalLightingModel();
-    return crystalLightingModel(t, inner, { face: options.face, transmission, thickness, tint, tex, proj, etch, halo });
+    return crystalLightingModel(t, inner, { face: options.face, transmission, thickness, tint, f0, etchTrans, frost, darkStrength, tex, proj, etch, dark });
   };
   const prevKey = nodeMat.customProgramCacheKey.bind(mat);
   nodeMat.customProgramCacheKey = () => prevKey() + (options.face ? '|crystalface' : '|crystalbody');

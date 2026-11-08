@@ -217,11 +217,23 @@ async function main(): Promise<void> {
   timer.stage('build reef');
 
   // The crystal sign's etched text (and any clickable sponsor message) is driven only when the
-  // crystal model is present; checks keep it off so their frames and clicks stay comparable.
-  const crystal = options.check === null ? crystalSign(new JsonCrystalAdSource('./models/crystal.json')) : null;
+  // crystal model is present; checks keep it off so their frames and clicks stay comparable, except
+  // that ?crystal=N on the look check forces the Nth crystal.json entry (?crystal=A|B shows literal
+  // lines) so one ad can be captured in isolation.
+  const crystalParam = options.check === 'look' ? params.get('crystal') : null;
+  const crystal = options.check === null || crystalParam !== null
+    ? crystalSign(new JsonCrystalAdSource('./models/crystal.json'))
+    : null;
   if (crystal) {
     bindCrystalSign(crystal);
-    void crystal.start();
+    const started = crystal.start();
+    if (crystalParam !== null) {
+      void started.then(() => {
+        const i = Number(crystalParam);
+        if (Number.isInteger(i) && i >= 0) crystal.select(i);
+        else crystal.setText(crystalParam.split('|'));
+      });
+    }
   }
 
   // Screen AO stays WebGL-only: the WebGPU pass still wedges the D3D12 device on its first update
