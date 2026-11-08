@@ -14,7 +14,6 @@ import * as THREE from 'three';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
 await MeshoptSimplifier.ready;
-MeshoptSimplifier.useExperimentalFeatures = true;   // simplifyWithAttributes
 
 const query = new URLSearchParams(globalThis.location?.search);
 /** Largest on-screen size (pixels) each level is used at. */
