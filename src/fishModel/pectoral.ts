@@ -47,7 +47,11 @@ const pectBands = (sp: Species, i: number): number => Math.max(3, Math.round((fa
 // Pleat and cup of the pectoral surface at (x, y) in its own plane (base at the origin, x outwards).
 function pectZ(sp: Species, x: number, y: number): number {
   const p = pectoralOf(sp), { spread, yk } = pectShape(p), pw = p.len, n = pectoralRays(sp);
-  const r = Math.hypot(x, y) / pw, a = Math.atan2(y / yk, Math.max(1e-4, x));
+  const r = Math.hypot(x, y) / pw;
+  // The ray through (x, y): fan rays rise from a short base (fanBase), so solve for the angle whose ray
+  // passes here, keeping each pleat's crest on its ray.
+  let a = Math.atan2(y / yk, Math.max(1e-4, x));
+  if (pectShape(p).fan) for (let k = 0; k < 6; k++) a = Math.max(-spread / 2, Math.min(spread / 2, Math.atan2((y / pw + fanBase(-a, spread)) / yk, Math.max(1e-4, x / pw))));
   return 0.03 * pw * r * Math.cos(Math.PI * (a / spread + 0.5) * n) + 0.12 * pw * r * r;
 }
 
@@ -88,6 +92,18 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   // Base at left-centre; fin extends to the right. The free margin is traced separately from the base
   // so a pigmented edge follows only the margin.
   g.translate(0, H / 2);
+  const n = pectoralRays(sp), a0r = -spread / 2, span = spread;
+  const ang = (i: number): number => a0r + (span * i) / n;
+  const dir = (a: number, r: number): P2 => [Math.cos(a) * r, Math.sin(a) * r * yk + (fan ? fanBase(a, spread) * W : 0)];
+  // A fan ray's membrane strap on the canvas: its length L (px, along the ray parameter r), unit
+  // direction, k (canvas length per unit of r), half-width at share t of L, and the point at r offset
+  // by `side` half-widths across it (-1 the upper edge, +1 the lower; canvas y runs down).
+  const hw0 = ((p.flag ?? 0.012) / p.len) * W / 2, tip = p.flagTip ?? 1;
+  const strap = (i: number): { L: number; dx: number; dy: number; k: number; hw: (t: number) => number; at: (r: number, side: number) => P2 } => {
+    const a = ang(i), L = fanLen(sp, i) * W, k = Math.hypot(Math.cos(a), Math.sin(a) * yk);
+    const dx = Math.cos(a) / k, dy = (Math.sin(a) * yk) / k, hw = (t: number): number => hw0 * (1 - (1 - tip) * t);
+    return { L, dx, dy, k, hw, at: (r, side) => { const [x, y] = dir(a, r), h = side * hw(r / L); return [x - dy * h, y + dx * h]; } };
+  };
   // Rounded paddle (damselfishes): the rays' tips lie on a broad arc; the outer rays are shorter.
   const arc = (first: boolean): void => {
     for (let i = 0; i <= 24; i++) {
@@ -101,13 +117,23 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
       if (free) { arc(true); return; }
       g.moveTo(0, -H * 0.07); arc(false); g.lineTo(0, H * 0.07);
     } else if (fan) {
-      // Through each ray tip, the membrane incised deeply between them so the tips stand free.
-      const nr = pectoralRays(sp), ang = (i: number): number => -spread / 2 + (spread * i) / nr;
-      const pt = (a: number, r: number): P2 => [Math.cos(a) * r * W, (Math.sin(a) * r * yk + fanBase(a, spread)) * W];
+      // Round each strap's edges and rounded tip; between straps the membrane runs out to the web depth,
+      // incised there so the straps stand free beyond it.
+      const nr = pectoralRays(sp), web = p.web ?? 0.62;
       g.moveTo(0, -H * (FAN_BASE + 0.015));
       for (let i = 0; i <= nr; i++) {
-        g.lineTo(...pt(ang(i), fanLen(sp, i)));
-        if (i < nr) g.lineTo(...pt(ang(i + 0.5), (p.web ?? 0.62) * Math.min(fanLen(sp, i), fanLen(sp, i + 1))));
+        const s = strap(i), L = s.L;
+        const rIn = i > 0 ? web * Math.min(L, strap(i - 1).L) : 0, rOut = i < nr ? web * Math.min(L, strap(i + 1).L) : 0;
+        const hTip = s.hw(1), rc = Math.max(rIn, L - hTip / s.k);
+        if (i > 0) {   // the notch: a shallow curve from the last strap's lower edge to this one's upper edge
+          const prev = strap(i - 1), [qx, qy] = prev.at(rIn, 1), [ux, uy] = s.at(rIn, -1);
+          const [mx, my] = dir(ang(i - 0.5), rIn * 0.96);
+          g.lineTo(qx, qy); g.quadraticCurveTo(mx, my, ux, uy);
+        }
+        g.lineTo(...s.at(rIn, -1)); g.lineTo(...s.at(rc, -1));
+        const [cx, cy] = s.at(rc, 0), th = Math.atan2(s.dy, s.dx);
+        g.arc(cx, cy, hTip, th - Math.PI / 2, th + Math.PI / 2);
+        g.lineTo(...s.at(rOut, 1));
       }
       g.lineTo(0, H * (FAN_BASE + 0.015));
     } else {
@@ -126,18 +152,19 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   for (let s = 0; s <= 4; s++) mg.addColorStop(s / 4, `rgba(0,0,0,${1 - a0 * (1 - 0.38 * (s / 4) ** 2)})`);
   g.fillStyle = mg; g.fillRect(0, -H / 2, W, H);
   g.globalCompositeOperation = 'source-over';
-  const n = pectoralRays(sp), a0r = -spread / 2, span = spread;
-  const dir = (a: number, r: number): P2 => [Math.cos(a) * r, Math.sin(a) * r * yk + (fan ? fanBase(a, spread) * W : 0)];
   for (let i = 0; i <= n; i++) {
-    const a = a0r + (span * i) / n;
+    const a = ang(i);
     if (fan) {
-      // The rays are 3D tubes (pectoralTubes); the membrane takes a narrow banded flag along each.
-      const L = fanLen(sp, i) * W, nb = pectBands(sp, i);
-      g.lineWidth = ((p.flag ?? 0.012) / p.len) * W;
+      // The rays are 3D tubes (pectoralTubes); the membrane takes a banded strap along each, tapering
+      // to its tip (the margin clips it round).
+      const s = strap(i), L = s.L, nb = pectBands(sp, i);
       for (let q = 0; q < nb; q++) {
-        g.strokeStyle = q % 2 && p.stripes ? p.stripes : p.fill;
-        const r0 = Math.max((L * q) / nb, L * FAN_ROOT), r1 = (L * (q + 1)) / nb;
-        if (r1 > r0) { g.beginPath(); g.moveTo(...dir(a, r0)); g.lineTo(...dir(a, r1)); g.stroke(); }
+        g.fillStyle = q % 2 && p.stripes ? p.stripes : p.fill;
+        const r0 = Math.max((L * q) / nb, L * FAN_ROOT), r1 = q === nb - 1 ? L * 1.05 : (L * (q + 1)) / nb;
+        if (r1 > r0) {
+          g.beginPath(); g.moveTo(...s.at(r0, -1)); g.lineTo(...s.at(r1, -1)); g.lineTo(...s.at(r1, 1)); g.lineTo(...s.at(r0, 1));
+          g.closePath(); g.fill();
+        }
       }
     } else {
       // Jointed soft rays (the first is simple), branching at about half their length.

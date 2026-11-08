@@ -161,6 +161,9 @@ export interface FinLook extends FinSpots {
   rays?: string;
   thin?: number;
   solid?: boolean;
+  /** Depth of the membrane's pleats between rays (multiple of the default); deeper pleats give the fin
+   * thickness seen edge-on. */
+  pleat?: number;
 }
 
 /** A membrane fin (dorsal or anal) given as an outline of heights along it. */
@@ -218,6 +221,8 @@ export interface Caudal extends FinSpots {
   rays?: string;
   thin?: number;
   solid?: boolean;
+  /** As FinLook.pleat. */
+  pleat?: number;
   band?: CaudalBand;
 }
 
@@ -248,7 +253,10 @@ export interface Pectoral extends FinSpots {
   stripes?: string;
   rayColor?: string;
   rayR?: number;
+  /** Fans: width of the membrane strap along each ray (body lengths at the root). */
   flag?: number;
+  /** Fans: strap width at the tip as a share of its root width (default 1: parallel-sided). */
+  flagTip?: number;
   /** Fans: membrane depth between rays, as a share of the shorter ray (the rest stands free). */
   web?: number;
   /** Fans: ray lengths as a share of len, [t, share] with t from the top ray (0) to the bottom one (1). */

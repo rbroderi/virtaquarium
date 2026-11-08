@@ -53,6 +53,8 @@ export interface FinMeshSpec {
   rays: Rays;
   n: number;
   erect?: (t: number) => Erect4;
+  /** Pleat depth, a multiple of the default (FinLook.pleat). */
+  pleat?: number;
   xforms?: THREE.Matrix4[];
 }
 
@@ -358,7 +360,7 @@ export function paintFins(sp: Species, prof: Profile, cachedMaps = false): FinSh
     }
     g.setLineDash([]); hg.setLineDash([]); hg.globalAlpha = 1;
     g.restore();
-    meshes.push({ rays, n });
+    meshes.push({ rays, n, ...(spec.pleat ? { pleat: spec.pleat } : {}) });
     if (spec.edge) {
       // Pigmented margin (e.g. the clownfish's black submarginal band), edgeW wide, optionally with
       // a narrow translucent unpigmented fringe outside it. Only the free margin, not the base.

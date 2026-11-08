@@ -159,7 +159,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
       egg: [[0, 0.1], [0.28, 0.2], [0.42, 0], [0.55, -0.15], [0.8, -0.1], [1, 0]],
       cover: 0.012,
       outline: {
-        top: [[0, -0.57], [0.016, -0.63], [0.033, -0.59], [0.065, -0.46], [0.098, -0.3], [0.131, -0.25], [0.163, -0.28], [0.196, -0.37],
+        top: [[0, -0.57], [0.016, -0.72], [0.033, -0.73], [0.065, -0.62], [0.098, -0.37], [0.131, -0.24], [0.163, -0.27], [0.196, -0.37],
           [0.261, -0.51], [0.327, -0.54], [0.392, -0.31], [0.458, -0.04], [0.523, 0.19], [0.588, 0.23], [0.654, 0.22], [0.719, 0.23],
           [0.784, 0.23], [0.85, 0.2], [0.915, 0.1], [0.961, 0.05], [1, 0.05]],
         bot: [[0, -0.405], [0.016, -0.27], [0.033, -0.24], [0.065, -0.195], [0.098, -0.19], [0.131, -0.21], [0.163, -0.2], [0.196, -0.19],
@@ -211,12 +211,13 @@ const DEFINITIONS: SpeciesDefinition[] = [
       { pos: 'top', meristic: 'dorsalSoft', u0: 0.76, u1: 0.97, pts: [[0, 0.08], [0.25, 0.13], [0.7, 0.11], [1, 0.03]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
       { pos: 'bottom', meristic: 'anal', u0: 0.75, u1: 0.94, pts: [[0, 0.03], [0.4, 0.14], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
     ],
-    caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
-    // Fans of 14 free, banded rays: the upper ones about 0.7-0.85 TL, the lowest about 0.35; membrane only
-    // on the inner half. Held out like wings: the top ray swept about 25 deg back, the lowest straight back,
-    // the fan's surface tilted about 45 deg down from the horizontal.
-    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.022, web: 0.5,
-      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 1.1, yaw: 0.55, flap: -0.2 },
+    caudal: { type: 'round', spread: 0.16, pleat: 3, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
+    // Fans of 14 broad, banded strap rays (tapering to about half width) with webbing out to about 0.6 of
+    // each strap: the upper ones about 0.7-0.85 TL, the lowest about 0.35. Held out like wings but turned
+    // toward the side view: the top ray swept about 50 deg back and slightly up, the lowest drooping about
+    // 47 deg, the fan's surface tilted about 48 deg from the horizontal.
+    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.055, flagTip: 0.55, web: 0.62,
+      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.8, yaw: 0.35, flap: 0.2 },
       spots: '#20140c', spotR: 0.004, spotN: 50 },
     pelvic: { u: 0.41, len: 0.24, angle: 50, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },

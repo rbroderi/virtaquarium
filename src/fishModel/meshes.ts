@@ -16,7 +16,7 @@ const NO_ERECT: Erect4 = [0, 0, 0, 0];
 // A fin membrane meshed on its rays: rows run from the base to the edge, and the membrane is
 // fan-folded (rays on alternate ridges and valleys), which gives fins their pleated relief and
 // broken-up highlights. UVs index the fin sheet texture, which is drawn in fish coordinates.
-export function finMesh({ rays, n, erect }: FinMeshSpec, sheet: Pick<FinSheet, 'xmin' | 'xmax' | 'ymax'>): THREE.BufferGeometry {
+export function finMesh({ rays, n, erect, pleat = 1 }: FinMeshSpec, sheet: Pick<FinSheet, 'xmin' | 'xmax' | 'ymax'>): THREE.BufferGeometry {
   const NT = Math.max(24, n * 4), NS = MEMBRANE_ROWS, pos: number[] = [], uv: number[] = [], idx: number[] = [], er: number[] = [];
   for (let i = 0; i <= NT; i++) {
     const t = i / NT, [b, o] = rays(t), e = erect ? erect(t) : NO_ERECT;
@@ -25,7 +25,7 @@ export function finMesh({ rays, n, erect }: FinMeshSpec, sheet: Pick<FinSheet, '
     const L = Math.hypot(ex - b[0], ey - b[1]);
     for (let j = 0; j <= NS; j++) {
       const sj = j / NS, x = lerp(b[0], ex, sj), y = lerp(b[1], ey, sj);
-      pos.push(x, y, 0.035 * L * sj * Math.cos(Math.PI * t * n));
+      pos.push(x, y, 0.035 * pleat * L * sj * Math.cos(Math.PI * t * n));
       uv.push((x - sheet.xmin) / (sheet.xmax - sheet.xmin), (y + sheet.ymax) / (2 * sheet.ymax));
     }
   }

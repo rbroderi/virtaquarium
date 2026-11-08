@@ -123,7 +123,8 @@ export function bodyGeometry(prof: Profile, sp: Species): THREE.BufferGeometry {
       cov.push(c * c);
       slit.push(sl);
     };
-    const gs = seam?.slit ? 1 : 0, mi = mouthRing ? 1 : gs, mj = wj, MV = mouthRing ? 0.05 : 0;
+    // The gill opening is shaded as a cavity, less so under a near-flush cover (its gap is a hairline).
+    const gs = seam?.slit ? Math.min(1, coverOf(sp) / COVER) : 0, mi = mouthRing ? 1 : gs, mj = wj, MV = mouthRing ? 0.05 : 0;
     for (let a = 0; a < NA; a++) {
       const lower = a > iL && a < NA - iL ? wj : 0;
       if (a === iL) {
@@ -216,6 +217,20 @@ export function bodyGeometry(prof: Profile, sp: Species): THREE.BufferGeometry {
   for (let i = 0; i < rings; i++) {
     for (let a = 0; a < R; a++) if (bad(ring(i) + a)) copy(ring(i) + a, ring(i) + ((a + R - 1) % R));
     for (let a = R - 1; a >= 0; a--) if (bad(ring(i) + a)) copy(ring(i) + a, ring(i) + ((a + 1) % R));
+  }
+  // A near-flush cover (sp.body.cover) shades as one surface across its margin: the four seam rings
+  // take their shared normal, or a crease in the shading draws the margin as a hairline.
+  const flush = 1 - Math.min(1, coverOf(sp) / COVER), r1 = slitRings[0], r2 = slitRings[1];
+  if (flush > 0 && r1 !== undefined && r2 !== undefined) {
+    const v = new THREE.Vector3(), w = new THREE.Vector3();
+    for (let a = 0; a < R; a++) {
+      const f = ring(r1 - 1) + a, b = ring(r2 + 1) + a;
+      w.set(n.getX(f) + n.getX(b), n.getY(f) + n.getY(b), n.getZ(f) + n.getZ(b)).normalize();
+      for (const i of [f, ring(r1) + a, ring(r2) + a, b]) {
+        v.set(n.getX(i), n.getY(i), n.getZ(i)).lerp(w, flush).normalize();
+        n.setXYZ(i, v.x, v.y, v.z);
+      }
+    }
   }
   return g;
 }
