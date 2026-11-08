@@ -139,38 +139,51 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // Dorsal XIII + 11, anal III + 7, pectoral 14 unbranched rays, pelvic I + 5 (Schultz 1986; FishBase).
     anatomy: { bodyDepthSL: [0.28, 0.38], dorsalSoft: { spines: 0, rays: 11 }, anal: { spines: 3, rays: 7 }, pectoralRays: 14, pelvic: { spines: 1, rays: 5 } },
     albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
-    body: { len: 0.78, depth: 0.27, width: 0.6, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35 },
-    eye: { u: 0.17, v: -0.35, r: 0.03, iris: '#b05a3a', irisR: 0.98, pupil: 0.42, fleck: '#5a2010', fleckR: 0.8 },
-    mouth: { u: 0.13, v: 0.3, v0: 0.02, lining: 0.04 },   // large and oblique, the lower jaw projecting
+    // Proportions measured from side-on photos (web/ref/lionfish and others), in SL: eye 0.045-0.057 across,
+    // its centre 0.15-0.19 behind the snout and about a quarter of the head's depth below its top; the
+    // supraocular tentacles about 0.2; the longest dorsal spines 0.37-0.5 (1.1-1.7 body depths).
+    // mouth: the snout tip sits low under a steep forehead; headW: a narrow, compressed face.
+    body: { len: 0.78, depth: 0.27, width: 0.5, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35, mouth: -0.45, headW: 0.65 },
+    eye: { u: 0.17, v: -0.55, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
+    mouth: { u: 0.17, v: 0.65, v0: 0.0, lining: 0.05 },   // large and oblique, the corner under the front of the eye
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
       // From just behind the snout tip: run to the tip, where the body closes to a point, the stripes turn
       // into rings round the nose (a bullseye head-on).
-      { op: 'stripesV', u0: 0.05, u1: 1.0, n: 19, color: '#9a4a28', ratio: 0.55 },
+      { op: 'stripesV', u0: 0.05, u1: 1.0, n: 19, color: '#923f22', ratio: 0.66 },   // broad red-brown bars, narrow pale gaps
       { op: 'blob', u: 0.4, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
     ],
-    // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle,
-    // with a ridge over each eye.
+    // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle, a
+    // ridge arches over each eye and the lacrimal bone ridges the snout ahead of it.
     ridges: [
-      { u0: 0.15, v0: 0.05, u1: 0.29, v1: 0.15, w: 0.008, h: 0.004 },
-      { u0: 0.13, v0: -0.72, u1: 0.21, v1: -0.75, w: 0.007, h: 0.004 },
-      { u0: 0.27, v0: -0.25, u1: 0.3, v1: 0.3, w: 0.006, h: 0.003 },   // preopercle margin
+      { u0: 0.15, v0: -0.2, u1: 0.29, v1: 0.0, w: 0.008, h: 0.005 },   // suborbital stay
+      { u0: 0.12, v0: -0.82, u1: 0.22, v1: -0.86, w: 0.007, h: 0.005 },   // supraorbital ridge
+      { u0: 0.05, v0: -0.25, u1: 0.13, v1: -0.4, w: 0.006, h: 0.003 },   // lacrimal
+      { u0: 0.27, v0: -0.3, u1: 0.3, v1: 0.45, w: 0.006, h: 0.003 },   // preopercle margin
     ],
-    // A banded, leaf-like tentacle over each eye, and fleshy lappets at the chin.
+    // A long, banded, leaf-like tentacle over each eye; fringed flaps hanging from the lacrimal over the
+    // upper jaw and under the chin; short bony spines on the snout, over the eye, the nape and the
+    // preopercle margin.
     appendages: [
-      { u: 0.17, v: -0.85, len: 0.075, dir: [0.35, 1, 0.25], r: 0.004, flat: 0.3, shape: 'leaf', color: '#f2e8dc', stripes: '#9a4a2a', nb: 3, bend: -0.2 },
-      { u: 0.04, v: 0.45, len: 0.022, dir: [0.2, -1, 0.4], r: 0.004, flat: 0.4, shape: 'leaf', color: '#efe3d6' },
-      { u: 0.1, v: 0.6, len: 0.02, dir: [0, -1, 0.5], r: 0.004, flat: 0.4, shape: 'leaf', color: '#efe3d6' },
+      { u: 0.165, v: -0.8, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0042, flat: 0.25, shape: 'leaf', color: '#f2e8dc', stripes: '#8a3a1c', nb: 7, bend: -0.12 },
+      { u: 0.05, v: 0.2, len: 0.03, dir: [0.35, -1, 0.5], r: 0.004, flat: 0.35, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 3 },
+      { u: 0.03, v: 0.7, len: 0.016, dir: [0.3, -1, 0.4], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
+      { u: 0.09, v: 0.8, len: 0.014, dir: [0, -1, 0.5], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
+      { u: 0.07, v: -0.6, len: 0.012, dir: [0.6, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // nasal spine
+      { u: 0.215, v: -0.88, len: 0.014, dir: [-0.4, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // supraocular spine
+      { u: 0.27, v: -0.93, len: 0.016, dir: [-0.7, 1, 0.25], r: 0.002, color: '#f2e6d8', bend: 0 },   // parietal spine
+      { u: 0.3, v: 0.2, len: 0.016, dir: [-1, -0.2, 0.4], r: 0.002, color: '#f2e6d8', bend: 0 },   // preopercular spines
+      { u: 0.29, v: 0.5, len: 0.013, dir: [-1, -0.7, 0.4], r: 0.0018, color: '#f2e6d8', bend: 0 },
     ],
     // Venomous dorsal spines: carried up, flared further forward at a threat (and while stalking).
     erect: { rest: 1, alarm: 1.8 },
     fins: [
-      { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.3, hs: [0.55, 0.75, 0.85, 0.95, 1, 1, 0.95, 0.85, 0.7, 0.55, 0.42, 0.3, 0.22], lean: [-5, 60], r: 0.0045, flag: 0.13, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c', raise: 15, foldTo: 82 },
+      { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.36, hs: [0.5, 0.8, 0.95, 1, 1, 0.96, 0.9, 0.8, 0.68, 0.55, 0.42, 0.3, 0.2], lean: [-12, 58], r: 0.0032, flag: 0.05, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c', raise: 15, foldTo: 82 },
       { pos: 'top', meristic: 'dorsalSoft', u0: 0.66, u1: 0.93, pts: [[0, 0.04], [0.3, 0.13], [0.8, 0.12], [1, 0.02]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
       { pos: 'bottom', meristic: 'anal', u0: 0.62, u1: 0.88, pts: [[0, 0.03], [0.4, 0.15], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
     ],
     caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
-    pectoral: { kind: 'fan', u: 0.27, v: 0.2, len: 0.5, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.004, flag: 0.016, web: 0.6, spots: '#20140c', spotR: 0.004, spotN: 50 },
+    pectoral: { kind: 'fan', u: 0.27, v: 0.2, len: 0.5, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.004, flag: 0.011, web: 0.6, spots: '#20140c', spotR: 0.004, spotN: 50 },
     pelvic: { u: 0.3, len: 0.2, angle: 60, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },
   },
