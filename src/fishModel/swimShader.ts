@@ -392,7 +392,7 @@ export function makeSwimMaterial<M extends THREE.Material>(base: M, uniforms: Sw
       // map's G, and the cavity from the roughness map's R, applied as three's aoMap would (indirect
       // diffuse, sheen and specular occlusion), without a sampler each.
       shader.fragmentShader = shader.fragmentShader
-        .replace('material.iridescenceThickness = iridescenceThicknessMaximum;',
+        .replace('material.iridescenceThickness = (iridescenceThicknessMaximum - iridescenceThicknessMinimum) * texture2D( iridescenceThicknessMap, vIridescenceThicknessMapUv ).g + iridescenceThicknessMinimum;',
           'material.iridescenceThickness = mix( iridescenceThicknessMinimum, iridescenceThicknessMaximum, texture2D( iridescenceMap, vIridescenceMapUv ).g );')
         .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         #ifdef USE_ROUGHNESSMAP
