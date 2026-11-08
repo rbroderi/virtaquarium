@@ -145,8 +145,20 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // mouth: the snout tip sits low under a steep forehead; headW: a narrow, compressed face. section:
     // head-on the face is a blunt wedge, the cheeks widest and the forehead a narrow ridge between the
     // eyes (about half the cheek width).
-    body: { len: 0.78, depth: 0.27, width: 0.42, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35, mouth: -0.45, headW: 0.5,
-      section: { u0: 0, u1: 0.24, ease: 0.07, lo: -0.55, hi: 0.15, round: 0.3, sharp: 0.6 } },
+    // outline (from side-on photos and two lionfish models, in body depths D off the axis at the deepest
+    // point): the head hangs low, its snout about 0.3 D below the axis and its throat nearly as deep as
+    // the belly; the forehead dips in front of the eye, bulges at the brow over it and dips again at the
+    // nape (u 0.26) before the back humps up under the spines (peak about 0.52 D at u 0.4-0.48). The
+    // belly is deepest under the pectorals; the body then tapers fast to a peduncle about a third of the
+    // body depth (ped), its midline a little below the axis.
+    body: { len: 0.78, depth: 0.27, width: 0.42, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.33, mouth: -0.45, headW: 0.5,
+      section: { u0: 0, u1: 0.24, ease: 0.07, lo: -0.55, hi: 0.15, round: 0.3, sharp: 0.6 },
+      outline: {
+        top: [[0, -0.08], [0.04, -0.07], [0.08, -0.14], [0.12, -0.05], [0.17, -0.01], [0.21, -0.11], [0.26, -0.33], [0.32, -0.18], [0.4, 0.03],
+          [0.48, 0.06], [0.56, 0], [0.65, -0.11], [0.75, -0.23], [0.85, -0.26], [0.93, -0.2], [1, -0.1]],
+        bot: [[0, -0.18], [0.04, -0.07], [0.08, -0.03], [0.12, 0], [0.17, -0.02], [0.21, -0.04], [0.26, -0.07], [0.32, -0.12], [0.4, -0.13],
+          [0.48, -0.12], [0.56, -0.1], [0.65, -0.08], [0.75, -0.05], [0.85, -0.01], [0.93, -0.02], [1, -0.1]],
+      } },
     eye: { u: 0.17, v: -0.55, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
     mouth: { u: 0.17, v: 0.65, v0: 0.0, lining: 0.05 },   // large and oblique, the corner under the front of the eye
     pattern: [

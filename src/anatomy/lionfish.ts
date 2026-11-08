@@ -4,6 +4,9 @@
 // The soft dorsal's outline (fins[1] pts and sweep) is also left to species.ts, and its end pulled in from
 // 0.999 to 0.95: the traces merged it with the spines and pectoral fans behind it (0.22 TL high, against
 // about 0.13 TL measured side-on). Re-running the tool restores the fitted values; drop them again.
+// body.tailP and body.ped are dropped too (fitted 0.64 and 0.614, a near-cylinder): the traces ran over the
+// soft dorsal and anal fins, so the peduncle came out twice its depth. species.ts sets them, measured from
+// photos and models, along with body.outline.
 import type { FittedAnatomy } from '../species/types.js';
 
 const fitted: FittedAnatomy = {
@@ -12,8 +15,6 @@ const fitted: FittedAnatomy = {
     "depth": 0.293,
     "m": 0.321,
     "headP": 0.6,
-    "tailP": 0.64,
-    "ped": 0.614,
     "hump": 0.039
   },
   "fins": [

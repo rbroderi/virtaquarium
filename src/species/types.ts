@@ -71,6 +71,17 @@ export interface Body {
   section?: BodySection;
   /** A moray-like head bulge (only the moray sets this). */
   head?: HeadShape;
+  /** Free-form corrections to the side outline, for bodies the formula cannot bend into shape. */
+  outline?: BodyOutline;
+}
+
+/** Control points [u, dy] that move the dorsal (top) and ventral (bot) outlines up or down by dy (in
+ *  half-depths H; + is up), joined by a smooth curve through the points and held at the end values
+ *  beyond them. Moving both lowers or raises the centreline there (a head hung below the body axis);
+ *  moving one bends that outline alone (a brow, a nape dip, a deep belly). */
+export interface BodyOutline {
+  top?: readonly (readonly [number, number])[];
+  bot?: readonly (readonly [number, number])[];
 }
 
 export interface Eye {

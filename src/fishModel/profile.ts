@@ -47,6 +47,28 @@ const MIN_HALF_WIDTH = 0.004;
 
 export const smooth01 = (t: number): number => { const c = clamp(t, 0, 1); return c * c * (3 - 2 * c); };
 
+/** A smooth curve through control points [u, y] (sorted by u): Catmull-Rom between the points, held at
+ *  the end values beyond them; 0 everywhere when there are none. */
+export function outlineCurve(pts: readonly (readonly [number, number])[] | undefined): (u: number) => number {
+  if (!pts || pts.length === 0) return () => 0;
+  const n = pts.length;
+  const at = (i: number): readonly [number, number] => pts[clamp(i, 0, n - 1)]!;
+  // Tangent dy/du at point i from its neighbours (one-sided at the ends).
+  const slope = (i: number): number => {
+    const a = at(i - 1), b = at(i + 1);
+    return b[0] > a[0] ? (b[1] - a[1]) / (b[0] - a[0]) : 0;
+  };
+  return (u: number): number => {
+    if (u <= pts[0]![0]) return pts[0]![1];
+    if (u >= pts[n - 1]![0]) return pts[n - 1]![1];
+    let i = 0;
+    while (u > pts[i + 1]![0]) i++;
+    const [u0, y0] = pts[i]!, [u1, y1] = pts[i + 1]!, h = u1 - u0, t = (u - u0) / h;
+    const t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * y0 + (t3 - 2 * t2 + t) * h * slope(i) + (-2 * t3 + 3 * t2) * y1 + (t3 - t2) * h * slope(i + 1);
+  };
+}
+
 export function makeProfile(body: Body): Profile {
   const snout = body.snout || 0, snoutH = body.snoutH || 0;
   const m = body.m, ped = body.ped, H = body.depth / 2;
@@ -68,6 +90,8 @@ export function makeProfile(body: Body): Profile {
     const h = clamp(0.5 + 0.5 * (a - b) / k, 0, 1);
     return lerp(b, a, h) + k * h * (1 - h);
   };
+  // outline: per-station moves of the top and bottom outlines (in H, + up), split into depth and midline.
+  const dTop = outlineCurve(body.outline?.top), dBot = outlineCurve(body.outline?.bot);
   const half = (u: number): number => {
     if (u < snout) return snoutH * (tip + (1 - tip) * (u / snout));
     const uu = (u - snout) / (1 - snout);
@@ -76,6 +100,7 @@ export function makeProfile(body: Body): Profile {
     if (uu < m) f = (snout ? 0 : 0.17) + (snout ? 1 : 0.83) * Math.pow(Math.sin((Math.PI / 2) * (uu / m)), body.headP);
     else f = ped + (1 - ped) * Math.pow(Math.cos((Math.PI / 2) * ((uu - m) / (1 - m))), body.tailP);
     f += head ? head.depth * headBump(u) : 0;
+    f += (dTop(u) - dBot(u)) / 2;
     return snout ? smax(H * f, snoutH, blend) : Math.max(H * f, MIN_HALF_DEPTH);
   };
   const x = (u: number): number => 0.5 - u * body.len;
@@ -91,7 +116,7 @@ export function makeProfile(body: Body): Profile {
   // mouth: the snout's height off the midline (in H; negative is below). Tangs and butterflyfish carry
   // the mouth low under a steep forehead; the midline eases back to level by the deepest point.
   const mouth = body.mouth ?? 0;
-  const centre = (u: number): number => hump * H * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 1.5 + mouth * H * (1 - smooth01(u / mEnd)) + (head ? head.top * head.depth * H * headBump(u) : 0);
+  const centre = (u: number): number => hump * H * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 1.5 + mouth * H * (1 - smooth01(u / mEnd)) + (head ? head.top * head.depth * H * headBump(u) : 0) + H * (dTop(u) + dBot(u)) / 2;
   const top = (u: number): number => centre(u) + half(u), bot = (u: number): number => centre(u) - half(u);
   return { half, x, width, centre, top, bot, H, xPed: x(1) };
 }
