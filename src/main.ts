@@ -332,7 +332,9 @@ function startAnimation(loop: TankLoop, stage: Stage, timer: StartupTimer, optio
     if (!first) return;
     first = false;
     reportFirstFrame(stage, timer, options, profiler, programsBefore);
-    startIdleVariantPainting();   // variant 1-3 textures, painted one per idle slice after the first frame
+    // Variant 1-3 textures, painted one per idle slice after the first frame. Not under ?check=startup:
+    // it reports right after this frame and the check's server shuts down, so the worker could not load.
+    if (options.check !== 'startup') startIdleVariantPainting();
   };
   tick();
 }

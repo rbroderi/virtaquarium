@@ -62,6 +62,23 @@ interface PutOptions {
   readonly onSand?: boolean;
 }
 
+/**
+ * Gives a non-indexed, flat-normalled geometry a box-projected uv: each face takes the two position
+ * axes across its dominant normal axis, so a tiling texture lands unstretched on every facet.
+ */
+function boxProjectUv(g: THREE.BufferGeometry): void {
+  const p = g.attributes['position'], n = g.attributes['normal'];
+  if (!p || !n) return;
+  const uv = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) {
+    const ax = Math.abs(n.getX(i)), ay = Math.abs(n.getY(i)), az = Math.abs(n.getZ(i));
+    const [u, v] = ax >= ay && ax >= az ? [p.getZ(i), p.getY(i)] : ay >= az ? [p.getX(i), p.getZ(i)] : [p.getX(i), p.getY(i)];
+    uv[i * 2] = u;
+    uv[i * 2 + 1] = v;
+  }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+}
+
 interface Blade { x: number; y: number; z: number; yaw: number; lean: number; w: number; L: number }
 interface SandSpot { x: number; z: number; r: number }
 
@@ -682,6 +699,7 @@ export class ReefBuilder {
     }
     g = g.toNonIndexed();
     g.computeVertexNormals();
+    boxProjectUv(g);   // the uv was dropped to weld the vertices; the pores bump map needs one
     return g;
   }
 

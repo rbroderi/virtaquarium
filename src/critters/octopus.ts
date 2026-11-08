@@ -11,7 +11,7 @@ import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js'
 import { OCTO_SAC } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, type ShaderHook, type NodeHook } from './shared.js';
-import { boundMaterialColor } from '../webgpu/tsl.js';
+import { boundMaterialColor, gpuActive } from '../webgpu/tsl.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
@@ -134,7 +134,9 @@ export class Octopus implements Critter {
     const shadeHook = this.shadeNodeHook();
     const tex = octoSkin(mulberry32(SKIN_SEED)), armTex = octoSkin(mulberry32(SKIN_SEED), ARM_WHITE_SPOTS), bump = octoBump(rng);   // the same skin; the arms add bold white spots
     const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook, { ...CEPH_SSS, thin: 'attr' }, shadeHook);
-    const bodyMat = skin({ map: tex, roughness: 0.55 }, 'octo-body', this.bodyHook(), CEPH_SSS, this.bodyNodeHook(tex));
+    // WebGL's bodyHook samples `map` triplanar in place of map_fragment; the WebGPU colorNode samples tex
+    // itself, and a `map` there would make the shadow pass read its alpha at a uv this mesh does not have.
+    const bodyMat = skin({ ...(gpuActive() ? {} : { map: tex }), roughness: 0.55 }, 'octo-body', this.bodyHook(), CEPH_SSS, this.bodyNodeHook(tex));
     // Mantle sac, head, eye turrets, oral disc with the arm roots, and siphon: one mesh (built for
     // M = 1, softBodies.ts), so the arms grow out of the body rather than meeting it at seams.
     const body = new THREE.Mesh(softBodyGeometry('octopus-body'), bodyMat);

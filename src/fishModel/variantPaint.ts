@@ -40,9 +40,13 @@ function ensureWorker(): Worker {
     p.ok(maps);
   };
   worker.onerror = (e: ErrorEvent) => {
-    const err = new Error(e.message || 'variant painter worker failed');
+    // A worker that failed to load (no message: the script fetch or module evaluation failed) is dead and
+    // would never answer again, so later requests would hang; drop it and let the next one start afresh.
+    const err = new Error(e.message || 'variant painter worker failed to load');
     for (const p of pending.values()) p.fail(err);
     pending.clear();
+    worker?.terminate();
+    worker = null;
   };
   return worker;
 }

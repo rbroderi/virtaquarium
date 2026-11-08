@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { makeCanvas, context2d, range, type Rng } from '../util.js';
 import { GLASS_Z, METRES_PER_UNIT, SURFACE_Y } from './medium.js';
 import { NO_FLOW, type FlowField } from './flow.js';
+import { gpuActive, tsl, webgpu } from '../webgpu/tsl.js';
 
 const PARTICLE_COUNT = 600;
 const DOT_TEXTURE_SIZE = 32;
@@ -30,11 +31,27 @@ function dotTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
+/**
+ * WebGPU draws point primitives one pixel wide (and has no point-sprite uv, so the dot map would be
+ * read at a constant uv). three's way to get sized, textured points there is a Sprite drawn once per
+ * particle with a PointsNodeMaterial, each instance placed by the position attribute; the size
+ * attenuates with distance as WebGL's PointsMaterial does.
+ */
+function makeGpuSprite(positions: THREE.InstancedBufferAttribute, params: THREE.PointsMaterialParameters): THREE.Sprite {
+  const material = new (webgpu().PointsNodeMaterial)({ ...params, sizeAttenuation: true });
+  material.positionNode = tsl().instancedBufferAttribute(positions);
+  const sprite = new THREE.Sprite(material as unknown as THREE.SpriteMaterial);
+  sprite.count = positions.count;
+  sprite.frustumCulled = false;   // the particles fill the tank; the sprite's own bounds are at the origin
+  return sprite;
+}
+
 const stokesSinkSpeed = (radius: number): number =>
   ((2 / 9) * (EXCESS_DENSITY / WATER_VISCOSITY) * GRAVITY * radius * radius) / METRES_PER_UNIT;
 
 export class MarineSnow {
-  readonly points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  /** The particles: a Points cloud on WebGL, an instanced sprite on WebGPU (see makeGpuSprite). */
+  readonly points: THREE.Object3D;
   private readonly positions: Float32Array;
   private readonly positionAttribute: THREE.BufferAttribute;
   private readonly sinkSpeed: Float32Array;
@@ -51,13 +68,20 @@ export class MarineSnow {
       this.sinkSpeed[i] = stokesSinkSpeed(range(rng, RADIUS_MIN_M, RADIUS_MAX_M));
     }
     this.positions = pos;
-    this.positionAttribute = new THREE.BufferAttribute(pos, 3);
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', this.positionAttribute);
-    this.points = new THREE.Points(geometry, new THREE.PointsMaterial({
+    const params = {
       size: POINT_SIZE, map: dotTexture(), transparent: true, opacity: POINT_OPACITY, depthWrite: false,
       color: POINT_COLOR, blending: THREE.AdditiveBlending,
-    }));
+    };
+    if (gpuActive()) {
+      const attr = new THREE.InstancedBufferAttribute(pos, 3);
+      this.positionAttribute = attr;
+      this.points = makeGpuSprite(attr, params);
+    } else {
+      this.positionAttribute = new THREE.BufferAttribute(pos, 3);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', this.positionAttribute);
+      this.points = new THREE.Points(geometry, new THREE.PointsMaterial(params));
+    }
     scene.add(this.points);
   }
 
