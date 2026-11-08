@@ -228,6 +228,10 @@ export class StageBuilder {
 
 /** With the baked reef light, switch to soft variance shadows (before anything compiles). */
 export function useSoftFishShadows(stage: Stage): void {
+  // three r170's WebGPU VSM blur samples the depth shadow map through a filtering sampler, which strict
+  // adapters reject (invalid VSMVertical pipeline: no shadows at all, and hundreds of errors a second).
+  // WebGPU keeps PCF soft shadows instead.
+  if (stage.gpu) return;
   stage.renderer.shadowMap.type = THREE.VSMShadowMap;
   stage.sun.shadow.radius = SOFT_SHADOW.radius;
   stage.sun.shadow.blurSamples = SOFT_SHADOW.blurSamples;
