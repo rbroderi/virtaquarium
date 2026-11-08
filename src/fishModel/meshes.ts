@@ -8,6 +8,8 @@ import type { Erect4, FinMeshSpec, FinSheet, TubeSpec } from './fins.js';
 
 const MEMBRANE_ROWS = 10;
 const TUBE_RINGS = 16;
+const FROND_RINGS = 60;   // enough to carry the frond's scalloped edge
+const FROND_LOBES = 7;
 const DEFAULT_TUBE_SEGMENTS = 7;
 const NO_ERECT: Erect4 = [0, 0, 0, 0];
 
@@ -45,12 +47,15 @@ export function finMesh({ rays, n, erect }: FinMeshSpec, sheet: Pick<FinSheet, '
 }
 
 // Tapered tube along a smooth path through d.pts (fish space): spines, free fin rays, tentacles.
-// d: { pts, r0, r1, color, stripes?, nb? (bands), flat? (thickness across z / width), shape?: 'leaf' }.
+// d: { pts, r0, r1, color, stripes?, nb? (bands), flat? (thickness across z / width), shape?: 'leaf' | 'frond', root? }.
+// 'frond': a thin stalk opening into a flat blade whose two edges are scalloped out of step (the
+// lionfish's supraocular tentacle).
 // Bands are crisp: rings are doubled at each band boundary. Colours go in a vertex colour attribute.
 export function tubeGeometry(d: TubeSpec, seg = DEFAULT_TUBE_SEGMENTS): THREE.BufferGeometry {
   const curve = new THREE.CatmullRomCurve3(d.pts.map((p) => new THREE.Vector3(...p)));
   const nb = d.nb || 0, ts: number[] = [];
-  for (let i = 0; i <= TUBE_RINGS; i++) ts.push(i / TUBE_RINGS);
+  const rings = d.shape === 'frond' ? FROND_RINGS : TUBE_RINGS;
+  for (let i = 0; i <= rings; i++) ts.push(i / rings);
   for (let q = 1; q < nb; q++) ts.push(q / nb - 1e-3, q / nb + 1e-3);
   ts.sort((a, b) => a - b);
   const ca = new THREE.Color(d.color), cb = new THREE.Color(d.stripes || d.color);
@@ -62,11 +67,14 @@ export function tubeGeometry(d: TubeSpec, seg = DEFAULT_TUBE_SEGMENTS): THREE.Bu
     N.copy(Z).addScaledVector(T, -T.dot(Z));
     if (N.lengthSq() < 1e-6) N.set(0, 1, 0);
     N.normalize(); B.crossVectors(T, N);
-    const r = d.shape === 'leaf' ? lerp(d.r0, d.r1, t) + d.r0 * 1.4 * Math.sin(Math.PI * t) ** 1.5 : lerp(d.r0, d.r1, t);
+    let r = d.shape === 'leaf' ? lerp(d.r0, d.r1, t) + d.r0 * 1.4 * Math.sin(Math.PI * t) ** 1.5 : lerp(d.r0, d.r1, t);
+    if (d.root) { const k = Math.min(1, t / d.root); r *= 0.35 + 0.65 * k * k * (3 - 2 * k); }
+    const blade = d.shape === 'frond' ? d.r0 * 3.2 * Math.sin(Math.PI * Math.min(1, Math.max(0, (t - 0.2) / 0.8))) ** 0.8 : 0;
+    const edge = (ph: number): number => r * (d.shape === 'frond' ? 0.55 : 1) + blade * (0.45 + 0.55 * Math.abs(Math.sin(Math.PI * (t * FROND_LOBES + ph))));
     const c = nb && Math.floor(t * nb) % 2 ? cb : ca;
     for (let k = 0; k < seg; k++) {
-      const a = (k / seg) * Math.PI * 2;
-      pos.push(p.x + (N.x * flat * Math.cos(a) + B.x * Math.sin(a)) * r, p.y + (N.y * flat * Math.cos(a) + B.y * Math.sin(a)) * r, p.z + (N.z * flat * Math.cos(a) + B.z * Math.sin(a)) * r);
+      const a = (k / seg) * Math.PI * 2, rk = blade ? edge(Math.sin(a) >= 0 ? 0 : 0.5) : r;
+      pos.push(p.x + (N.x * flat * Math.cos(a) + B.x * Math.sin(a)) * rk, p.y + (N.y * flat * Math.cos(a) + B.y * Math.sin(a)) * rk, p.z + (N.z * flat * Math.cos(a) + B.z * Math.sin(a)) * rk);
       col.push(c.r, c.g, c.b);
     }
   }

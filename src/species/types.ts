@@ -93,6 +93,13 @@ export interface BandOp { op: 'band'; u: number; w: number; curve: number; color
 export interface GradientOp { op: 'vgrad' | 'hgrad'; stops: ColourStop[] }
 export interface PolyOp { op: 'poly'; color: string; pts: Point2[] }
 export interface BlobOp { op: 'blob'; u: number; v: number; ru: number; rv: number; color: string; soft: number }
+// Rings round a point (the lionfish's head stripes, bent round its eye): n bands at radii r0 + i * dr
+// (TL) between angles a0 and a1 (degrees; 0 points to the tail, 90 to the belly), w wide (TL), clipped
+// to u <= uMax; spokes: bars out from the centre at these angles, from spokeR0 to spokeR1, spokeW wide.
+export interface RingsOp {
+  op: 'rings'; u: number; v: number; n: number; r0: number; dr: number; w: number; a0: number; a1: number; color: string;
+  uMax?: number; spokes?: number[]; spokeR0?: number; spokeR1?: number; spokeW?: number;
+}
 export interface StripesVOp { op: 'stripesV'; u0: number; u1: number; n: number; color: string; ratio: number; alpha?: number }
 export interface StripesHOp { op: 'stripesH'; n: number; color: string; w: number; tilt: number; u0: number; u1: number }
 export interface SpotsOp { op: 'spots'; n: number; r: number; color: string; u0: number; u1: number; v0: number; v1: number; seed: number }
@@ -102,7 +109,7 @@ export interface BlotchesOp {
   inner?: string; innerN?: number; speck?: string; speckN?: number; speckR?: number; seed: number;
 }
 /** One layer of the body skin painter (fishModel skin), discriminated on `op`. */
-export type PatternOp = BandOp | GradientOp | PolyOp | BlobOp | StripesVOp | StripesHOp | SpotsOp | BlotchesOp;
+export type PatternOp = BandOp | GradientOp | PolyOp | BlobOp | StripesVOp | StripesHOp | SpotsOp | BlotchesOp | RingsOp;
 
 export type FinPosition = 'top' | 'bottom';
 export type Meristic = 'dorsal' | 'dorsalSoft' | 'anal';
@@ -228,7 +235,7 @@ export interface Appendage {
   dir: Vec3Tuple;
   r: number;
   flat?: number;
-  shape?: 'leaf';
+  shape?: 'leaf' | 'frond';
   color: string;
   stripes?: string;
   nb?: number;

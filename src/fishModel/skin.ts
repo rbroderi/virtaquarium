@@ -1,7 +1,7 @@
 // The body skin: the species' pattern painted in (u, v) body space, then the imbricated scale lattice,
 // pigment, melanin shading and the packed normal / iridescence / cavity-roughness maps derived from it.
 import { clamp, lerp, mulberry32, makeCanvas, rgba, context2d } from '../util.js';
-import type { BlotchesOp, PatternOp, Species, SpotsOp } from '../species/types.js';
+import type { BlotchesOp, PatternOp, RingsOp, Species, SpotsOp } from '../species/types.js';
 import { cellHash, gillOf, gillU, mouthOf, naresOf, smooth01, type Profile } from './profile.js';
 import { organicPass, roundCorners, wobble } from '../core/organic.js';
 import { VARIANT_SEED_STRIDE } from './variant.js';
@@ -103,6 +103,36 @@ function paintBlotches(P: Painter, p: BlotchesOp): void {
   }
 }
 
+// Bands bent round a centre (RingsOp), in physical units: u spans len TL, v spans the local half-depth.
+function paintRings(P: Painter, p: RingsOp): void {
+  const { g, U, V, len, prof } = P, D = Math.PI / 180;
+  const at = (r: number, a: number): [number, number] => {
+    const u = p.u + (r * Math.cos(a)) / len;
+    return [U(u), V(p.v + (r * Math.sin(a)) / Math.max(prof.half(clamp(u, 0, 1)), 1e-3))];
+  };
+  g.save();
+  if (p.uMax != null) { g.beginPath(); g.rect(0, 0, U(p.uMax), V(1.2) + 1); g.clip(); }
+  g.fillStyle = p.color;
+  const STEPS = 72;
+  for (let i = 0; i < p.n; i++) {
+    // each ring wanders a little in radius, so neighbours pinch together and spread apart
+    const rr = (a: number, s: number): number => p.r0 + i * p.dr + s * p.w / 2 + 0.18 * p.dr * Math.sin(3 * a + i * 1.7);
+    g.beginPath();
+    for (let k = 0; k <= STEPS; k++) { const a = (p.a0 + ((p.a1 - p.a0) * k) / STEPS) * D; g.lineTo(...at(rr(a, -1), a)); }
+    for (let k = STEPS; k >= 0; k--) { const a = (p.a0 + ((p.a1 - p.a0) * k) / STEPS) * D; g.lineTo(...at(rr(a, 1), a)); }
+    g.closePath(); g.fill();
+  }
+  const sw = p.spokeW ?? p.w, s0 = p.spokeR0 ?? 0, s1 = p.spokeR1 ?? p.r0 + p.n * p.dr;
+  for (const deg of p.spokes ?? []) {
+    // a tapering bar: sideways offsets at a given radius are angles of sw / 2 / r
+    const a = deg * D, side = (r: number, s: number, k: number): [number, number] => at(r, a + (s * k * sw) / 2 / Math.max(r, sw));
+    g.beginPath();
+    g.lineTo(...side(s0, -1, 1)); g.lineTo(...side(s1, -1, 0.6)); g.lineTo(...side(s1, 1, 0.6)); g.lineTo(...side(s0, 1, 1));
+    g.closePath(); g.fill();
+  }
+  g.restore();
+}
+
 function paintPatternOp(P: Painter, p: PatternOp): void {
   const { g, U, V, len } = P;
   switch (p.op) {
@@ -171,6 +201,7 @@ function paintPatternOp(P: Painter, p: PatternOp): void {
     }
     case 'spots': paintSpots(P, p); break;
     case 'blotches': paintBlotches(P, p); break;
+    case 'rings': paintRings(P, p); break;
   }
 }
 

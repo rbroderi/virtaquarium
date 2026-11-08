@@ -65,7 +65,9 @@ export interface TubeSpec {
   stripes?: string | undefined;
   nb?: number;
   flat?: number | undefined;
-  shape?: 'leaf' | undefined;
+  shape?: 'leaf' | 'frond' | undefined;
+  /** Share of the length over which the tube thickens from a third of r0 at its root (fan rays). */
+  root?: number;
   jaw?: boolean;
   erect?: Erect4;
 }

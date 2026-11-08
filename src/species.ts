@@ -142,15 +142,21 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // Proportions measured from side-on photos (web/ref/lionfish and others), in SL: eye 0.045-0.057 across,
     // its centre 0.15-0.19 behind the snout and about a quarter of the head's depth below its top; the
     // supraocular tentacles about 0.2; the longest dorsal spines 0.37-0.5 (1.1-1.7 body depths).
-    // mouth: the snout tip sits low under a steep forehead; headW: a narrow, compressed face.
-    body: { len: 0.78, depth: 0.27, width: 0.5, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35, mouth: -0.45, headW: 0.65 },
+    // mouth: the snout tip sits low under a steep forehead; headW: a narrow, compressed face. section:
+    // head-on the face is a blunt wedge, the cheeks widest and the forehead a narrow ridge between the
+    // eyes (about half the cheek width).
+    body: { len: 0.78, depth: 0.27, width: 0.42, m: 0.3, headP: 0.6, tailP: 1.0, ped: 0.35, mouth: -0.45, headW: 0.5,
+      section: { u0: 0, u1: 0.24, ease: 0.07, lo: -0.55, hi: 0.15, round: 0.3, sharp: 0.6 } },
     eye: { u: 0.17, v: -0.55, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
     mouth: { u: 0.17, v: 0.65, v0: 0.0, lining: 0.05 },   // large and oblique, the corner under the front of the eye
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
-      // From just behind the snout tip: run to the tip, where the body closes to a point, the stripes turn
-      // into rings round the nose (a bullseye head-on).
-      { op: 'stripesV', u0: 0.05, u1: 1.0, n: 19, color: '#923f22', ratio: 0.66 },   // broad red-brown bars, narrow pale gaps
+      // Body bars from the gill margin back: broad red-brown, narrow pale gaps.
+      { op: 'stripesV', u0: 0.29, u1: 1.0, n: 14, color: '#923f22', ratio: 0.66 },
+      // Head stripes bend round the eye: arcs over the nape, back across the cheek and down over the
+      // snout, with a bar down through the eye to the jaw and a short one up over it.
+      { op: 'rings', u: 0.17, v: -0.55, n: 5, r0: 0.034, dr: 0.021, w: 0.011, a0: -110, a1: 205, color: '#923f22', uMax: 0.29,
+        spokes: [90, -90], spokeR0: 0.012, spokeR1: 0.075, spokeW: 0.011 },
       { op: 'blob', u: 0.4, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
     ],
     // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle, a
@@ -165,7 +171,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // upper jaw and under the chin; short bony spines on the snout, over the eye, the nape and the
     // preopercle margin.
     appendages: [
-      { u: 0.165, v: -0.8, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0042, flat: 0.25, shape: 'leaf', color: '#f2e8dc', stripes: '#8a3a1c', nb: 7, bend: -0.12 },
+      { u: 0.165, v: -0.8, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0025, flat: 0.18, shape: 'frond', color: '#f2e8dc', stripes: '#8a3a1c', nb: 6, bend: -0.12 },
       { u: 0.05, v: 0.2, len: 0.03, dir: [0.35, -1, 0.5], r: 0.004, flat: 0.35, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 3 },
       { u: 0.03, v: 0.7, len: 0.016, dir: [0.3, -1, 0.4], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
       { u: 0.09, v: 0.8, len: 0.014, dir: [0, -1, 0.5], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
@@ -179,7 +185,8 @@ const DEFINITIONS: SpeciesDefinition[] = [
     erect: { rest: 1, alarm: 1.8 },
     fins: [
       { pos: 'top', kind: 'spines', u0: 0.27, u1: 0.66, n: 13, h: 0.36, hs: [0.5, 0.8, 0.95, 1, 1, 0.96, 0.9, 0.8, 0.68, 0.55, 0.42, 0.3, 0.2], lean: [-12, 58], r: 0.0032, flag: 0.05, web: 0.25, fill: '#efe4d6', alpha: 0.75, color: '#f2e6d8', stripes: '#8a3a1c', raise: 15, foldTo: 82 },
-      { pos: 'top', meristic: 'dorsalSoft', u0: 0.66, u1: 0.93, pts: [[0, 0.04], [0.3, 0.13], [0.8, 0.12], [1, 0.02]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
+      // Soft dorsal: about 0.17 SL high near its front, ending just ahead of the peduncle (side-on photos).
+      { pos: 'top', meristic: 'dorsalSoft', u0: 0.66, u1: 0.93, pts: [[0, 0.08], [0.25, 0.13], [0.7, 0.11], [1, 0.03]], sweep: 0.2, fill: '#efe2d4', alpha: 0.4, spots: '#2a1a10', spotR: 0.0035, spotN: 120 },
       { pos: 'bottom', meristic: 'anal', u0: 0.62, u1: 0.88, pts: [[0, 0.03], [0.4, 0.15], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
     ],
     caudal: { type: 'round', spread: 0.16, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },

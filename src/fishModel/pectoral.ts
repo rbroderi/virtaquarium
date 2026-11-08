@@ -35,7 +35,8 @@ const pectoralRays = (sp: Species): number => (sp.anatomy?.pectoralRays ?? (pect
 const fanLen = (sp: Species, i: number): number => { const n = pectoralRays(sp); return 0.8 + 0.15 * Math.sin(Math.PI * (0.2 + (0.7 * i) / n)) + 0.04 * Math.sin(i * 1.7); };
 // Fan rays rise from a short vertical base, not one point (in fractions of the fin length, canvas y down):
 // spread evenly along it, so the rays don't bunch into a hub where they meet the body.
-const FAN_BASE = 0.05;
+const FAN_BASE = 0.085;
+const FAN_ROOT = 0.15;   // flags start, and ray tubes reach full thickness, this far out (share of the ray)
 const fanBase = (a: number, spread: number): number => FAN_BASE * (a / (spread / 2));
 const pectBands = (sp: Species, i: number): number => Math.max(3, Math.round((fanLen(sp, i) * pectoralOf(sp).len) / BAND_SPACING));
 
@@ -71,7 +72,7 @@ export function pectoralTubes(sp: Species): TubeSpec[] {
       const r = (L * q) / 6, x = Math.cos(a) * r * pw, y = -(Math.sin(a) * r * yk + fanBase(a, spread)) * pw;
       pts.push([x, y, pectZ(sp, x, y)]);
     }
-    out.push({ pts, r0: p.rayR ?? DEFAULT_RAY_RADIUS, r1: (p.rayR ?? DEFAULT_RAY_RADIUS) * 0.25, color: p.rayColor || p.fill, stripes: p.stripes, nb: p.stripes ? pectBands(sp, i) : 0 });
+    out.push({ pts, r0: p.rayR ?? DEFAULT_RAY_RADIUS, r1: (p.rayR ?? DEFAULT_RAY_RADIUS) * 0.25, color: p.rayColor || p.fill, stripes: p.stripes, nb: p.stripes ? pectBands(sp, i) : 0, root: FAN_ROOT });
   }
   return out;
 }
@@ -99,12 +100,12 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
       // Through each ray tip, the membrane incised deeply between them so the tips stand free.
       const nr = pectoralRays(sp), ang = (i: number): number => -spread / 2 + (spread * i) / nr;
       const pt = (a: number, r: number): P2 => [Math.cos(a) * r * W, (Math.sin(a) * r * yk + fanBase(a, spread)) * W];
-      g.moveTo(0, -H * 0.06);
+      g.moveTo(0, -H * (FAN_BASE + 0.015));
       for (let i = 0; i <= nr; i++) {
         g.lineTo(...pt(ang(i), fanLen(sp, i)));
         if (i < nr) g.lineTo(...pt(ang(i + 0.5), (p.web ?? 0.62) * Math.min(fanLen(sp, i), fanLen(sp, i + 1))));
       }
-      g.lineTo(0, H * 0.06);
+      g.lineTo(0, H * (FAN_BASE + 0.015));
     } else {
       g.moveTo(0, -H * 0.18);
       g.bezierCurveTo(W * 0.4, -H * 0.5, W * 0.95, -H * 0.2, W * 0.98, 0);
@@ -131,7 +132,8 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
       g.lineWidth = ((p.flag ?? 0.012) / p.len) * W;
       for (let q = 0; q < nb; q++) {
         g.strokeStyle = q % 2 && p.stripes ? p.stripes : p.fill;
-        g.beginPath(); g.moveTo(...dir(a, (L * q) / nb)); g.lineTo(...dir(a, (L * (q + 1)) / nb)); g.stroke();
+        const r0 = Math.max((L * q) / nb, L * FAN_ROOT), r1 = (L * (q + 1)) / nb;
+        if (r1 > r0) { g.beginPath(); g.moveTo(...dir(a, r0)); g.lineTo(...dir(a, r1)); g.stroke(); }
       }
     } else {
       // Jointed soft rays (the first is simple), branching at about half their length.
