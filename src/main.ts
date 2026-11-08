@@ -192,6 +192,12 @@ async function runCheck(check: AppOptions['check'], aquarium: AquariumHandle): P
 async function main(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const options = parseAppOptions(params);
+  // A browser under automation (scrapers on Puppeteer/Playwright/Selenium set navigator.webdriver) gets
+  // the static about page instead of the renderer. Our own headless checks pass ?check= and still run.
+  if (navigator.webdriver && options.check === null) {
+    location.replace('./about.html');
+    return;
+  }
   const timer = new StartupTimer();
   loading?.follow(timer);
   debugHooks.startupStages = timer;

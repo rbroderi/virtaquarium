@@ -26,6 +26,7 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.map': 'application/json', '.json': 'application/json', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif','.svg': 'image/svg+xml', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 /** Top-level directories of the repository served (and saved into) as themselves, not under web/. */
@@ -69,7 +70,21 @@ const PUBLIC_PATHS: readonly RegExp[] = [
   /^models\/critters\/[^/]+\.glb$/,             // soft-body meshes
   /^models\/(skins|cache)\//,                   // generated caches (absent on a deploy unless baked in)
   /^brand\/logo\.webp$/,                        // the processed loading-screen logo (not the original)
+  /^brand\/poster\.(avif|jpg)$/, /^about\.html$/, /^robots\.txt$/,   // what crawlers get instead
 ];
+
+/**
+ * Crawlers, scrapers and headless browsers that say what they are. They get about.html (a description
+ * and a poster image) in place of the tank page, and no bundle, shaders or models, so they don't pull
+ * ~30 MB or run the renderer. A client that hides its User-Agent still meets the page's own check
+ * (navigator.webdriver, src/main.ts).
+ */
+const BOT_UA = /bot\b|crawl|spider|slurp|scrape|headless|phantomjs|puppeteer|playwright|selenium|python-requests|python-urllib|aiohttp|httpx|scrapy|curl\/|wget\/|go-http-client|java\/|okhttp|axios\/|node-fetch|undici|libwww|facebookexternalhit|embedly|whatsapp|discord|slack|telegram|preview|gptbot|ccbot|claude|anthropic|perplexity|bytespider|amazonbot|applebot|diffbot|petalbot|semrush|ahrefs|mj12/i;
+
+function isBot(req: http.IncomingMessage): boolean {
+  const ua = String(req.headers['user-agent'] ?? '');
+  return ua === '' || BOT_UA.test(ua);
+}
 
 /**
  * The only page a public deploy shows is the tank: the reef, or the moon jelly tank (?scenery=jelly).
@@ -184,8 +199,11 @@ async function handleShot(res: http.ServerResponse, onShot?: () => Promise<Buffe
 function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerResponse, publicMode: boolean): void {
   let urlPath: string;
   try { urlPath = decodeURIComponent(url.pathname); } catch { res.writeHead(HTTP_NOT_FOUND).end(); return; }
-  const rel = urlPath.replace(/^\/+/, '');
-  if (publicMode && (rel === '' || rel === 'index.html')) {
+  let rel = urlPath.replace(/^\/+/, '');
+  if (publicMode && isBot(req)) {
+    if (rel === '' || rel === 'index.html') { rel = 'about.html'; urlPath = '/about.html'; }
+    else if (/^(build|models)\//.test(rel)) { res.writeHead(HTTP_FORBIDDEN).end(); return; }
+  } else if (publicMode && (rel === '' || rel === 'index.html')) {
     const clean = publicPageQuery(url.searchParams);
     if (clean !== url.search) {
       res.writeHead(HTTP_FOUND, { Location: '/' + clean }).end();
@@ -210,7 +228,8 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
       'Content-Type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
       'Cache-Control': 'no-cache',
       // The body may be brotli/gzip-encoded by what the client accepts (sendBody).
-      'Vary': 'Accept-Encoding',
+      // The page at / depends on the User-Agent in public mode (crawlers get about.html).
+      'Vary': publicMode && rel.endsWith('.html') ? 'Accept-Encoding, User-Agent' : 'Accept-Encoding',
       'Last-Modified': modified.toUTCString(),
       // js-profiling: lets a page sample itself (main ?profile=1, the JS Self-Profiling API).
       'Document-Policy': 'js-profiling',

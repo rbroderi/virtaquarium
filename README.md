@@ -268,7 +268,10 @@ tank.
 `bun tools/serve.ts --public` on the port Railway gives it. In public mode the server is read-only. It
 serves only what the tank page loads (no lab, bake or Roku pages, reference photos, source maps or check
 output), and the page URL takes only `?scenery=jelly`. Responses are brotli- or gzip-encoded when the
-browser accepts it and the file shrinks; compressed copies are cached in memory until the file changes. The painted fish skins and the baked reef light are kept in each
+browser accepts it and the file shrinks; compressed copies are cached in memory until the file changes. Crawlers, scripted clients and automated browsers
+(recognised by user agent, or by `navigator.webdriver` in the page) get a static about page with a
+poster image instead of the tank, and a 403 for the scripts and models; `robots.txt` asks them to stay
+out of those too. The painted fish skins and the baked reef light are kept in each
 visitor's own browser (Cache Storage), so a return visit skips that work. `?store=browser` tries this
 locally; with `bun run check`, set `CHECK_PORT` so successive runs share one origin.
 
