@@ -142,7 +142,8 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
     // (hues average out near neutral). Structural colour (sp.iridescent: the chromis' blue-green):
     // regular stacks in a narrow band. sp.irid = { range: [nm, nm], strength } overrides.
     iridescence: sp.irid?.strength ?? (sp.iridescent ? 1.0 : 0.35), iridescenceIOR: 1.8,
-    iridescenceThicknessRange: sp.irid?.range ?? (sp.iridescent ? [310, 370] : [200, 620]),
+    iridescenceThicknessMinimum: (sp.irid?.range ?? (sp.iridescent ? [310, 370] : [200, 620]))[0],
+    iridescenceThicknessMaximum: (sp.irid?.range ?? (sp.iridescent ? [310, 370] : [200, 620]))[1],
   };
   const bodyMat = swimMat(bodyParams, uniforms, bodyTissue);
   bodyMat.userData['fishPart'] = 'body';   // applyVariantMaps swaps this material's albedo
@@ -204,7 +205,7 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
   const eyeMat = swimMat({
     map: a.eyeTex, roughness: 0.1, ior: IN_WATER_IOR, clearcoat: 0.3, clearcoatRoughness: 0.04,
     // The iris' reflective iridophore ring round the pupil (moves with the gaze, as the map does).
-    iridescence: 0.3, iridescenceIOR: 1.8, iridescenceThicknessRange: [260, 420], iridescenceMap: a.eyeRingTex,
+    iridescence: 0.3, iridescenceIOR: 1.8, iridescenceThicknessMinimum: 260, iridescenceThicknessMaximum: 420, iridescenceMap: a.eyeRingTex,
   }, uniforms, null, true);
   // Eye movement: the eyeball turns under a nearly flush cornea, so the iris and pupil slide across the
   // cap. uGaze = (forward, up) in texture units, set per fish in fish.ts (saccades and counter-rolling).

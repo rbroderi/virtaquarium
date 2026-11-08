@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { addCaustics, waterUniforms } from '../water.js';
 import { FISH_PUSH_APPLY, FISH_PUSH_HEADER, fishPushBend, fishUniforms } from './fishPush.js';
-import { gpuActive, tsl, webgpu, type FloatUniformNode, type Node, type NodeObject } from '../webgpu/tsl.js';
+import { applyInstance, gpuActive, tsl, webgpu, type FloatUniformNode, type Node, type NodeObject } from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
 
@@ -49,8 +49,8 @@ const SWAY_DEFAULTS = { ax: 0.05, az: 0.035, hz: 1.0, hTop: 1 } as const;
 
 /** TSL port of the sway's begin_vertex patch: the same h^2 bend from the piece's model-space position.
  *  The bend runs in the blade/tentacle's own space (the authored position, not the instance-transformed
- *  one), exactly like the GLSL, and the renderer's InstanceNode prepass applies the instance matrix to
- *  the result afterwards, so the position node returns model-space and never applies the matrix itself. */
+ *  one), exactly like the GLSL, then applies the instance matrix itself: NodeMaterial assigns positionNode
+ *  after its own instancing step, so the node's result is the final local position. */
 function swayNode(options: { ax: number; az: number; hz: number; hTop: number; fishPush: boolean; instanced: boolean; instanceMatrixNode: NodeObject | undefined; deformNode: ((p: NodeObject, h: NodeObject) => NodeObject) | undefined }): Node {
   const t = tsl();
   const { ax, az, hz, hTop, fishPush, instanced, instanceMatrixNode, deformNode } = options;
@@ -79,13 +79,12 @@ function swayNode(options: { ax: number; az: number; hz: number; hTop: number; f
     out.x.addAssign(s.mul(uAx).mul(h).mul(h));
     out.z.addAssign(t.cos(time.mul(uHz.mul(t.float(0.8))).add(ph.mul(t.float(1.3)))).mul(uAz).mul(h).mul(h));
     if (deformNode) out.assign(deformNode(out, h));
-    if (fishPush) {
-      const bent = instanced
-        ? fishPushBend(out, h, i0, i1, i2, i3)
-        : fishPushBend(out, h, t.vec4(1, 0, 0, 0), t.vec4(0, 1, 0, 0), t.vec4(0, 0, 1, 0), t.vec4(0, 0, 0, 1));
-      return bent;
-    }
-    return out;
+    const local = !fishPush ? out : (instanced
+      ? fishPushBend(out, h, i0, i1, i2, i3)
+      : fishPushBend(out, h, t.vec4(1, 0, 0, 0), t.vec4(0, 1, 0, 0), t.vec4(0, 0, 1, 0), t.vec4(0, 0, 0, 1))) as unknown as NodeObject;
+    // Since r17x, NodeMaterial assigns positionNode after its instancing step, so the result replaces
+    // the instance-transformed position: apply the instance matrix here.
+    return instanced ? applyInstance(local, i0, i1, i2, i3) : local;
   })();
 }
 

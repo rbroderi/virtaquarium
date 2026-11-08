@@ -8,7 +8,7 @@ import { addParallax } from '../parallax.js';
 import { addSway, firstMaterial, stdMat } from './materials.js';
 import { hasPomHeight, isMesh, naturalSize, setNaturalSize } from './flags.js';
 import { makeCrystal } from './crystal.js';
-import { gpuActive, tsl, type Node, type NodeObject } from '../webgpu/tsl.js';
+import { gpuActive, tsl, boundMaterialColor, type Node, type NodeObject } from '../webgpu/tsl.js';
 import type { Scenery } from './types.js';
 
 export type SceneryKind = 'rock' | 'coral' | 'prop' | 'plant';
@@ -110,7 +110,7 @@ function applyGrade(mat: THREE.Material, grade: ColourGrade): void {
     // colorNode, so grade that instead when present (parallax runs first).
     const t = tsl();
     const existing = (mat as unknown as { colorNode: Node | null }).colorNode;
-    const c = (existing ?? (t.materialReference('color', 'color', mat) as unknown as Node)) as unknown as NodeObject;
+    const c = (existing ?? boundMaterialColor(t, mat)) as unknown as NodeObject;
     const l = c.rgb.dot(t.vec3(0.2126, 0.7152, 0.0722));
     // sat/gain are uniforms so graded models share one program instead of one per grade value.
     const uSat = t.uniform(sat, 'float');

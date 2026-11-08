@@ -32,7 +32,9 @@ export function underwaterFogNode(base: THREE.Color): NodeObject {
   const path = t.max(0, viewZ.sub(GLASS_DISTANCE));
   const transmittance = t.exp(t.negate(t.vec3(BEAM_PER_UNIT[0], BEAM_PER_UNIT[1], BEAM_PER_UNIT[2]).mul(path)));
   const factor = t.vec3(1).sub(transmittance);
-  return t.fog(inscatter, factor);
+  // Not t.fog(): since r17x it reduces the factor to a float (its .x, red's), which fogs every channel
+  // at red's rate. NodeMaterial.setupFog assigns the lit colour to `output` before reading this node.
+  return t.Fn(() => t.vec4(t.mix(t.output.rgb, inscatter, factor), t.output.a))();
 }
 
 /** The open-water background: inscatter radiance graded brighter up, darker down, white-balanced. */

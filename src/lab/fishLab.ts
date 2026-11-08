@@ -86,7 +86,7 @@ export class FishLab implements LabHost {
   private span = 1;
   private showing = 0;
   private t = 0;
-  private readonly clock = new THREE.Clock();
+  private readonly timer = new THREE.Timer();
   private readonly listeners: { yaw?: (deg: number) => void; swim?: (on: boolean) => void; spin?: (on: boolean) => void } = {};
 
   constructor(readonly canvas: HTMLCanvasElement, options: LabOptions, readonly species: () => string) {
@@ -254,7 +254,7 @@ export class FishLab implements LabHost {
 
   private frame(): void {
     this.fitCanvas();
-    const dt = Math.min(this.clock.getDelta(), MAX_DT);
+    const dt = Math.min(this.timer.update().getDelta(), MAX_DT);
     this.t += dt;
     const t = this.t;
     waterUniforms.uTime.value = t;

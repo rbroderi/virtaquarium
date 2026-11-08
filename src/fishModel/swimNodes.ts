@@ -9,7 +9,7 @@
 // read through iridescenceThicknessNode/aoNode.
 import * as THREE from 'three';
 import {
-  tsl, webgpu,
+  tsl, webgpu, boundMaterialColor,
   type LightingModelDirectInput, type Node, type NodeBuilder,
   type FloatUniformNode, type Vec2UniformNode, type Vec3UniformNode, type PathArrayNode, type NodeObject,
   type Tsl, type Webgpu,
@@ -498,10 +498,11 @@ export function makeSwimNodeMaterial(
   // each scale's free margin is the roughness map's R, applied as ambient occlusion. Roughness itself is
   // the roughness map's G, which three's standard material already reads.
   if (tissue?.packed) {
-    const range = params.iridescenceThicknessRange as [number, number] | undefined;
-    if (params.iridescenceMap && range) {
-      mat.iridescenceThicknessNode = t.float(range[1]).sub(t.float(range[0]))
-        .mul(t.texture(params.iridescenceMap).g).add(t.float(range[0]));
+    const lo = params.iridescenceThicknessMinimum as number | undefined;
+    const hi = params.iridescenceThicknessMaximum as number | undefined;
+    if (params.iridescenceMap && lo !== undefined && hi !== undefined) {
+      mat.iridescenceThicknessNode = t.float(hi - lo)
+        .mul(t.texture(params.iridescenceMap).g).add(t.float(lo));
     }
     if (params.roughnessMap) mat.aoNode = t.texture(params.roughnessMap).r;
   }
@@ -511,7 +512,7 @@ export function makeSwimNodeMaterial(
 /** The night (and stress) colour patch from swimShader.ts, in TSL: chromatophores contract or expand
  *  over minutes at dusk, paling or darkening the fish. uNight 0..1 is written by fish.ts. */
 function nightColourNode(t: Tsl, mat: THREE.Material, uNight: FloatUniformNode, kind: 'pale' | 'dark'): NodeObject {
-  const c = (t.materialReference('color', 'color', mat) as unknown as NodeObject).rgb;   // the standard colour incl. map, before the patch
+  const c = boundMaterialColor(t, mat);   // the standard colour incl. map, before the patch
   const l = c.dot(t.vec3(0.2126, 0.7152, 0.0722));
   const night: NodeObject = kind === 'pale'
     ? t.mix(t.vec3(l), t.vec3(t.float(0.75).add(t.float(0.2).mul(

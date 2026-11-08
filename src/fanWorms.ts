@@ -20,7 +20,8 @@ import { makeCanvas, context2d, type Rng } from './util.js';
 import { organicPass, type OrganicOptions } from './core/organic.js';
 import type { SolidField } from './rockField.js';
 import { markNoHeight } from './reef/flags.js';
-import { gpuActive, tsl, webgpu, type FloatUniformNode, type Node, type UniformArrayNode, type Webgpu } from './webgpu/tsl.js';
+import { gpuActive, tsl, webgpu, type FloatUniformNode, type Node, type NodeObject, type UniformArrayNode, type Webgpu } from './webgpu/tsl.js';
+import { instanceMatrixNode } from './reef/fishPush.js';
 import { waterTimeNode } from './webgpu/timeUniform.js';
 
 /** Worms (the uRetract uniform array's size). */
@@ -230,7 +231,8 @@ export class FanWorms {
       const n = ws.length * RADIOLES, geo = ribbon();
       const aWorm = new Float32Array(n), aLen = new Float32Array(n), aPhase = new Float32Array(n);
       const tex = radioleTexture(rng, palette);
-      const mesh = new THREE.InstancedMesh(geo, gpuActive() ? this.crownNodeMaterial(tex) : this.crownMaterial(tex), n);
+      const mesh = new THREE.InstancedMesh(geo, undefined, n);
+      mesh.material = gpuActive() ? this.crownNodeMaterial(tex, instanceMatrixNode(mesh)) : this.crownMaterial(tex);
       const half = RADIOLES / 2;
       let k = 0;
       for (const w of ws) {
@@ -290,7 +292,7 @@ export class FanWorms {
 
   /** The crown under WebGPU: the same base material plus a TSL vertex deformation (WebGPURenderer never
    *  runs onBeforeCompile GLSL, so the radioles would otherwise stay folded flat at the tube mouth). */
-  private crownNodeMaterial(tex: THREE.Texture): InstanceType<Webgpu['MeshStandardNodeMaterial']> {
+  private crownNodeMaterial(tex: THREE.Texture, inst: NodeObject): InstanceType<Webgpu['MeshStandardNodeMaterial']> {
     const t = tsl();
     const wg = webgpu();
     const uRetract = t.uniformArray(this.uRetract.value as unknown as unknown[], 'float' as const);
@@ -298,7 +300,7 @@ export class FanWorms {
       // See crownMaterial(): blended, not cut out, so the mip-averaged pinnule alpha stays gauzy.
       map: tex, transparent: true, depthWrite: false, alphaTest: 0.03, side: THREE.DoubleSide, roughness: 0.6,
     });
-    mat.positionNode = this.crownPositionNode(uRetract, waterTimeNode());
+    mat.positionNode = this.crownPositionNode(uRetract, waterTimeNode(), inst);
     return installReefLight(mat) as InstanceType<Webgpu['MeshStandardNodeMaterial']>;
   }
 
@@ -306,10 +308,13 @@ export class FanWorms {
   private crownPositionNode(
     uRetract: UniformArrayNode<'float'>,
     uTime: FloatUniformNode,
+    inst: NodeObject,
   ): Node {
     const t = tsl();
     return t.Fn(() => {
-      const p = t.positionLocal.toVar();
+      // The authored ribbon: positionNode is assigned after NodeMaterial's instancing step, so the node
+      // rebuilds from the geometry and applies the radiole's instance matrix (a storage buffer) itself.
+      const p = t.positionGeometry.toVar();
       const aWorm = t.attribute('aWorm', 'float');
       const aLen = t.attribute('aLen', 'float');
       const aPhase = t.attribute('aPhase', 'float');
@@ -328,7 +333,7 @@ export class FanWorms {
         .add(t.vec3(t.float(0), t.float(0), p.x.mul(t.mix(t.float(0.04), t.float(0.015), rr)).mul(t.float(1).sub(t.float(0.55).mul(hh)))))
         .toVar();
       out.y.assign(out.y.sub(rr.mul(aLen.mul(t.float(1.1)))));   // pulled into the tube
-      return out;
+      return inst.mul(t.vec4(out, 1)).xyz;
     })();
   }
 

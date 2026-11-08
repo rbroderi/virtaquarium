@@ -61,7 +61,7 @@ export class TankLoop {
   private time = 0;
   private targetLight: number;
   private paused = false;
-  private readonly clock = new THREE.Clock();
+  private readonly timer = new THREE.Timer();
   private readonly ndc = new THREE.Vector3();
   private readonly flow = (p: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 => this.parts.world.flow(p, out);
 
@@ -94,7 +94,7 @@ export class TankLoop {
   /** One animation frame: fit the canvas, step (unless paused) and draw. */
   frame(): void {
     this.fitCanvas();
-    const dt = Math.min(this.clock.getDelta(), MAX_STEP);
+    const dt = Math.min(this.timer.update().getDelta(), MAX_STEP);
     if (!this.paused) this.step(dt);
     this.present();
   }

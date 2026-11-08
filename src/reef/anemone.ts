@@ -172,10 +172,10 @@ function addTipTint(mat: THREE.Material): void {
     shader.vertexShader = 'attribute vec3 aTip;\n' + shader.vertexShader.replace('#include <color_vertex>', `#include <color_vertex>
       float tipK = smoothstep(${TIP_GRADIENT_FROM}, ${TIP_GRADIENT_TO}, position.y);
       float tipDeep = smoothstep(${TIP_GRADIENT_TO}, ${TENTACLE_HEIGHT}, position.y);
-      vColor = mix(vColor, aTip * (0.9 + 0.1 * tipDeep), tipK);
+      vColor.rgb = mix(vColor.rgb, aTip * (0.9 + 0.1 * tipDeep), tipK);
       // Faint tissue mottling (pink/cream striation) along the tube, out of phase per tentacle.
       float mott = sin(position.y * 31.0 + aCurl.w * 4.3) * 0.55 + sin(position.y * 11.0 - aCurl.w * 7.1) * 0.45;
-      vColor *= 1.0 + mott * 0.075;
+      vColor.rgb *= 1.0 + mott * 0.075;
       vColor.r *= 1.0 + 0.03 * sin(position.y * 9.0 + aCurl.w);
       vColor.b *= 1.0 - 0.024 * sin(position.y * 9.0 + aCurl.w);`);
   };

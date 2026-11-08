@@ -38,6 +38,26 @@ export const tslRef: { tsl: Tsl | null } = { tsl: null };
 /** The loaded WebGPU namespace, or null until loadWebgpu() has run on the WebGPU path. */
 export const wgRef: { wg: Webgpu | null } = { wg: null };
 
+/** A model-space position through an instance matrix given as its four columns. NodeMaterial assigns
+ *  positionNode after its instancing step, so a positionNode on an InstancedMesh that rebuilds the
+ *  position from positionGeometry must apply the instance matrix itself. */
+export function applyInstance(local: NodeObject, c0: NodeObject, c1: NodeObject, c2: NodeObject, c3: NodeObject): NodeObject {
+  const t = tsl();
+  return t.mat4(c0, c1, c2, c3).mul(t.vec4(local, 1)).xyz;
+}
+
+/** `materialColor` (color * map) bound to a specific material instead of the current builder's, so the
+ *  node stays correct during the shadow pass (where the builder's material is the shadow material). The
+ *  map reference is dynamic, so per-variant map swaps keep working. */
+export function boundMaterialColor(t: Tsl, mat: import('three').Material): NodeObject {
+  const col = t.materialReference('color', 'color', mat) as unknown as NodeObject;
+  const map = (mat as import('three').Material & { map?: import('three').Texture | null }).map;
+  if (map) {
+    return col.rgb.mul((t.materialReference('map', 'texture', mat) as unknown as NodeObject).rgb);
+  }
+  return col.rgb;
+}
+
 /** Dynamic import: pulls in three's TSL build exactly once. */
 export async function loadTsl(): Promise<Tsl> {
   if (tslRef.tsl) return tslRef.tsl;

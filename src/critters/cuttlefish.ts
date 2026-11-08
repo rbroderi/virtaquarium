@@ -11,7 +11,7 @@ import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js'
 import { mantleR } from '../softBodies.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
 import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, type ShaderHook, type NodeHook, type SpringState } from './shared.js';
-import type { NodeObject } from '../webgpu/tsl.js';
+import { boundMaterialColor, type NodeObject } from '../webgpu/tsl.js';
 import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, modeLabel, type InspectPanel } from '../inspect.js';
 import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
@@ -153,7 +153,7 @@ export class Cuttlefish implements Critter {
         const dors = t.smoothstep(0.35, 0, t.min(t.abs(uv.x.sub(0.75)), t.float(1).sub(t.abs(uv.x.sub(0.75)))));
         const head = t.mix(
           t.vec3(0.3, 0.16, 0.11).mul(t.float(1.1).sub(t.float(0.35).mul(dors))),
-          (t.materialReference('color', 'color', mat) as unknown as NodeObject).rgb,
+          boundMaterialColor(t, mat),
           t.smoothstep(0.15, 0.7, aWeight),
         );
         const cloud = t.smoothstep(0.55, 0.95, t.sin(uv.y.mul(18).sub(uTime.mul(3)).add(t.sin(uv.x.mul(30)).mul(0.6))));

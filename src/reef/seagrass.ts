@@ -10,7 +10,7 @@ import { addSway, stdMat } from './materials.js';
 import { fishPushBend } from './fishPush.js';
 import { installReefLight } from '../reefLight/webgpu.js';
 import { color } from './geometry.js';
-import { gpuActive, tsl, webgpu, type Node, type NodeObject, type Webgpu } from '../webgpu/tsl.js';
+import { applyInstance, gpuActive, tsl, webgpu, type Node, type NodeObject, type Webgpu } from '../webgpu/tsl.js';
 import { waterTimeNode } from '../webgpu/timeUniform.js';
 
 const SEGMENTS = 10;
@@ -184,9 +184,11 @@ function grassPositionNode(): Node {
     const ph = aInst3.x.mul(1.7).add(aInst3.z.mul(2.3));
     const zSway = t.cos(time.mul(t.float(0.56)).add(ph.mul(1.3))).mul(t.float(0.16)).mul(h).mul(h);
     const out = q.add(t.vec3(0, 0, zSway)).toVar();
-    // fishPushBend returns the bent blade in its own space; the renderer's InstanceNode prepass applies
-    // the instance matrix to the position-node result, so it is not applied here.
-    return fishPushBend(out, t.clamp(h, t.float(0), t.float(1)), aInst0, t.attribute('aInst1', 'vec4'), aInst2, aInst3);
+    // fishPushBend returns the bent blade in its own space; positionNode replaces the instanced
+    // position, so the instance matrix is applied here.
+    const aInst1 = t.attribute('aInst1', 'vec4');
+    const bent = fishPushBend(out, t.clamp(h, t.float(0), t.float(1)), aInst0, aInst1, aInst2, aInst3) as unknown as NodeObject;
+    return applyInstance(bent, aInst0, aInst1, aInst2, aInst3);
   })();
 }
 

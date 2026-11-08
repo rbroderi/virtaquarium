@@ -371,7 +371,7 @@ function bodyMaterial(thickness: number, etch: CrystalEtch, plane: CrystalFaceIn
     const mat = gpuCrystalMaterial({
       color: 0xffffff, roughness: 0.15, metalness: 0,
       flatShading: true,
-      iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessRange: [100, 400],
+      iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessMinimum: 100, iridescenceThicknessMaximum: 400,
       specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
       envMapIntensity: 0.35,
     }, gpuOptions(options, etch), etch.fadeNode);
@@ -382,7 +382,7 @@ function bodyMaterial(thickness: number, etch: CrystalEtch, plane: CrystalFaceIn
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, roughness: 0.15, metalness: 0,
     flatShading: true,
-    iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessRange: [100, 400],
+    iridescence: 0.18, iridescenceIOR: 1.54, iridescenceThicknessMinimum: 100, iridescenceThicknessMaximum: 400,
     specularIntensity: 0.8, specularColor: new THREE.Color(1, 1, 1),
     envMapIntensity: 0.35,
   });
