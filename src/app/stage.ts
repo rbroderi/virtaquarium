@@ -187,8 +187,8 @@ export class StageBuilder {
       // and the same Snell's-window radiance field as a PMREM texture for scene.environment.
       scene.background = INSCATTER_DAY.clone();
       const gpuScene = scene as typeof scene & { backgroundNode: unknown; fogNode: unknown };
-      gpuScene.backgroundNode = underwaterBackgroundNode();
-      gpuScene.fogNode = underwaterFogNode();
+      gpuScene.backgroundNode = underwaterBackgroundNode(fog.color);
+      gpuScene.fogNode = underwaterFogNode(fog.color);
       scene.environment = makeGpuEnvironment(renderer as WebGPURenderer);
       scene.environmentIntensity = ENVIRONMENT_INTENSITY;
       return { scene, fog, backdrop: null };

@@ -12,8 +12,6 @@ import { NOON_SUN, type SunState } from './daylight.js';
 
 /** Fraction of the light left at night (moonlight) for the fill terms. */
 const NIGHT_FILL = 0.5;
-/** Fog (inscatter) brightness at night. */
-const NIGHT_FOG = 0.08;
 /** Exposure: the curve's gain times this at full day, falling to NIGHT_EXPOSURE of it at night. */
 const DAY_EXPOSURE = 1.35;
 const NIGHT_EXPOSURE = 1.5;
@@ -30,8 +28,10 @@ export const BAKE_SKY = new THREE.Color(0.86, 0.92, 1.0);
 const SUN_HORIZON = new THREE.Color(0xffa64d);
 /** Cool moonlight key light at night. */
 const SUN_MOON = new THREE.Color(0x9fb4d8);
-/** How much of the low sun's warmth the water column picks up at the horizon. */
-const FOG_WARMTH = 0.35;
+/** The water column's base inscatter at full daylight (INSCATTER_DAY). */
+const WATER_DAY = INSCATTER_DAY.clone();
+/** The water column at night: dark moonlit navy, never the warm sun's brown. */
+const WATER_NIGHT = new THREE.Color(0.006, 0.040, 0.120);
 /** The ends of the sun's arc: low over the tank at dawn/dusk. */
 const SUN_LOW = { x: 14, y: 11, z: 5 } as const;
 
@@ -87,10 +87,10 @@ export class LightingController {
     stage.hemi.color.setRGB(lerp(HEMI_NIGHT.r, HEMI_DAY.r, level), lerp(HEMI_NIGHT.g, HEMI_DAY.g, level), 1.0);
     stage.scene.environmentIntensity = LIGHTS.env * ambient * fill;
     waterUniforms.uCaustic.value = level;
-    // The water column picks up a little of the low sun's warmth at the golden hours.
-    this.fogTint.copy(INSCATTER_DAY);
-    if (level > 0) this.fogTint.lerp(SUN_HORIZON, (1 - sun.warmth) * FOG_WARMTH);
-    stage.fog.color.copy(this.fogTint).multiplyScalar(NIGHT_FOG + (1 - NIGHT_FOG) * level);
+    // The water column stays blue/teal: full-day inscatter at noon, deepening to a dark moonlit navy at
+    // night. The low sun's warmth lights the reef (the key light), never the water column.
+    this.fogTint.copy(WATER_DAY).lerp(WATER_NIGHT, 1 - level);
+    stage.fog.color.copy(this.fogTint);
     if (stage.backdrop) stage.backdrop.backdropUniforms.uBase.value.copy(stage.fog.color);
     stage.renderer.toneMappingExposure = DAY_EXPOSURE * toneGain * (NIGHT_EXPOSURE + (1 - NIGHT_EXPOSURE) * level);
     if (surface) {
