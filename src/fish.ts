@@ -1,4 +1,5 @@
-// A fish = 3D model + swimming physics + its own Brain.
+// A fish = 3D model + swimming physics + its own Brain, on the creature step template (creature.ts):
+// sense = the brain's update, think = its steering, act = the physics and the animation below.
 //
 // Physics (per individual, body length L in world units, 1 unit = 12.5 cm):
 //   mass         m  = L^3               (neutrally buoyant, so gravity and buoyancy cancel)
@@ -19,7 +20,9 @@
 //   the body curves into turns according to path curvature.
 // The fish also drifts with the water: position += (velocity relative to water + flow) * dt.
 import * as THREE from 'three';
-import { Brain } from './brain.js';
+import { Brain, type Drives, type Mode, type Personality } from './brain.js';
+import { CreatureBase } from './creature.js';
+import { brainRows, type InspectPanel } from './inspect.js';
 import { buildFishModel, posePectoral, posePectoralFan, mountPectoral, FAN_POSE, pickVariant, variantTweak, requestVariant, type FishModel } from './fishModel.js';
 import { limitStep, STEP_CRAWL_BL, STEP_SLACK } from './world/stepLimit.js';
 import { clamp, lerp, range, wrapAngle, type Rng } from './util.js';
@@ -75,6 +78,15 @@ const _d = new THREE.Vector3(), _up = new THREE.Vector3(), _side = new THREE.Vec
 const _lat = new THREE.Vector3(), _flow = new THREE.Vector3(), _gaze = new THREE.Vector3(), _n = new THREE.Vector3();
 const _c = new THREE.Vector3(), _t = new THREE.Vector3(), _prev = new THREE.Vector3(), _dir0 = new THREE.Vector3();
 const _turn = new THREE.Vector3();
+/** A click within this share of a fish's length of it selects the fish (ui.ts). */
+const PICK_SHARE = 0.6;
+const DRIVE_LABELS: Readonly<Record<keyof Drives, string>> = {
+  hunger: 'Hunger', energy: 'Energy', fear: 'Fear', social: 'Social need', boredom: 'Boredom', parasites: 'Parasites',
+};
+const TRAIT_LABELS: Readonly<Record<keyof Personality, string>> = {
+  boldness: 'Boldness', curiosity: 'Curiosity', activity: 'Activity', sociability: 'Sociability', aggression: 'Aggression', appetite: 'Appetite',
+};
+const typedEntries = <K extends string, V>(o: Readonly<Record<K, V>>): [K, V][] => Object.entries(o) as [K, V][];
 /** An eel lurking this close to home is braced in its cave (fish/spineChain.ts holds its body there). */
 const EEL_BRACED_RANGE = 0.6;
 const _basis = new THREE.Matrix4();
@@ -96,7 +108,10 @@ interface StepState {
   af: number;
 }
 
-export class Fish implements SpineBody {
+export class Fish extends CreatureBase<SwimWorld> implements SpineBody {
+  readonly kind = 'fish';
+  /** Moved before the body separation pass and drawn after it (present). */
+  readonly stepPhase = 'bodies';
   readonly sp: Species;
   readonly name: string;
   readonly size: number;
@@ -153,8 +168,11 @@ export class Fish implements SpineBody {
   /** Fan pectorals swept back at speed (lionfish), 0..1. */
   private readonly fanFold = springState();
   private gazeState: GazeState | null = null;
+  /** The speed the brain asked for this step (think), 1 = cruising, above 1 a burst. */
+  private want = 0;
 
   constructor(sp: Species, name: string, rng: Rng) {
+    super();
     this.sp = sp;
     this.name = name;
     this.variant = pickVariant(rng);
@@ -237,13 +255,49 @@ export class Fish implements SpineBody {
     out.set(st.x, st.y - this.pitch * 0.06);
   }
 
-  update(dt: number, world: SwimWorld): void {
-    const brain = this.brain;
-    brain.update(dt, world);
-    const want = brain.steer(dt, world, _d);
+  /** Click-proxy radius: a share of its length (fish are small and moving). */
+  get pickRadius(): number {
+    return this.size * PICK_SHARE;
+  }
+
+  /** Hidden while its look loads: not clickable then. */
+  override get pickable(): boolean {
+    return this.model.visible;
+  }
+
+  /** The click panel: its name, its brain's thought, drives, options and personality (inspect.ts). */
+  override inspect(): InspectPanel {
+    const b = this.brain;
+    return {
+      title: this.name,
+      species: this.sp.name,
+      sci: this.sp.sci,
+      note: b.thought,
+      rows: brainRows({
+        drives: typedEntries(b.drives).map(([k, v]) => [DRIVE_LABELS[k], v, k]),
+        scores: (Object.entries(b.scores) as [Mode, number | undefined][]).map(([k, v]) => [k, v ?? 0]),
+        mode: b.mode,
+        traits: typedEntries(b.traits).map(([k, v]) => [TRAIT_LABELS[k], v]),
+      }),
+      fact: this.sp.fact,
+    };
+  }
+
+  /** The brain takes in the tank: drives, perception, the behaviour to run. */
+  protected override sense(dt: number, world: SwimWorld): void {
+    this.brain.update(dt, world);
+  }
+
+  /** The brain steers: a heading (into _d) and the speed it wants. */
+  protected override think(dt: number, world: SwimWorld): void {
+    this.want = this.brain.steer(dt, world, _d);
     if (_d.lengthSq() < 1e-8) _d.copy(this.dir);
     _d.normalize();
+  }
 
+  /** Swim there by the force balance (see the top of this file), then pose and animate the model. */
+  protected act(dt: number, world: SwimWorld): void {
+    const brain = this.brain, want = this.want;
     const s: StepState = { want, U: Math.max(0, this.speed), burst: want > 1, omegaMax: 0, T: 0, kf: 0, af: 0 };
     _prev.copy(this.pos);
     _dir0.copy(this.dir);

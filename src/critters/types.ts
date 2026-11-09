@@ -3,7 +3,7 @@
 // and fish.ts satisfy these structurally; nothing here imports them.
 import type * as THREE from 'three';
 import type { Rng } from '../util.js';
-import type { Inspectable } from '../inspect.js';
+import type { Creature } from '../creature.js';
 
 export type CritterKind = 'cuttlefish' | 'octopus' | 'turtle';
 
@@ -99,15 +99,15 @@ export type JoinRule = readonly [string, string];
 export type CheckVisit = readonly [mode: string, go: readonly [number, number, number] | null];
 
 /** What every critter offers the tank and the shape check (critters/base.ts implements it). */
-export interface Critter extends Inspectable {
+export interface Critter extends Creature<CritterWorld> {
   readonly kind: CritterKind;
+  readonly stepPhase: 'free';
   /** The name the shape check reports it under. */
   readonly displayName: string;
   /** The behaviours the shape check holds it in, in turn. */
   readonly checkVisits: readonly CheckVisit[];
   readonly sp: CritterSpecies;
   readonly radius: number;
-  readonly pos: THREE.Vector3;
   readonly model: THREE.Group;
   /** Attachments the shape check allows to touch. */
   readonly joins: readonly JoinRule[];
@@ -117,7 +117,6 @@ export interface Critter extends Inspectable {
   mode: string;
   modeT: number;
   target: THREE.Vector3;
-  update(dt: number, world: CritterWorld): void;
   /** Startle it as by something at `from`: an escape jet (cephalopods only). */
   startle?(world: CritterWorld, from: THREE.Vector3): void;
   /** Shoot the tentacles out for `seconds` of a strike (cuttlefish only). */

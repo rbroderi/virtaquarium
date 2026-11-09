@@ -159,17 +159,12 @@ async function stock(scenery: 'reef' | 'jelly'): Promise<Tank> {
   const tank = scenery === 'jelly' ? normalizeTank({ scenery: 'jelly' }).tank : DEFAULT_TANK;
   const rng = mulberry32(SEED);
   const world = new World(scene, reef, BOUNDS, rng);
-  const { critters, jellies } = stockTank({
-    scene, world, reef, bounds: BOUNDS, rng, tank,
+  stockTank({
+    world, reef, bounds: BOUNDS, rng, tank,
     catalogue: { fish: SPECIES, critters: CRITTER_SPECIES, jellies: JELLY_SPECIES },
   });
-  // The tank loop's order (app/tankLoop.ts step), less what only draws.
-  const step = (dt: number): void => {
-    world.update(dt);
-    for (const j of jellies) j.update(dt, world, jellies);
-    for (const c of critters) c.update(dt, world);
-  };
-  return { world, jellies, critters, step };
+  // The tank loop's step (app/tankLoop.ts) for the animals: the world steps every creature.
+  return { world, jellies: world.jellies, critters: world.critters, step: (dt) => world.update(dt) };
 }
 
 describe('creatures', () => {

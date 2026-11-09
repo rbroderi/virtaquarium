@@ -1,5 +1,5 @@
-// A small common inspection interface for the overlay (ui.ts): a clicked fish shows its brain, and
-// every other animated creature (critters, jellies) supplies a panel built from its own live state.
+// A small common inspection interface for the overlay (ui.ts): every creature (creature.ts) supplies a
+// panel built from its own live state, the brain-driven ones (fish, critters) through brainRows.
 // Positions and radii here are click proxies: the real bodies deform, blend or are instanced, so the
 // overlay tests a sphere rather than raycasting the drawn geometry.
 import type * as THREE from 'three';

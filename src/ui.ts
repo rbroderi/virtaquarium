@@ -1,28 +1,20 @@
-// Overlay: click to feed or inspect a fish's brain, optional name tags, help, idle cursor hiding, and the
+// Overlay: click to feed or inspect any creature (its own panel, creature.ts), optional name tags, help, idle cursor hiding, and the
 // tank switcher (reef / moon jellies; T or the buttons bottom right reload the page as the other tank).
 // Feeding is injected (onFeed), so the page decides what a feed request does (main publishes it on the
 // tank's event bus).
 import * as THREE from 'three';
-import { MODES, type Drives, type Personality, type Mode } from './brain.js';
+import { MODES } from './brain.js';
 import { requireElement } from './util.js';
-import { brainRows, inspectHtml, type Inspectable, type InspectPanel } from './inspect.js';
+import { inspectHtml } from './inspect.js';
 import type { Fish } from './fish.js';
+import type { Creature } from './creature.js';
 import { crystalPieces } from './reef/crystal.js';
 import { crystalClickAction, type CrystalSign } from './reef/crystalText.js';
-
-const DRIVE_LABELS: Readonly<Record<keyof Drives, string>> = {
-  hunger: 'Hunger', energy: 'Energy', fear: 'Fear', social: 'Social need', boredom: 'Boredom', parasites: 'Parasites',
-};
-const TRAIT_LABELS: Readonly<Record<keyof Personality, string>> = {
-  boldness: 'Boldness', curiosity: 'Curiosity', activity: 'Activity', sociability: 'Sociability', aggression: 'Aggression', appetite: 'Appetite',
-};
 
 const HINT_FADE_MS = 6000;
 const IDLE_CURSOR_MS = 3000;
 /** The day/night clock readout stays up this long after a clock key. */
 const CLOCK_FADE_MS = 2500;
-/** A click within this fraction of a fish's length of it selects the fish (fish are small and moving). */
-const PICK_RADIUS = 0.6;
 /** The F key drops food within +-half this of the tank's centre. */
 const KEY_FEED_SPREAD = 8;
 const TAG_LIFT_PX = 28;
@@ -31,6 +23,9 @@ const DRAG_THRESHOLD_PX = 8;
 
 /** What the overlay reads from the running tank. */
 export interface UIWorld {
+  /** Every animal: each can be clicked and inspected. */
+  readonly creatures: readonly Creature<never>[];
+  /** The fish: Tab cycles through them and they carry the thought tags. */
   readonly fish: readonly Fish[];
 }
 
@@ -39,8 +34,6 @@ interface RendererSurface { readonly domElement: HTMLCanvasElement }
 
 export interface UIOptions {
   readonly world: UIWorld;
-  /** Other animated creatures (critters, jellies) that can be clicked and inspected. */
-  readonly inspectables: readonly Inspectable[];
   readonly camera: THREE.Camera;
   readonly renderer: RendererSurface;
   /** Food requested at x (world units). */
@@ -71,10 +64,8 @@ function switchTank(to: TankKind): void {
   location.assign(url.href);
 }
 
-const typedEntries = <K extends string, V>(o: Readonly<Record<K, V>>): [K, V][] => Object.entries(o) as [K, V][];
-
 export class UI {
-  private selected: Fish | Inspectable | null = null;
+  private selected: Creature<never> | null = null;
   private showTags = false;
   private clockTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly ray = new THREE.Raycaster();
@@ -93,7 +84,6 @@ export class UI {
   private readonly clock = requireElement('clock', HTMLDivElement);
   private readonly tagOf = new Map<Fish, HTMLDivElement>();
   private readonly world: UIWorld;
-  private readonly inspectables: readonly Inspectable[];
   private readonly camera: THREE.Camera;
   private readonly renderer: RendererSurface;
   private readonly onFeed: (x: number) => void;
@@ -106,12 +96,11 @@ export class UI {
   private readonly cardGo: HTMLButtonElement;
   private readonly cardDisclosure: HTMLDivElement;
 
-  constructor({ world, inspectables, camera, renderer, onFeed, scenery, switcher, crystal, pan }: UIOptions) {
+  constructor({ world, camera, renderer, onFeed, scenery, switcher, crystal, pan }: UIOptions) {
     this.pan = pan;
     this.scenery = scenery;
     this.switcher = switcher;
     this.world = world;
-    this.inspectables = inspectables;
     this.camera = camera;
     this.renderer = renderer;
     this.onFeed = onFeed;
@@ -297,13 +286,9 @@ export class UI {
     this.ray.setFromCamera(this.ndc(e), this.camera);
     // Pick the creature closest to the click ray, relative to its own pick radius, so a small fish
     // directly under the pointer beats a big critter's sphere beside it.
-    let best: Fish | Inspectable | null = null, bestD = 1;
-    for (const f of this.world.fish) {
-      if (!f.model.visible) continue;
-      const d = this.ray.ray.distanceToPoint(f.pos) / (f.size * PICK_RADIUS);
-      if (d < bestD) { bestD = d; best = f; }
-    }
-    for (const c of this.inspectables) {
+    let best: Creature<never> | null = null, bestD = 1;
+    for (const c of this.world.creatures) {
+      if (!c.pickable) continue;
       const d = this.ray.ray.distanceToPoint(c.pos) / c.pickRadius;
       if (d < bestD) { bestD = d; best = c; }
     }
@@ -370,31 +355,13 @@ export class UI {
 
   private cycle(): void {
     const fish = this.world.fish;
-    const i = this.selected && 'brain' in this.selected ? fish.indexOf(this.selected) : -1;
+    const i = fish.findIndex((f) => f === this.selected);
     this.select(fish[(i + 1) % fish.length] ?? null);
   }
 
-  select(f: Fish | Inspectable | null): void {
-    this.selected = f;
-    this.panel.classList.toggle('show', !!f);
-  }
-
-  /** A fish's panel, through the same rows and markup as every other creature (inspect.ts). */
-  private fishPanel(f: Fish): InspectPanel {
-    const b = f.brain;
-    return {
-      title: f.name,
-      species: f.sp.name,
-      sci: f.sp.sci,
-      note: b.thought,
-      rows: brainRows({
-        drives: typedEntries(b.drives).map(([k, v]) => [DRIVE_LABELS[k], v, k]),
-        scores: (Object.entries(b.scores) as [Mode, number | undefined][]).map(([k, v]) => [k, v ?? 0]),
-        mode: b.mode,
-        traits: typedEntries(b.traits).map(([k, v]) => [TRAIT_LABELS[k], v]),
-      }),
-      fact: f.sp.fact,
-    };
+  select(c: Creature<never> | null): void {
+    this.selected = c;
+    this.panel.classList.toggle('show', !!c);
   }
 
   private updateTags(): void {
@@ -412,7 +379,7 @@ export class UI {
 
   update(): void {
     const selected = this.selected;
-    if (selected) this.panelBody.innerHTML = inspectHtml('brain' in selected ? this.fishPanel(selected) : selected.inspect());
+    if (selected) this.panelBody.innerHTML = inspectHtml(selected.inspect());
     if (this.showTags) this.updateTags();
   }
 }

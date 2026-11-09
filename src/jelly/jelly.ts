@@ -10,7 +10,8 @@ import { makeGpuJellyMaterials } from './webgpu.js';
 import { gpuActive, tsl } from '../webgpu/tsl.js';
 import type { JellyBounds, JellySpecies, JellyWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
-import { fmtMetres, fmtSeconds, fmtSpeed, type Inspectable, type InspectPanel } from '../inspect.js';
+import { fmtMetres, fmtSeconds, fmtSpeed, type InspectPanel } from '../inspect.js';
+import { CreatureBase } from '../creature.js';
 
 /** How fast a jelly may be eased back inside the tank beyond its own drift (units/s). */
 const JELLY_CRAWL = 0.05;
@@ -56,7 +57,9 @@ const PULSE_HZ_SCALE = 0.9;
 /** Pulse rate spread between individuals (Hz at the reference radius, before PULSE_HZ_SCALE). */
 const PULSE_HZ_RANGE: readonly [number, number] = [0.7, 1.1];
 
-export class Jelly implements Inspectable {
+export class Jelly extends CreatureBase<JellyWorld> {
+  readonly kind = 'jelly';
+  readonly stepPhase = 'free';
   readonly sp: JellySpecies;
   readonly R: number;
   /** Click-proxy radius for the inspection overlay. */
@@ -81,6 +84,7 @@ export class Jelly implements Inspectable {
   private readonly _t = new THREE.Vector3();
 
   constructor(sp: JellySpecies, rng: Rng, bounds: JellyBounds) {
+    super();
     this.sp = sp;
     this.rng = rng;
     this.R = range(rng, sp.size[0], sp.size[1]);
@@ -122,7 +126,7 @@ export class Jelly implements Inspectable {
   }
 
   /** The click panel: its real pulse, drift, favoured level and home column. */
-  inspect(): InspectPanel {
+  override inspect(): InspectPanel {
     const dy = this.prefY - this.pos.y;
     const note = Math.abs(dy) > 0.5
       ? (dy > 0 ? 'Pulsing to climb towards its favoured level' : 'Sinking back towards its favoured level')
@@ -157,8 +161,17 @@ export class Jelly implements Inspectable {
     return Math.cos(t * Math.PI / 2) ** 2 - RELAX_FLARE * t * Math.sin(t * Math.PI);
   }
 
-  update(dt: number, world: JellyWorld, others: readonly Jelly[] = []): void {
-    this.bumpApart(dt, others);
+  /** Bells that touch bump softly apart. */
+  protected override sense(dt: number, world: JellyWorld): void {
+    for (const o of world.jellies) {
+      if (o === this) continue;
+      const d = this.pos.distanceTo(o.pos), min = (this.R + o.R) * BUMP_RANGE;
+      if (d < min && d > 1e-4) this.vel.addScaledVector(this._f.subVectors(this.pos, o.pos), ((min - d) / min) * BUMP_STRENGTH * dt / d);
+    }
+  }
+
+  /** Pulse, drift on the current, turn to its heading, then pose the bell and its trailing parts. */
+  protected act(dt: number, world: JellyWorld): void {
     const c = this.pulse(dt);
     this.prevPos.copy(this.pos);
     const drift = this.drift(dt, world);
@@ -170,15 +183,6 @@ export class Jelly implements Inspectable {
     this.trail(dt);
     this.u.uTime.value += dt;
     this.u.uLight.value = NIGHT_GLOW + (1 - NIGHT_GLOW) * world.light;
-  }
-
-  /** Bells that touch bump softly apart. */
-  private bumpApart(dt: number, others: readonly Jelly[]): void {
-    for (const o of others) {
-      if (o === this) continue;
-      const d = this.pos.distanceTo(o.pos), min = (this.R + o.R) * BUMP_RANGE;
-      if (d < min && d > 1e-4) this.vel.addScaledVector(this._f.subVectors(this.pos, o.pos), ((min - d) / min) * BUMP_STRENGTH * dt / d);
-    }
   }
 
   /**

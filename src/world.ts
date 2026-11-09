@@ -1,13 +1,16 @@
-// The tank's shared state that brains perceive: bounds, reef shape, food, light, shoal goals.
+// The tank's shared state that brains perceive: bounds, reef shape, food, light, shoal goals, and
+// every animal in it (one creature list, stepped in update).
 import * as THREE from 'three';
 import { range, clamp, type Rng } from './util.js';
 import type { Fish } from './fish.js';
+import type { Jelly, JellyWorld } from './jelly.js';
+import type { Critter, CritterWorld } from './critters.js';
 import type { Species } from './species.js';
 import type { Anemone, CaveRoof, TankScene } from './reef/types.js';
 import type { FanWormWorld } from './fanWorms.js';
 import type { SwimWorld } from './world/ports.js';
 import { BodySeparation } from './world/separation.js';
-import type { Food, Station, TankBounds, Viewer, WorldCritter } from './world/types.js';
+import type { Food, Station, TankBounds, Viewer } from './world/types.js';
 
 export type { Food, Station, TankBounds, Viewer, WorldCritter, Threat } from './world/types.js';
 export type { SwimWorld } from './world/ports.js';
@@ -53,11 +56,17 @@ interface ShoalGoal {
   t: number;
 }
 
-export class World implements SwimWorld, FanWormWorld {
+/** Every kind of animal the tank holds (creature.ts). */
+export type TankCreature = Fish | Jelly | Critter;
+
+export class World implements SwimWorld, JellyWorld, CritterWorld, FanWormWorld {
+  /** Every animal, in the order it was stocked (add); the views below hold the same objects by kind. */
+  readonly creatures: TankCreature[] = [];
   readonly fish: Fish[] = [];
-  readonly food: Food[] = [];
   /** Cuttlefish, octopus, turtle (critters.ts). */
-  readonly critters: WorldCritter[] = [];
+  readonly critters: Critter[] = [];
+  readonly jellies: Jelly[] = [];
+  readonly food: Food[] = [];
   light = 1;
   time = 0;
   /** Seconds to the next scheduled feed (main). */
@@ -159,10 +168,15 @@ export class World implements SwimWorld, FanWormWorld {
     return true;
   }
 
-  addFish(f: Fish): void {
-    this.fish.push(f);
-    this.speciesById.set(f.sp.id, f.sp);
-    this.scene.add(f.model);
+  /** Put an animal in the tank: on the creature list, its kind's view, and in the scene. */
+  add(c: TankCreature): void {
+    this.creatures.push(c);
+    if (c.kind === 'fish') {
+      this.fish.push(c);
+      this.speciesById.set(c.sp.id, c.sp);
+    } else if (c.kind === 'jelly') this.jellies.push(c);
+    else this.critters.push(c);
+    this.scene.add(c.model);
   }
 
   /** A moving target each shoal drifts towards, so schools travel around the tank together. */
@@ -218,10 +232,13 @@ export class World implements SwimWorld, FanWormWorld {
     for (const g of this.goals.values()) g.t -= dt;
     this.updateFood(dt);
     this.drawFood();
-    for (const f of this.fish) f.update(dt, this);
+    // The bodies (fish) move, are pushed apart where they overlap, then drawn; the fan worms react to
+    // the critters where they were; then the free swimmers (critters, jellies) move.
+    for (const c of this.creatures) if (c.stepPhase === 'bodies') c.update(dt, this);
     if (SEPARATE) this.separation.step(this.fish, dt, this);
     for (const f of this.fish) f.present(dt);
     this.reef.fanWorms?.update(dt, this);
+    for (const c of this.creatures) if (c.stepPhase === 'free') c.update(dt, this);
   }
 
   /** Food sinks with a gentle flutter, settles on rock or sand, then dissolves. */
