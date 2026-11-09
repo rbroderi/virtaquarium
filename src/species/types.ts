@@ -257,6 +257,13 @@ export interface Pectoral extends FinSpots {
   flag?: number;
   /** Fans: strap width at the tip as a share of its root width (default 1: parallel-sided). */
   flagTip?: number;
+  /** Depth of the pleats between rays (multiple of the default); shallow pleats keep fan straps from
+   * folding edge-on when seen obliquely. */
+  pleat?: number;
+  /** Fans: share of each strap's length over which it narrows to a point (default 0: a rounded tip). */
+  flagPoint?: number;
+  /** Fans: ray-to-ray irregularity of length, as a share of len (default 0.04). */
+  rayJitter?: number;
   /** Fans: membrane depth between rays, as a share of the shorter ray (the rest stands free). */
   web?: number;
   /** Fans: ray lengths as a share of len, [t, share] with t from the top ray (0) to the bottom one (1). */

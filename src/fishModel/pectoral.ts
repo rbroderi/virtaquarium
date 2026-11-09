@@ -34,7 +34,7 @@ const pectoralRays = (sp: Species): number => (sp.anatomy?.pectoralRays ?? (pect
 // Fan pectoral ray lengths (fraction of p.len): p.rayLen when given (top ray 0 .. bottom ray 1), else
 // longest in the middle of the fan; slightly irregular either way.
 const fanLen = (sp: Species, i: number): number => {
-  const n = pectoralRays(sp), rl = pectoralOf(sp).rayLen, jitter = 0.04 * Math.sin(i * 1.7);
+  const p = pectoralOf(sp), n = pectoralRays(sp), rl = p.rayLen, jitter = (p.rayJitter ?? 0.04) * Math.sin(i * 1.7);
   return rl ? Math.min(1, outlineCurve(rl)(i / n) + jitter) : 0.8 + 0.15 * Math.sin(Math.PI * (0.2 + (0.7 * i) / n)) + jitter;
 };
 // Fan rays rise from a short vertical base, not one point (in fractions of the fin length, canvas y down):
@@ -42,6 +42,15 @@ const fanLen = (sp: Species, i: number): number => {
 const FAN_BASE = 0.085;
 const FAN_ROOT = 0.15;   // flags start, and ray tubes reach full thickness, this far out (share of the ray)
 const fanBase = (a: number, spread: number): number => FAN_BASE * (a / (spread / 2));
+// A fan's rays lie in its squashed plane (y scaled by yk), so equal steps of the unsquashed angle bunch the
+// middle rays and splay the outer ones. Space them evenly as seen instead: ray i's angle, and the share
+// (0 top .. 1 bottom) of the fan at angle a.
+const fanSee = (spread: number, yk: number): number => Math.atan(yk * Math.tan(spread / 2));
+const fanAngle = (i: number, n: number, spread: number, yk: number): number => {
+  const m = fanSee(spread, yk);
+  return Math.atan(Math.tan(-m + (2 * m * i) / n) / yk);
+};
+const fanShare = (a: number, spread: number, yk: number): number => Math.atan(yk * Math.tan(a)) / (2 * fanSee(spread, yk)) + 0.5;
 const pectBands = (sp: Species, i: number): number => Math.max(3, Math.round((fanLen(sp, i) * pectoralOf(sp).len) / BAND_SPACING));
 
 // Pleat and cup of the pectoral surface at (x, y) in its own plane (base at the origin, x outwards).
@@ -52,7 +61,8 @@ function pectZ(sp: Species, x: number, y: number): number {
   // passes here, keeping each pleat's crest on its ray.
   let a = Math.atan2(y / yk, Math.max(1e-4, x));
   if (pectShape(p).fan) for (let k = 0; k < 6; k++) a = Math.max(-spread / 2, Math.min(spread / 2, Math.atan2((y / pw + fanBase(-a, spread)) / yk, Math.max(1e-4, x / pw))));
-  return 0.03 * pw * r * Math.cos(Math.PI * (a / spread + 0.5) * n) + 0.12 * pw * r * r;
+  const t = pectShape(p).fan ? fanShare(a, spread, yk) : a / spread + 0.5;
+  return 0.03 * (p.pleat ?? 1) * pw * r * Math.cos(Math.PI * t * n) + 0.12 * pw * r * r;
 }
 
 // Side view of a fan pectoral as the lab poses it (opened by `open` rad about the vertical), for
@@ -62,7 +72,7 @@ export function pectoralOutline(sp: Species, prof: Profile, open = 0.9): P2[] { 
   const px = prof.x(p.u), py = prof.centre(p.u) - p.v * prof.half(p.u), k = Math.cos(open);
   const pts: P2[] = [[px, py + 0.01]];
   for (let i = 0; i <= n; i++) {
-    const a = -spread / 2 + (spread * i) / n, r = fanLen(sp, i) * pw;
+    const a = fanAngle(i, n, spread, yk), r = fanLen(sp, i) * pw;
     pts.push([px - Math.cos(a) * r * k, py - Math.sin(a) * r * yk - fanBase(a, spread) * pw]);
   }
   pts.push([px, py - 0.01]);
@@ -75,7 +85,7 @@ export function pectoralTubes(sp: Species): TubeSpec[] {
   if (!fan) return [];
   const n = pectoralRays(sp), pw = p.len, out: TubeSpec[] = [];
   for (let i = 0; i <= n; i++) {
-    const a = -spread / 2 + (spread * i) / n, L = fanLen(sp, i), pts: P3[] = [];
+    const a = fanAngle(i, n, spread, yk), L = fanLen(sp, i), pts: P3[] = [];
     for (let q = 0; q <= 6; q++) {
       const r = (L * q) / 6, x = Math.cos(a) * r * pw, y = -(Math.sin(a) * r * yk + fanBase(a, spread)) * pw;
       pts.push([x, y, pectZ(sp, x, y)]);
@@ -93,15 +103,18 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   // so a pigmented edge follows only the margin.
   g.translate(0, H / 2);
   const n = pectoralRays(sp), a0r = -spread / 2, span = spread;
-  const ang = (i: number): number => a0r + (span * i) / n;
+  const ang = (i: number): number => (fan ? fanAngle(i, n, spread, yk) : a0r + (span * i) / n);
   const dir = (a: number, r: number): P2 => [Math.cos(a) * r, Math.sin(a) * r * yk + (fan ? fanBase(a, spread) * W : 0)];
   // A fan ray's membrane strap on the canvas: its length L (px, along the ray parameter r), unit
   // direction, k (canvas length per unit of r), half-width at share t of L, and the point at r offset
   // by `side` half-widths across it (-1 the upper edge, +1 the lower; canvas y runs down).
-  const hw0 = ((p.flag ?? 0.012) / p.len) * W / 2, tip = p.flagTip ?? 1;
+  // A pointed strap (flagPoint) narrows over its last stretch as an ogive, (1 - u^2)^0.6: full-shouldered,
+  // then a blunt point rather than a needle.
+  const hw0 = ((p.flag ?? 0.012) / p.len) * W / 2, tip = p.flagTip ?? 1, pt = p.flagPoint ?? 0;
+  const point = (t: number): number => { const u = pt > 0 ? Math.min(1, Math.max(0, (t - 1 + pt) / pt)) : 0; return (1 - u * u) ** 0.6; };
   const strap = (i: number): { L: number; dx: number; dy: number; k: number; hw: (t: number) => number; at: (r: number, side: number) => P2 } => {
     const a = ang(i), L = fanLen(sp, i) * W, k = Math.hypot(Math.cos(a), Math.sin(a) * yk);
-    const dx = Math.cos(a) / k, dy = (Math.sin(a) * yk) / k, hw = (t: number): number => hw0 * (1 - (1 - tip) * t);
+    const dx = Math.cos(a) / k, dy = (Math.sin(a) * yk) / k, hw = (t: number): number => hw0 * (1 - (1 - tip) * Math.min(1, t)) * point(t);
     return { L, dx, dy, k, hw, at: (r, side) => { const [x, y] = dir(a, r), h = side * hw(r / L); return [x - dy * h, y + dx * h]; } };
   };
   // Rounded paddle (damselfishes): the rays' tips lie on a broad arc; the outer rays are shorter.
@@ -130,9 +143,17 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
           const [mx, my] = dir(ang(i - 0.5), rIn * 0.96);
           g.lineTo(qx, qy); g.quadraticCurveTo(mx, my, ux, uy);
         }
-        g.lineTo(...s.at(rIn, -1)); g.lineTo(...s.at(rc, -1));
-        const [cx, cy] = s.at(rc, 0), th = Math.atan2(s.dy, s.dx);
-        g.arc(cx, cy, hTip, th - Math.PI / 2, th + Math.PI / 2);
+        g.lineTo(...s.at(rIn, -1));
+        if (pt > 0) {   // pointed: follow the narrowing edges out to the point and back
+          const r0 = Math.max(rIn, L * (1 - pt));
+          g.lineTo(...s.at(r0, -1));
+          for (let q = 1; q <= 12; q++) g.lineTo(...s.at(r0 + ((L - r0) * q) / 12, -1));
+          for (let q = 11; q >= 0; q--) g.lineTo(...s.at(r0 + ((L - r0) * q) / 12, 1));
+        } else {
+          g.lineTo(...s.at(rc, -1));
+          const [cx, cy] = s.at(rc, 0), th = Math.atan2(s.dy, s.dx);
+          g.arc(cx, cy, hTip, th - Math.PI / 2, th + Math.PI / 2);
+        }
         g.lineTo(...s.at(rOut, 1));
       }
       g.lineTo(0, H * (FAN_BASE + 0.015));
