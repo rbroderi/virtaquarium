@@ -2,6 +2,7 @@
 // the live loop does, at 30 Hz, and at each requested moment renders a frame and saves it to
 // out/look-<tag>-<t>s.png, plus close-ups (out/look-<tag>-<t>s-<what>.png) of
 //   station   the cleaning station (cleaner and client)
+//   <critter> a critter by kind (cuttlefish, octopus, turtle)
 //   <species> the first fish of that species
 //   fanworm   the most open feather-duster worm
 //   <name>    a scenery piece by its object name (rock_a, coral_table, ...)
@@ -667,6 +668,9 @@ function closeUpTarget(aq: AquariumHandle, what: string): { pos: THREE.Vector3; 
     const worm = (aq.reef.fanWorms?.worms ?? []).filter((w) => w.mouth.z > WORM_MIN_Z).sort((a, b) => a.retract - b.retract)[0];
     if (worm) return { pos: worm.mouth, worm: true };
   }
+  // A critter by kind (cuttlefish, octopus, turtle).
+  const critter = aq.critters.find((c) => c.kind === what);
+  if (critter) return { pos: critter.pos, worm: false };
   const fish = world.fish.find((f) => f.sp.id === what);
   // (An eel's pos is not on its body, which lies along its path: centre on the middle of the body.)
   const mid = fish?.spine?.nodes[Math.floor(fish.spine.nodes.length / 2)];
