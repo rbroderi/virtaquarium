@@ -216,12 +216,13 @@ const DEFINITIONS: SpeciesDefinition[] = [
     caudal: { type: 'round', spread: 0.16, pleat: 3, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
     // Fans of 14 broad, banded strap rays, tapering, then widening a little into a rounded, leaf-like lance
     // end, with webbing out to about 0.6 of each strap and shallow pleats: the upper ones about 0.5-0.6
-    // TL, the lowest about 0.25, each a little longer or shorter than its neighbours. Held out like wings
-    // turned toward the side view: the top ray swept back and about 24 deg up, the lowest drooping about
-    // 51 deg. A shallow cone (the middle rays leaning out) keeps a fan from reading as a comb of
-    // separate straps when seen nearly edge-on.
-    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.595, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.05, flagTip: 0.6, flagPoint: 0.07, flagSwell: 0.35, rayJitter: 0.09, web: 0.62, pleat: 0.4, cone: 0.35,
-      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.6, yaw: 0.35, flap: 0.1 },
+    // TL, the lowest about 0.25, each a little longer or shorter than its neighbours. Based about three
+    // eye widths behind the eye. Held out like wings, opened about 37 deg from the flank and turned
+    // partly toward the side view, far enough out that no ray passes into the body through the beat or
+    // when swept back. A shallow cone keeps a fan from reading as a comb of separate straps when seen
+    // nearly edge-on.
+    pectoral: { kind: 'fan', u: 0.47, v: 0.15, len: 0.595, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.05, flagTip: 0.6, flagPoint: 0.07, flagSwell: 0.35, rayJitter: 0.09, web: 0.62, pleat: 0.4, cone: 0.35,
+      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.3, yaw: 0.65, flap: -0.25 },
       spots: '#20140c', spotR: 0.004, spotN: 50 },
     pelvic: { u: 0.41, len: 0.24, angle: 50, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },

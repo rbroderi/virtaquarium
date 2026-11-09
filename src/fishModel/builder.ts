@@ -57,8 +57,9 @@ const FAN_BEAT = 0.1, FAN_BEAT_WORK = 0.14, FAN_SWAY = 0.06;
 const FAN_RIPPLE = 0.025, FAN_RIPPLE_WORK = 0.035, FAN_RIPPLES_PER_BEAT = 2;
 /** The tips' lag behind the beat, as a share of the rowed fins' lag. */
 const FAN_LAG_SHARE = 0.5;
-/** Fully folded: the share of the opening lost, and of the beat. */
-const FAN_FOLD_YAW = 0.7, FAN_FOLD_STILL = 0.6;
+/** Fully folded: the share of the opening lost, and of the beat. Fans keep enough of their opening that
+ * the swept-back rays (cupped toward the body) stay clear of the flank. */
+const FAN_FOLD_YAW = 0.4, FAN_FOLD_STILL = 0.6;
 
 // Lionfish fan pectorals don't row. Held spread like wings, they beat gently up and down, the tips
 // trailing the beat, while undulations run across the fan from the leading rays to the trailing ones
