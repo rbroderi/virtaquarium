@@ -92,9 +92,19 @@ export interface CritterWorld {
 /** Two parts allowed to touch, by mesh name ('arm*' matches any 'arm...'): critterCheck.ts. */
 export type JoinRule = readonly [string, string];
 
-/** What every critter offers the tank and the shape check. */
+/**
+ * A behaviour the shape check holds a critter in (critterCheck.ts), and where it goes meanwhile: an
+ * offset from where it is, or null to stay put.
+ */
+export type CheckVisit = readonly [mode: string, go: readonly [number, number, number] | null];
+
+/** What every critter offers the tank and the shape check (critters/base.ts implements it). */
 export interface Critter extends Inspectable {
   readonly kind: CritterKind;
+  /** The name the shape check reports it under. */
+  readonly displayName: string;
+  /** The behaviours the shape check holds it in, in turn. */
+  readonly checkVisits: readonly CheckVisit[];
   readonly sp: CritterSpecies;
   readonly radius: number;
   readonly pos: THREE.Vector3;

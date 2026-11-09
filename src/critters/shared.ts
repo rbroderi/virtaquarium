@@ -45,6 +45,26 @@ export interface TissueOptions {
 
 export type ShaderHook = (shader: THREE.WebGLProgramParametersWithUniforms, renderer: THREE.WebGLRenderer) => void;
 
+/** GLSL a soft body's hook splices in: declarations before each stage, and its begin_vertex and map_fragment. */
+export interface SoftBodyPatch {
+  readonly vertHead: string;
+  readonly vertBegin: string;
+  readonly fragHead: string;
+  readonly fragMap: string;
+}
+
+/**
+ * The WebGL hook of a blended soft body (octopus body, cuttlefish mantle): binds the critter's live
+ * uniforms, deforms the vertices in begin_vertex and colours in map_fragment.
+ */
+export function softBodyHook(uniforms: Readonly<Record<string, THREE.IUniform>>, patch: SoftBodyPatch): ShaderHook {
+  return (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = patch.vertHead + shader.vertexShader.replace('#include <begin_vertex>', patch.vertBegin);
+    shader.fragmentShader = patch.fragHead + shader.fragmentShader.replace('#include <map_fragment>', patch.fragMap);
+  };
+}
+
 /** The TSL counterpart of a ShaderHook: node-material slots a critter can set under WebGPU. */
 export interface SkinNodes {
   positionNode?: Node | null;

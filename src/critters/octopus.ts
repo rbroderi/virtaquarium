@@ -9,14 +9,13 @@
 import * as THREE from 'three';
 import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js';
 import { OCTO_SAC } from '../softBodies.js';
-import { softBodyGeometry } from './softBodyMeshes.js';
-import { skin, threatNear, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, type ShaderHook, type NodeHook } from './shared.js';
+import { skin, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, softBodyHook, type ShaderHook, type NodeHook, type SoftBodyPatch } from './shared.js';
 import { boundMaterialColor, gpuActive } from '../webgpu/tsl.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
-import type { InspectPanel } from '../inspect.js';
+import { Cephalopod } from './base.js';
 import { CritterBrain, type DriveInfo } from './critterBrain.js';
-import type { Critter, CritterCave, CritterFood, CritterSpecies, CritterWorld, JoinRule, OctopusDen } from './types.js';
+import type { CheckVisit, CritterCave, CritterContext, CritterFood, CritterSpecies, CritterWorld, JoinRule, OctopusDen } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 
 export type OctopusMode = 'den' | 'forage' | 'pounce' | 'jet';
@@ -75,17 +74,24 @@ const MODE_NOTES: Readonly<Record<OctopusMode, string>> = {
 
 const SHADE_FRAG = `#include <map_fragment>
         diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`;
-const BODY_VERT_HEAD = 'uniform float uBreath;\nattribute float aWeight;\nvarying vec3 vTriP, vTriN;\n';
-const BODY_VERT_BEGIN = `#include <begin_vertex>
+/**
+ * The body is one blended mesh without UVs: its skin is mapped triplanar (three taps, blended by
+ * the normal, so the wrinkles run on across the joins), and it breathes in the vertex shader: the
+ * sac's share of each vertex (aWeight) swells about the sac's centre.
+ */
+const BODY_PATCH: SoftBodyPatch = {
+  vertHead: 'uniform float uBreath;\nattribute float aWeight;\nvarying vec3 vTriP, vTriN;\n',
+  vertBegin: `#include <begin_vertex>
         transformed = vec3(-0.48, 0.3, 0.0) + (transformed - vec3(-0.48, 0.3, 0.0)) * (1.0 + uBreath * aWeight);
-        vTriP = position; vTriN = normal;`;
-const BODY_FRAG_HEAD = 'uniform float uShade;\nvarying vec3 vTriP, vTriN;\n';
-const BODY_FRAG_MAP = `{
+        vTriP = position; vTriN = normal;`,
+  fragHead: 'uniform float uShade;\nvarying vec3 vTriP, vTriN;\n',
+  fragMap: `{
           vec3 bw = pow(abs(normalize(vTriN)), vec3(4.0)); bw /= bw.x + bw.y + bw.z;
           vec3 tp = vTriP * 0.45;
           diffuseColor *= texture2D(map, tp.zy) * bw.x + texture2D(map, tp.xz + 0.37) * bw.y + texture2D(map, tp.xy + 0.71) * bw.z;
         }
-        diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`;
+        diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`,
+};
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 
@@ -95,15 +101,14 @@ function pointOf(arm: ArmTube, i: number): THREE.Vector3 {
   return p;
 }
 
-export class Octopus implements Critter {
+export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait> {
   readonly kind = 'octopus' as const;
-  readonly sp: CritterSpecies;
-  readonly radius: number;
+  readonly displayName = 'Octopus';
+  readonly checkVisits: readonly CheckVisit[] = [['forage', [1.5, 0, 0.5]], ['den', null]];
   /** Mantle scale. */
   readonly M: number;
   /** Click-proxy radius for the inspection overlay (the arms sprawl beyond it). */
   readonly pickRadius: number;
-  readonly model = new THREE.Group();
   readonly sac = new THREE.Object3D();
   readonly disc = new THREE.Object3D();
   readonly suckers: THREE.InstancedMesh;
@@ -123,15 +128,11 @@ export class Octopus implements Critter {
   target: THREE.Vector3;
   /** Speed over the ground from the last step (units/s). */
   speed = 0;
-  /** Jet strength left, 1 at the start of a jet. */
-  jet = 0;
-  private readonly rng: Rng;
+  protected readonly threatRange = THREAT_RANGE;
   private readonly u: OctopusUniforms = { uShade: { value: 0 }, uBreath: { value: 0 } };
   private readonly siphonBalls: THREE.Object3D[];
   private readonly obstacles: ArmObstacle[];
   private readonly untangler = new ArmUntangler();
-  private t = 0;
-  private calm = 0;
   private stand = 0;
   private squash = 1;
   private tuck = 1;
@@ -143,8 +144,13 @@ export class Octopus implements Critter {
   private readonly down = new THREE.Vector3(0, -1, 0);
   private readonly worldToLocal = new THREE.Matrix4();
 
+  // The octopus dens in a cave (or a low crevice): it alone asks for one.
+  static create(sp: CritterSpecies, { rng, findDen }: CritterContext): Octopus {
+    return new Octopus(sp, rng, findDen());
+  }
+
   constructor(sp: CritterSpecies, rng: Rng, den: OctopusDen) {
-    this.sp = sp; this.rng = rng; this.radius = sp.radius;
+    super(sp, rng);
     const M = this.M = range(rng, 0.85, 1.05);
     this.pickRadius = 1.5 * M;
     const hook: ShaderHook = (shader) => {
@@ -156,14 +162,10 @@ export class Octopus implements Critter {
     const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook, { ...CEPH_SSS, thin: 'attr' }, shadeHook);
     // WebGL's bodyHook samples `map` triplanar in place of map_fragment; the WebGPU colorNode samples tex
     // itself, and a `map` there would make the shadow pass read its alpha at a uv this mesh does not have.
-    const bodyMat = skin({ ...(gpuActive() ? {} : { map: tex }), roughness: 0.55 }, 'octo-body', this.bodyHook(), CEPH_SSS, this.bodyNodeHook(tex));
+    const bodyMat = skin({ ...(gpuActive() ? {} : { map: tex }), roughness: 0.55 }, 'octo-body', softBodyHook(this.u, BODY_PATCH), CEPH_SSS, this.bodyNodeHook(tex));
     // Mantle sac, head, eye turrets, oral disc with the arm roots, and siphon: one mesh (built for
     // M = 1, softBodies.ts), so the arms grow out of the body rather than meeting it at seams.
-    const body = new THREE.Mesh(softBodyGeometry('octopus-body'), bodyMat);
-    body.scale.setScalar(M);
-    body.castShadow = true;
-    body.name = 'body';
-    this.model.add(body);
+    this.addSoftBody('octopus-body', bodyMat, M, 'body');
     this.addSacStandIn(M);
     const eyeParts = this.addEyes(M);
     this.siphonBalls = this.addSiphonBalls(M);
@@ -189,19 +191,6 @@ export class Octopus implements Critter {
     if (den.cave) this.yaw = Math.atan2(den.cave.dir.z, den.cave.dir.x);
   }
 
-  /**
-   * The body is one blended mesh without UVs: its skin is mapped triplanar (three taps, blended by
-   * the normal, so the wrinkles run on across the joins), and it breathes in the vertex shader: the
-   * sac's share of each vertex (aWeight) swells about the sac's centre.
-   */
-  private bodyHook(): ShaderHook {
-    return (shader) => {
-      Object.assign(shader.uniforms, this.u);
-      shader.vertexShader = BODY_VERT_HEAD + shader.vertexShader.replace('#include <begin_vertex>', BODY_VERT_BEGIN);
-      shader.fragmentShader = BODY_FRAG_HEAD + shader.fragmentShader.replace('#include <map_fragment>', BODY_FRAG_MAP);
-    };
-  }
-
   /** TSL form of the shade hook (SHADE_FRAG): tint the mapped albedo towards the resting shade. */
   private shadeNodeHook(): NodeHook {
     return (t, mat) => {
@@ -212,7 +201,7 @@ export class Octopus implements Critter {
     };
   }
 
-  /** TSL form of bodyHook(): the sac breath (position) and the triplanar skin + shade (colour). */
+  /** TSL form of BODY_PATCH: the sac breath (position) and the triplanar skin + shade (colour). */
   private bodyNodeHook(tex: THREE.Texture): NodeHook {
     return (t) => {
       const uBreath = scalarNode(t, this.u.uBreath);
@@ -330,18 +319,20 @@ export class Octopus implements Critter {
     return web;
   }
 
-  /** The click panel, laid out as the fish panel. */
-  inspect(): InspectPanel {
-    return this.brain.panel(this.sp, this.mode, MODE_NOTES[this.mode]);
+  protected thought(): string { return MODE_NOTES[this.mode]; }
+
+  /** Startle (Cephalopod.reactToThreat), then the drives move. */
+  protected sense(dt: number, world: CritterWorld): void {
+    this.reactToThreat(dt, world);
+    this.feelDrives(dt);
   }
 
-  update(dt: number, world: CritterWorld): void {
-    this.t += dt; this.modeT -= dt;
-    this.calm -= dt;
-    const threat = this.calm <= 0 && this.mode !== 'jet' ? threatNear(this, world, THREAT_RANGE) : null;
-    if (threat) this.startle(world, threat.pos);
-    this.feelDrives(dt);
-    if (this.modeT <= 0 || this.foodAppeared(world)) this.decide(world);
+  /** New food landing within reach calls for a decision now. */
+  protected override wantsToDecide(world: CritterWorld): boolean { return this.foodAppeared(world); }
+
+  protected jetFrom(world: CritterWorld, from: THREE.Vector3): void { this.startle(world, from); }
+
+  protected act(dt: number, world: CritterWorld): void {
     this.prevPos.copy(this.pos);
     const reach = this.mode === 'jet' ? JET_SPEED * this.jet : this.mode === 'pounce' ? POUNCE_SPEED : CRAWL_SPEED;
     this.moveBody(dt);
@@ -389,7 +380,7 @@ export class Octopus implements Critter {
   }
 
   /** Score den, forage and pounce from the drives; a jet runs its course first. */
-  private decide(world: CritterWorld): void {
+  protected decide(world: CritterWorld): void {
     if (this.mode === 'jet' && this.modeT > 0) return;
     const br = this.brain, { hunger, fatigue, fear, restless } = br.drives, food = this.nearFood(world);
     const scores: Partial<Record<OctopusMode, number>> = {

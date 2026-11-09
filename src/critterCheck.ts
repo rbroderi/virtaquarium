@@ -11,7 +11,7 @@
 // inside of its own, but must still join the body and not cut through another part.
 import * as THREE from 'three';
 import type { AquariumHandle } from './app/handle.js';
-import type { Critter, CritterKind, JoinRule } from './critters.js';
+import type { Critter, JoinRule } from './critters.js';
 import { cellAt, cellIndex, cellOf, flood, surfaceCells, type Cell3, type VoxelGrid } from './checks/voxel.js';
 
 /** Voxels along the critter's longest side. */
@@ -211,21 +211,6 @@ export function checkShape(critter: Pick<Critter, 'model' | 'joins'>): ShapeResu
 
 const ok = (r: ShapeResult): boolean => r.pieces === 1 && !r.loose.length && !r.leaks.length && !r.clips.length;
 
-/** Names in the report, as the JS build printed them (its class names). */
-const DISPLAY_NAME: Readonly<Record<CritterKind, string>> = { cuttlefish: 'Cuttlefish', octopus: 'Octopus', turtle: 'Turtle' };
-
-type ModeVisit = readonly [mode: string, go: readonly [number, number, number] | null];
-
-/**
- * Each critter's behaviours, held a while each in turn (where it goes: an offset from where it is,
- * or null to stay put), on top of whatever it was doing.
- */
-const MODES: Readonly<Record<CritterKind, readonly ModeVisit[]>> = {
-  cuttlefish: [['cruise', [3, 0, 0]], ['hover', [0.3, 0, 0]], ['rest', null]],
-  octopus: [['forage', [1.5, 0, 0.5]], ['den', null]],
-  turtle: [['cruise', [4, 0, 1]], ['graze', null], ['rest', null]],
-};
-
 export interface Fail extends ShapeResult { at: string }
 export interface CritterReport { critter: string; checks: number; fails: Fail[] }
 
@@ -246,7 +231,7 @@ async function checkCritter(c: Critter, aq: AquariumHandle, seconds: number, eve
     }
   };
   await run('as is', seconds);
-  for (const [mode, go] of MODES[c.kind]) {
+  for (const [mode, go] of c.checkVisits) {
     c.mode = mode; c.modeT = HOLD_MODE;
     c.target = go ? c.pos.clone().add(new THREE.Vector3(...go)) : c.pos.clone();
     await run(mode, MODE_SECONDS);
@@ -259,7 +244,7 @@ async function checkCritter(c: Critter, aq: AquariumHandle, seconds: number, eve
     for (let i = 1; i <= JET_FRAMES; i++) { c.update(STEP_DT, world); if (i % JET_CHECK_EVERY === 0) check(`jet +${i}`); }
   }
   if (c.forceStrike) for (const s of STRIKE_POSES) { c.forceStrike(s + STEP_DT); c.update(STEP_DT, world); check(`strike ${s}`); }
-  const critter = DISPLAY_NAME[c.kind];
+  const critter = c.displayName;
   console.log(`critter check: ${critter} done, ${fails.length} failed`);
   return { critter, checks, fails };
 }
