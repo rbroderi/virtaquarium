@@ -37,6 +37,10 @@ const BUMP_RANGE = 1.15;             // bells nearer than this many summed radii
 const BUMP_STRENGTH = 0.6;
 /** How hard a jelly tilts away from another it is touching or about to (against its wander, length 1). */
 const JELLY_AVOID = 2;
+/** Touching this urgently with its course heading in, a jelly picks a new course at once. */
+const BUMP_REPICK = 0.3;
+/** A course picked while touching another is within this of straight away from it (radians). */
+const BUMP_SPREAD = 1;
 /** The oral arms for collisions: their length (bell radii, as the arm shader draws them), the points
  *  along them (a share of the length: from just under the bell), and the bundle's radius there (bell
  *  radii, as base + slope * share: the four arms spread as they hang). */
@@ -248,13 +252,18 @@ export class Jelly extends CreatureBase<JellyWorld> {
    * depth) and turns to it slowly. Near the walls it tips away from them.
    */
   private right(dt: number, B: JellyBounds): void {
+    // Bumping another jelly with its course heading into it, it picks a new course now, away from it.
+    const u = this.inbox.read(this._away);
+    if (u > BUMP_REPICK && this.wander.dot(this._away) < 0) this.wanderT = 0;
     this.wanderT -= dt;
     if (this.wanderT <= 0) {
       const tilt = range(this.rng, WANDER_TILT[0], WANDER_TILT[1]);
       const side = this.rng() < 0.5 ? -1 : 1;
-      const az = this.rng() < WANDER_DEPTH_SHARE
-        ? side * Math.PI / 2 + range(this.rng, -0.5, 0.5)   // mostly along z: towards or away from the viewer
-        : range(this.rng, -Math.PI, Math.PI);
+      const az = u > 0
+        ? Math.atan2(this._away.z, this._away.x) + range(this.rng, -BUMP_SPREAD, BUMP_SPREAD)   // away from what it touched
+        : this.rng() < WANDER_DEPTH_SHARE
+          ? side * Math.PI / 2 + range(this.rng, -0.5, 0.5)   // mostly along z: towards or away from the viewer
+          : range(this.rng, -Math.PI, Math.PI);
       this.wander.set(Math.sin(tilt) * Math.cos(az), Math.cos(tilt), Math.sin(tilt) * Math.sin(az));
       this.wanderT = range(this.rng, WANDER_SECONDS[0], WANDER_SECONDS[1]);
     }
@@ -267,7 +276,6 @@ export class Jelly extends CreatureBase<JellyWorld> {
     if (this.pos.z > B.z1 - mz) want.z -= 1.5;
     if (this.pos.y > B.y1 - TOP_MARGIN) want.y -= 2.5;   // near the top: tip over and drift back down
     if (this.pos.y < LOW_Y) want.y += 1.5;
-    const u = this.inbox.read(this._away);
     if (u > 0) want.addScaledVector(this._away, u * JELLY_AVOID);
     this.axis.lerp(want.normalize(), Math.min(1, dt * RIGHTING_RATE)).normalize();
     this.pos.x = clamp(this.pos.x, B.x0, B.x1);

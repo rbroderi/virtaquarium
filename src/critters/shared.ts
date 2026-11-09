@@ -143,6 +143,10 @@ export interface SteerOptions {
 
 /** How far the avoidance reflex bends a critter's course (target distances, at full urgency). */
 const AVOID_TURN = 1.2;
+/** Something in its path: it eases off by up to this share of its speed per unit of urgency... */
+export const AVOID_EASE = 1.2;
+/** ...but never below this share. */
+export const MIN_EASED = 0.4;
 const _away = new THREE.Vector3();
 
 const _v = new THREE.Vector3();
@@ -176,13 +180,17 @@ export class Swimmer {
     _v.subVectors(target, this.pos);
     const toTarget = Math.hypot(_v.x, _v.z);
     // The avoidance reflex bends the course off whatever it is touching or about to.
+    // Whatever is in its path (the way it is moving), it also swerves harder from and eases off for, so
+    // it does not plough through a school of small fish that are trying to get out of its way.
     const u = this.inbox.read(_away, null, chase ? CHASE_HEED : 1);
-    if (u > 0) _v.addScaledVector(_away, u * AVOID_TURN * Math.max(_v.length(), 1));
+    const s = Math.sign(this.speed || 1);
+    const inPath = u > 0 ? Math.max(0, -this.dir.dot(_away) * s) : 0;
+    if (u > 0) _v.addScaledVector(_away, u * AVOID_TURN * (1 + inPath) * Math.max(_v.length(), 1));
+    const eased = speed * Math.max(MIN_EASED, 1 - AVOID_EASE * u * inPath);
     const flat = Math.hypot(_v.x, _v.z);
     let yawT = Math.atan2(_v.z, _v.x);
     if (reverse) yawT = wrapAngle(yawT + Math.PI);   // back towards the target (cuttlefish swim backwards)
     let pitchT = clamp(Math.atan2(_v.y, Math.max(flat, MIN_FLAT_DISTANCE)) * (reverse ? -1 : 1), -MAX_STEER_PITCH, MAX_STEER_PITCH);
-    const s = Math.sign(this.speed || 1);
     const ahead = world.reefHeight(this.pos.x + this.dir.x * look * s, this.pos.z + this.dir.z * look * s) + clearance;
     if (this.pos.y < ahead) pitchT = Math.max(pitchT, CLIMB_PITCH * s);
     const dy = wrapAngle(yawT - this.yaw);
@@ -190,7 +198,7 @@ export class Swimmer {
     this.yaw = wrapAngle(this.yaw + rate * dt);
     this.roll = lerp(this.roll, -rate * 0.25, Math.min(1, dt * 2));
     this.pitch = lerp(this.pitch, pitchT, Math.min(1, dt * 1.2));
-    this.speed = lerp(this.speed, speed, Math.min(1, dt * accel));
+    this.speed = lerp(this.speed, eased, Math.min(1, dt * accel));
     const cp = Math.cos(this.pitch);
     this.dir.set(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
     _prev.copy(this.pos);

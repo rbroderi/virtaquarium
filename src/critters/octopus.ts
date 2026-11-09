@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js';
 import { OCTO_SAC } from '../softBodies.js';
-import { skin, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, softBodyHook, type ShaderHook, type NodeHook, type SoftBodyPatch } from './shared.js';
+import { skin, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, softBodyHook, AVOID_EASE, MIN_EASED, type ShaderHook, type NodeHook, type SoftBodyPatch } from './shared.js';
 import { boundMaterialColor, gpuActive } from '../webgpu/tsl.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, ROOT_POINTS, type ArmObstacle } from './armUntangle.js';
@@ -457,12 +457,15 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
     const speed = this.mode === 'pounce' ? POUNCE_SPEED : this.mode === 'den' && d < 0.2 ? 0 : CRAWL_SPEED;
     this.inDen = this.mode === 'den' && d < DEN_REACHED;
     if (d > 0.05) {
-      // The avoidance reflex bends the crawl off whatever it is touching or about to (a pounce, less).
+      // The avoidance reflex bends the crawl off whatever it is touching or about to (a pounce, less),
+      // and, as for the swimmers (Swimmer.steer), harder and slower when that is in its path.
       const u = this.inbox.read(_away, null, this.mode === 'pounce' ? CHASE_HEED : 1);
-      if (u > 0) _v.addScaledVector(_away.setY(0), u * AVOID_TURN * Math.max(d, 1));
+      const inPath = u > 0 ? Math.max(0, -_v.dot(_away.setY(0)) / d) : 0;
+      if (u > 0) _v.addScaledVector(_away, u * AVOID_TURN * (1 + inPath) * Math.max(d, 1));
+      const eased = speed * Math.max(MIN_EASED, 1 - AVOID_EASE * u * inPath);
       const yawT = Math.atan2(_v.z, _v.x);
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 0.8);
-      this.pos.addScaledVector(_v.normalize(), Math.min(d, speed * dt));
+      this.pos.addScaledVector(_v.normalize(), Math.min(d, eased * dt));
     }
     if (this.mode === 'pounce' && this.food && (this.food.eaten || d < 0.35)) {
       if (!this.food.eaten) this.brain.add('hunger', -FOOD_BITE);

@@ -55,6 +55,18 @@ const SOLID_MARGIN = 0.25;
 const WARY = 2;
 /** The widest margin, any pair: what the near-miss search looks within. */
 const LOOKOUT = 1 + WARY;
+/** The orchestrator looks this far ahead (s) for two creatures on course to collide. */
+const FORESIGHT = 3;
+/** Its warnings are at most this urgent (touching, the separation's own message, is 1)... */
+const FORESIGHT_URGENCY = 0.7;
+/** ...and at the edge of the look-ahead (FORESIGHT seconds out), only this share of that: a nudge,
+ *  growing to the full warning as their nearest approach comes closer in time. */
+const FORESIGHT_NUDGE = 0.15;
+/** It wants this much clear between two passing bodies (a share of the smaller one's radius). */
+const FORESIGHT_CLEAR = 0.5;
+/** A fish's sphere for the forecast, a share of its reach (it is long and thin: a passing side-on
+ *  fish is narrower than its length). */
+const FISH_SPHERE = 0.7;
 /** The most spheres a critter's bending limbs are asked to keep clear of (the nearest). */
 const LIMB_SPHERES = 24;
 
@@ -62,6 +74,10 @@ const _a0 = new THREE.Vector3(), _a1 = new THREE.Vector3(), _b0 = new THREE.Vect
 const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _n = new THREE.Vector3(), _m = new THREE.Vector3();
 const _st: [number, number] = [0, 0];
 const _move = new THREE.Vector3(), _bn = new THREE.Vector3(), _away = new THREE.Vector3();
+const _rv = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+
+/** A creature in the orchestrator's forecast: where it is, how it is moving, and a sphere round it. */
+interface Mover { who: Party & { readonly sp?: unknown }; fish: Fish | null; p: THREE.Vector3; v: THREE.Vector3; r: number }
 
 /** One side of a contact, for the share of the push and of the heed. */
 interface Party { readonly inbox?: ContactInbox; readonly inDen?: boolean; readonly mass: number }
@@ -104,6 +120,8 @@ export class BodySeparation {
   private rock: RockQuery | null = null;
   /** Messages are posted in the first pass only (the later passes see the same contacts, nudged). */
   private posting = true;
+  /** The orchestrator's forecast list, reused step to step. */
+  private readonly movers: Mover[] = [];
 
   private dimsOf(f: Fish): BodyDims {
     let d = this.dims.get(f);
@@ -126,6 +144,7 @@ export class BodySeparation {
     const bodies = critters.map((c) => ({ c, b: this.bodyOf(c), vel: this.critterVel.get(c)?.vel ?? null }));
     for (const { b } of bodies) b.update();
     for (const f of fish) f.inbox.fade(dt);
+    this.foresee(fish, critters);
     for (let pass = 0; pass < PASSES; pass++) {
       this.posting = pass === 0;
       for (let i = 0; i < fish.length; i++) for (let j = i + 1; j < fish.length; j++) {
@@ -332,6 +351,63 @@ export class BodySeparation {
     c.pos.add(move);
     c.model.position.add(move);
     c.model.updateMatrix();
+  }
+
+  /**
+   * The orchestrator: before anyone touches, it projects every pair of creatures along their present
+   * velocities and, for any pair on course to pass closer than their bodies allow in the next
+   * FORESIGHT seconds, tells each to steer to its own side of the near miss (head-on: to opposite
+   * sides). FORESIGHT seconds out it only nudges, growing more insistent as the near miss comes closer
+   * in time (and the nearer the miss). The same rules as touching apply (mass, den,
+   * the smaller looking out further). Fish of one species are left to their schooling (brain).
+   */
+  private foresee(fish: readonly Fish[], critters: readonly Solid[]): void {
+    const ms = this.movers;
+    let k = 0;
+    const add = (who: Mover['who'], f: Fish | null, p: THREE.Vector3, v: THREE.Vector3, r: number): void => {
+      const m = ms[k];
+      if (m) { m.who = who; m.fish = f; m.p = p; m.v = v; m.r = r; } else ms.push({ who, fish: f, p, v, r });
+      k++;
+    };
+    for (const f of fish) if (!f.spine) add(f, f, f.pos, f.vel, this.reach(f, this.dimsOf(f)) * FISH_SPHERE);
+    for (const c of critters) {
+      const v = this.critterVel.get(c)?.vel;
+      const b = this.bodyOf(c);
+      if (v) add(c, null, b.centre, v, b.radius);
+    }
+    for (let i = 0; i < k; i++) {
+      const A = ms[i];
+      if (!A) continue;
+      for (let j = i + 1; j < k; j++) {
+        const B = ms[j];
+        if (!B) continue;
+        if (A.fish && B.fish && (A.fish.sp === B.fish.sp || touchingOnPurpose(A.fish, B.fish))) continue;
+        _p.subVectors(B.p, A.p);
+        _rv.subVectors(B.v, A.v);
+        const closing = -_p.dot(_rv);
+        if (closing <= 0) continue;
+        const clear = FORESIGHT_CLEAR * Math.min(A.r, B.r), bodies = A.r + B.r;
+        const widest = bodies + clear * LOOKOUT, vv = _rv.lengthSq();
+        if (_p.length() - Math.sqrt(vv) * FORESIGHT > widest) continue;
+        const t = Math.min(FORESIGHT, closing / vv);
+        _m.copy(_p).addScaledVector(_rv, t);   // B from A at their nearest
+        const miss = _m.length();
+        if (miss >= widest) continue;
+        if (miss > 1e-4) _n.copy(_m).multiplyScalar(1 / miss);
+        else {
+          _n.crossVectors(_rv, _up);
+          if (_n.lengthSq() < 1e-8) continue;
+          _n.normalize();
+        }
+        // FORESIGHT seconds out, a nudge; as the near miss comes closer in time, more insistent
+        // (steeply, near the end).
+        const near = 1 - t / FORESIGHT;
+        const soon = FORESIGHT_URGENCY * (FORESIGHT_NUDGE + (1 - FORESIGHT_NUDGE) * near * near);
+        const ra = bodies + clear * lookoutOf(A.who, B.who), rb = bodies + clear * lookoutOf(B.who, A.who);
+        if (miss < ra) A.who.inbox?.post(B.who, _away.copy(_n).negate(), soon * Math.min(1, (ra - miss) / (ra - bodies)) * heedOfParty(A.who, B.who));
+        if (miss < rb) B.who.inbox?.post(A.who, _n, soon * Math.min(1, (rb - miss) / (rb - bodies)) * heedOfParty(B.who, A.who));
+      }
+    }
   }
 
   private reach(f: Fish, d: BodyDims): number {
