@@ -107,9 +107,8 @@ export async function main(aq: AquariumHandle): Promise<void> {
     if (probeAt.includes(n)) { console.log('PROBE t', n / STEPS_PER_SECOND); probe(world); }
     if (n % STEPS_PER_SECOND === 0) shoals.sample(world.fish);
     const t0 = performance.now();
-    world.update(DT);
+    world.update(DT);   // the critters too
     updateMs += performance.now() - t0;
-    for (const c of aq.critters) c.update(DT, world);
     if (hostAn) for (const f of hostFish) {
       const tally = hostTallies.get(f);
       if (!tally) continue;

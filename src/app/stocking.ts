@@ -1,6 +1,6 @@
 // Stocking the tank from the validated Tank document: fish (placed by a chain of placement
-// strategies), critters (through the critter factory) and jellies. Random draws happen in the same
-// order as the JS build, so a seed stocks the same tank.
+// strategies), critters (through the critter factory) and jellies, each into the World's one creature
+// list. Random draws happen in the same order as the JS build, so a seed stocks the same tank.
 import * as THREE from 'three';
 import { range, type Rng } from '../core/rng.js';
 import { FISH_NAMES, type Species } from '../species.js';
@@ -39,18 +39,12 @@ export interface StockCatalogue {
 }
 
 export interface StockingContext {
-  readonly scene: THREE.Scene;
   readonly world: World;
   readonly reef: TankScene;
   readonly bounds: TankBounds;
   readonly rng: Rng;
   readonly tank: Tank;
   readonly catalogue: StockCatalogue;
-}
-
-export interface Stock {
-  readonly critters: readonly Critter[];
-  readonly jellies: readonly Jelly[];
 }
 
 // ---------- fish placement (Strategy chain: the first that applies places the fish) ----------
@@ -156,7 +150,7 @@ function addFish(ctx: StockingContext, sp: Species, entry: TankStockEntry, names
     const floor = reef.heightAt(x, z) + SPAWN_MARGIN.aboveReef;
     f.pos.set(x, range(rng, floor, bounds.y1 - SPAWN_MARGIN.top), z);
     PLACEMENTS.find((p) => p.applies(f, placement))?.place(f, placement);
-    world.addFish(f);
+    world.add(f);
   }
 }
 
@@ -203,8 +197,9 @@ function assignShelters(world: World, reef: TankScene): void {
   console.info('Shelters:', shelters.length, 'assigned:', world.fish.filter((f) => f.brain.shelter).length);
 }
 
-export function stockTank(ctx: StockingContext): Stock {
-  const { catalogue, tank, rng, scene, world, reef, bounds } = ctx;
+/** Stocks the tank: every animal goes into the World's creature list (world.add), in the tank's order. */
+export function stockTank(ctx: StockingContext): void {
+  const { catalogue, tank, rng, world, reef, bounds } = ctx;
   const speciesById = new Map(catalogue.fish.map((sp) => [sp.id, sp]));
   const jellyById = new Map(catalogue.jellies.map((sp) => [sp.id, sp]));
   const critterById = new Map<string, CritterSpecies>(catalogue.critters.map((sp) => [sp.id, sp]));
@@ -212,26 +207,14 @@ export function stockTank(ctx: StockingContext): Stock {
   const placement: PlacementContext = { world, reef, rng, homes: reef.homes.slice() };
   setUpCleaningStation(ctx, speciesById);
 
-  const jellies: Jelly[] = [];
-  const critters: Critter[] = [];
-  const findDen = denFinder(ctx, speciesById, critters);
+  const findDen = denFinder(ctx, speciesById, world.critters);
   for (const entry of tank.fish) {
     const jellySp = jellyById.get(entry.species);
     const critterSp = critterById.get(entry.species);
     const fishSp = speciesById.get(entry.species);
-    for (let i = 0; jellySp && i < entry.count; i++) {
-      const jelly = new Jelly(jellySp, rng, bounds);
-      jellies.push(jelly);
-      scene.add(jelly.model);
-    }
-    for (let i = 0; !jellySp && critterSp && i < entry.count; i++) {
-      const critter = createCritter(critterSp, { rng, world, findDen });
-      critters.push(critter);
-      world.critters.push(critter);
-      scene.add(critter.model);
-    }
+    for (let i = 0; jellySp && i < entry.count; i++) world.add(new Jelly(jellySp, rng, bounds));
+    for (let i = 0; !jellySp && critterSp && i < entry.count; i++) world.add(createCritter(critterSp, { rng, world, findDen }));
     if (!jellySp && !critterSp && fishSp) addFish(ctx, fishSp, entry, names, placement);
   }
   if (tank.scenery !== 'jelly') assignShelters(world, reef);
-  return { critters, jellies };
 }

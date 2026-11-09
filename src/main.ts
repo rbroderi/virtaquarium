@@ -286,8 +286,8 @@ async function main(): Promise<void> {
   const bounds = swimBox(stage);
   await paintLoading();   // stocking paints any fish skins the cache didn't have (about a second each)
   const world = new World(stage.scene, reef, bounds, rng);
-  const { critters, jellies } = stockTank({
-    scene: stage.scene, world, reef, bounds, rng, tank,
+  stockTank({
+    world, reef, bounds, rng, tank,
     catalogue: { fish: SPECIES, critters: CRITTER_SPECIES, jellies: JELLY_SPECIES },
   });
   timer.stage('fish and critters');
@@ -301,7 +301,7 @@ async function main(): Promise<void> {
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
   const bus = new EventBus<TankEvents>();
   bus.on('feed', ({ x }) => world.dropFood(x));
-  const ui = new UI({ world, inspectables: [...critters, ...jellies], camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null, crystal, pan: stage.pan });
+  const ui = new UI({ world, camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null, crystal, pan: stage.pan });
   trackViewer(stage.canvas, stage.camera, world, bounds);
 
   const lighting = new LightingController({ stage, surface, reef, toneGain: options.tone.gain });
@@ -312,7 +312,7 @@ async function main(): Promise<void> {
   const lookHour = options.check === 'look' && params.has('hour') ? Number(params.get('hour')) : NaN;
   const daylight = Number.isFinite(lookHour) ? wallClockDaylight() : daylightFor(followClock);
   const loop = new TankLoop({
-    stage, world, reef, jellies, critters, snow, bubbles, surface, lighting,
+    stage, world, reef, snow, bubbles, surface, lighting,
     daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur,
     afterStep: (dt) => { ui.update(); crystal?.update(dt); },
   });
@@ -321,7 +321,7 @@ async function main(): Promise<void> {
   // The handle is the WebGL renderer's shape; under WebGPU its GLSL-only members are null but the
   // checks that run there (look, motion, critters) only touch the common surface and the world.
   const aquarium: AquariumHandle = {
-    THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies, critters, SPECIES,
+    THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies: world.jellies, critters: world.critters, SPECIES,
     caustics: stage.caustics as unknown as AquariumHandle['caustics'], water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as unknown as AquariumHandle['surface'], daylight,
     setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
   };

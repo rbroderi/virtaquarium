@@ -1,14 +1,14 @@
-// The base every critter species specialises (template method). CritterBase owns what all critters
-// share: the species record, the random stream, the model group, the animation clock, the step order
-// of sense / decide / act, the brain-driven click panel and the soft-body mesh. Cephalopod adds what
-// the octopus and cuttlefish share: the startle check and the escape jet.
+// The base every critter species specialises, on the creature step template (creature.ts). CritterBase
+// owns what all critters share: the species record, the random stream, the model group, the animation
+// and mode clocks, deciding when the mode's time is up, the brain-driven click panel and the soft-body
+// mesh. Cephalopod adds what the octopus and cuttlefish share: the startle check and the escape jet.
 //
 // A species subclass supplies its body plan in its constructor (calling super first, then drawing from
 // rng in its own order, its CritterBrain included) and fills in the hooks:
 //   sense(dt, world)     react to the world and move its drives (threats, food, tiredness)
 //   wantsToDecide(world) (optional) think again before the mode's time is up (new food in sight)
 //   decide(world)        score the options with its brain and start the best
-//   think(world)         (optional) replace the when-to-decide rule outright (the turtle's breath)
+//   think(dt, world)     (optional) replace the when-to-decide rule outright (the turtle's breath)
 //   act(dt, world)       move, pose and colour the model for this step
 //   thought()            the panel's one-line note
 //   checkVisits, displayName   its shape check (critterCheck.ts)
@@ -20,10 +20,13 @@ import type { InspectPanel } from '../inspect.js';
 import { softBodyGeometry } from './softBodyMeshes.js';
 import { threatNear } from './shared.js';
 import type { CritterBrain } from './critterBrain.js';
+import { CreatureBase } from '../creature.js';
 import type { CheckVisit, Critter, CritterKind, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
-export abstract class CritterBase<Mode extends string, Drive extends string = string, Trait extends string = string> implements Critter {
-  abstract readonly kind: CritterKind;
+export abstract class CritterBase<Mode extends string, Drive extends string = string, Trait extends string = string>
+  extends CreatureBase<CritterWorld> implements Critter {
+  abstract override readonly kind: CritterKind;
+  readonly stepPhase = 'free';
   /** The name the shape check reports it under. */
   abstract readonly displayName: string;
   /** The behaviours the shape check holds it in, in turn. */
@@ -31,12 +34,9 @@ export abstract class CritterBase<Mode extends string, Drive extends string = st
   readonly sp: CritterSpecies;
   readonly radius: number;
   readonly model = new THREE.Group();
-  /** Click-proxy radius for the inspection overlay. */
-  abstract readonly pickRadius: number;
   // Where parts are attached (and may run into each other): critterCheck.ts.
   abstract readonly joins: readonly JoinRule[];
   abstract readonly buildMs: number;
-  abstract readonly pos: THREE.Vector3;
   abstract mode: Mode;
   abstract modeT: number;
   abstract target: THREE.Vector3;
@@ -47,25 +47,22 @@ export abstract class CritterBase<Mode extends string, Drive extends string = st
   protected t = 0;
 
   constructor(sp: CritterSpecies, rng: Rng) {
+    super();
     this.sp = sp; this.rng = rng; this.radius = sp.radius;
   }
 
-  /** One step: the clocks, then sense, think (decide when due), then act. */
-  update(dt: number, world: CritterWorld): void {
+  /** The idle-motion clock runs on; the mode's time runs out. */
+  protected override tick(dt: number): void {
     this.t += dt; this.modeT -= dt;
-    this.sense(dt, world);
-    this.think(world);
-    this.act(dt, world);
   }
 
-  protected abstract sense(dt: number, world: CritterWorld): void;
+  protected abstract override sense(dt: number, world: CritterWorld): void;
   protected abstract decide(world: CritterWorld): void;
-  protected abstract act(dt: number, world: CritterWorld): void;
   /** The panel's note: what it is doing, in a line. */
   protected abstract thought(): string;
 
   /** Decide when the mode's time is up, or sooner if wantsToDecide() says so. */
-  protected think(world: CritterWorld): void {
+  protected override think(_dt: number, world: CritterWorld): void {
     if (this.modeT <= 0 || this.wantsToDecide(world)) this.decide(world);
   }
 
@@ -73,7 +70,7 @@ export abstract class CritterBase<Mode extends string, Drive extends string = st
   protected wantsToDecide(_world: CritterWorld): boolean { return false; }
 
   /** The click panel, laid out as the fish panel (critterBrain.ts). */
-  inspect(): InspectPanel {
+  override inspect(): InspectPanel {
     return this.brain.panel(this.sp, this.mode, this.thought());
   }
 

@@ -1,4 +1,4 @@
-// The running tank: one step advances light, feeder, fish, critters, jellies and water; present()
+// The running tank: one step advances light, feeder, the world (every creature) and water; present()
 // draws a frame through the water renderer (and the camera model, when on). The checks drive step()
 // and present() themselves; the page drives them from requestAnimationFrame.
 import * as THREE from 'three';
@@ -7,8 +7,6 @@ import { waterUniforms, updateWaves, MarineSnow, Bubbles, type SurfaceUniforms }
 import { reefLightUniforms, type ScreenAO } from '../reefLight.js';
 import type { WebGpuScreenAO } from '../webgpu/screenAO.js';
 import type { World } from '../world.js';
-import type { Jelly } from '../jelly.js';
-import type { Critter } from '../critters.js';
 import type { TankScene } from '../reef/types.js';
 import { updateFishPush } from '../reef/fishPush.js';
 import { renderCrystalBgScene, type CrystalBgRenderer } from '../reef/crystalBg.js';
@@ -42,8 +40,6 @@ export interface TankParts {
   readonly stage: Stage;
   readonly world: World;
   readonly reef: TankScene;
-  readonly jellies: readonly Jelly[];
-  readonly critters: readonly Critter[];
   readonly snow: MarineSnow;
   readonly bubbles: Bubbles | null;
   readonly surface: { readonly surfaceUniforms: SurfaceUniforms } | null;
@@ -106,7 +102,7 @@ export class TankLoop {
   }
 
   step(dt: number): void {
-    const { stage, world, jellies, critters, snow, bubbles } = this.parts;
+    const { stage, world, snow, bubbles } = this.parts;
     // Motion blur (water.ts): poses before this step are the previous ones.
     if (this.parts.motionBlur) {
       if (stage.water) {
@@ -122,10 +118,8 @@ export class TankLoop {
     waterUniforms.uTime.value = this.time;
     this.updateLight(dt);
     world.feedIn = this.parts.feeder.update(dt);   // fish learn the schedule (feeding anticipation)
-    world.update(dt);
+    world.update(dt);   // every creature: fish, critters, jellies
     updateFishPush(world, stage.camera, dt);   // grass/anemone part from the fish that just moved
-    for (const j of jellies) j.update(dt, world, jellies);
-    for (const c of critters) c.update(dt, world);
     updateWaves(this.time);
     updateCrystalLight(this.time);
     if (!this.parts.isJellyTank && stage.caustics) stage.caustics.update();   // no surface in view in the jelly tank

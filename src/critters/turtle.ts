@@ -219,7 +219,7 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
   }
 
   /** At the surface a breath ends in a fresh choice; out of air it decides at once, whatever it was doing. */
-  protected override think(world: CritterWorld): void {
+  protected override think(_dt: number, world: CritterWorld): void {
     if (this.mode === 'breathe' && this.pos.y > world.bounds.y1 - SURFACE_MARGIN) { this.brain.drives.air = 0; this.decide(world, true); }
     else if (this.modeT <= 0 || (this.brain.drives.air >= 1 && this.mode !== 'breathe')) this.decide(world, false);
   }

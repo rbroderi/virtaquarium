@@ -19,9 +19,18 @@ export interface JellyBounds {
   readonly z0: number; readonly z1: number;
 }
 
+/** Another jelly, which bells bump softly apart from. */
+export interface JellyNeighbour {
+  readonly pos: THREE.Vector3;
+  /** Bell radius. */
+  readonly R: number;
+}
+
 /** The parts of the World a jelly reads. */
 export interface JellyWorld {
   readonly bounds: JellyBounds;
+  /** The tank's jellies (this one among them). */
+  readonly jellies: readonly JellyNeighbour[];
   /** Overall light level, 0 night .. 1 day. */
   readonly light: number;
   /** The water's current at p, written into out. */
