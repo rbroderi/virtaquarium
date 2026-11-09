@@ -24,7 +24,7 @@ export const ROOT_POINTS = 4;           // an arm's first few points can be root
 const FIRST_DISC_CHECKED = 5;    // points from here on keep outside the disc's rim
 const GAP_PER_MANTLE = 0.01;     // clearance kept between surfaces, per unit mantle scale
 
-interface ObstacleFrame { readonly to: readonly number[]; readonly from: ArrayLike<number>; readonly r: number; readonly sc: number }
+interface ObstacleFrame { readonly to: readonly number[]; readonly from: ArrayLike<number>; readonly r: number; readonly sc: number; readonly cx: number; readonly cy: number; readonly cz: number; readonly ms: number }
 
 const _mInv = new THREE.Matrix4();
 const val = (a: ArrayLike<number>, i: number): number => a[i] ?? 0;
@@ -37,6 +37,12 @@ export class ArmUntangler {
   private readonly head = new Int32Array(GRID * GRID * GRID);
   private next = new Int32Array(0);
   private hits = 0;
+  private n = 0;
+  private armR = new Float64Array(0);   // each arm's widest half-width
+  private bound = new Float64Array(0);   // each arm's bounding sphere: x y z r
+  private stale = new Uint8Array(0);
+  private moved = new Float64Array(0);   // how far, at most, any point of each arm has moved since its bound was taken
+  private near = new Uint8Array(0);
 
   /** Untangle `arms` (in the model's frame) against the obstacles and the oral disc stand-in. */
   solve(arms: readonly ArmTube[], obstacles: readonly ArmObstacle[], disc: THREE.Object3D, mantleScale: number): void {
@@ -44,9 +50,17 @@ export class ArmUntangler {
     if (!first) return;
     const NA = arms.length, n = first.n, N = NA * n;
     this.ensureCapacity(N);
+    this.ensureArms(NA);
+    this.n = n;
     this.load(arms, n);
     const gap = GAP_PER_MANTLE * mantleScale;
-    const OB = obstacles.map(({ object: o, radius: r }) => ({ to: _mInv.copy(o.matrix).invert().elements.slice(), from: o.matrix.elements, r, sc: Math.min(o.scale.x, o.scale.y, o.scale.z) }));
+    const OB = obstacles.map(({ object: o, radius: r }) => {
+      const e = o.matrix.elements;
+      // ms: the largest stretch of the matrix, so a model-frame distance / ms bounds the local one
+      const ms = Math.max(Math.hypot(val(e, 0), val(e, 1), val(e, 2)), Math.hypot(val(e, 4), val(e, 5), val(e, 6)), Math.hypot(val(e, 8), val(e, 9), val(e, 10)));
+      return { to: _mInv.copy(o.matrix).invert().elements.slice(), from: e, r, sc: Math.min(o.scale.x, o.scale.y, o.scale.z), cx: val(e, 12), cy: val(e, 13), cz: val(e, 14), ms };
+    });
+    for (let A = 0; A < NA; A++) { let m = 0; for (let i = 0; i < n; i++) m = Math.max(m, val(this.R, A * n + i)); this.armR[A] = m; }
     const reach = first.r0 * 2 + gap;
     let maxL = 0;
     for (let k = 0; k < N; k++) if (k % n) maxL = Math.max(maxL, val(this.L, k));
@@ -68,6 +82,12 @@ export class ArmUntangler {
     if (this.R.length === N) return;
     this.X = new Float64Array(N * 3); this.R = new Float64Array(N); this.L = new Float64Array(N);
     this.root = new Uint8Array(N); this.next = new Int32Array(N);
+  }
+
+  private ensureArms(NA: number): void {
+    if (this.armR.length === NA) return;
+    this.armR = new Float64Array(NA); this.bound = new Float64Array(NA * 4); this.stale = new Uint8Array(NA);
+    this.moved = new Float64Array(NA); this.near = new Uint8Array(NA);
   }
 
   private load(arms: readonly ArmTube[], n: number): void {
@@ -125,17 +145,45 @@ export class ArmUntangler {
   }
 
   private pushApartArms(N: number, n: number, cs: number, reach: number, gap: number): void {
-    const X = this.X, root = this.root, L = this.L, head = this.head, next = this.next;
+    const X = this.X, root = this.root, L = this.L, head = this.head, next = this.next, { bound, moved, near } = this;
+    const NA = N / n;
+    let wide = 0;
+    for (let k = 0; k < N; k++) wide = Math.max(wide, val(this.R, k));
+    const needMax = 2 * wide + gap;
+    for (let B = 0; B < NA; B++) { this.boundArm(B, n); moved[B] = 0; }
     for (let k = 0; k < N; k++) {
       if (k % n < 1) continue;
-      const A = Math.floor(k / n), cx = this.cell(val(X, 3 * k), cs), cy = this.cell(val(X, 3 * k + 1), cs), cz = this.cell(val(X, 3 * k + 2), cs);
+      const A = Math.floor(k / n);
+      // Only arms that could hold a segment within reach of this point are scanned: the test
+      // below needs a start point within cs (the cell size) of it, and every point of an arm lies
+      // in its bounding sphere (grown by how far the arm's points have been pushed since).
+      let any = false;
+      for (let B = 0; B < NA; B++) {
+        const lim = cs + val(bound, 4 * B + 3) + val(moved, B), bx = val(X, 3 * k) - val(bound, 4 * B), by = val(X, 3 * k + 1) - val(bound, 4 * B + 1), bz = val(X, 3 * k + 2) - val(bound, 4 * B + 2);
+        const ok = B !== A && bx * bx + by * by + bz * bz < lim * lim;
+        near[B] = ok ? 1 : 0;
+        if (ok) any = true;
+      }
+      if (!any) continue;
+      const cx = this.cell(val(X, 3 * k), cs), cy = this.cell(val(X, 3 * k + 1), cs), cz = this.cell(val(X, 3 * k + 2), cs);
       for (let z = Math.max(0, cz - 1); z <= Math.min(GRID - 1, cz + 1); z++) for (let y = Math.max(0, cy - 1); y <= Math.min(GRID - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(GRID - 1, cx + 1); x++)
         for (let j = val(head, x + GRID * (y + GRID * z)); j >= 0; j = val(next, j))
-          if (Math.floor(j / n) !== A && !(root[k] && (root[j] || root[j + 1])) && this.near2(k, j, val(L, j + 1) + (k % n < n - 1 ? val(L, k + 1) / 2 : 0), reach)) {
-            this.push(k, j, 0, gap);
+          if (near[Math.floor(j / n)] && !(root[k] && (root[j] || root[j + 1])) && this.near2(k, j, val(L, j + 1) + (k % n < n - 1 ? val(L, k + 1) / 2 : 0), reach)) {
+            // A point is no nearer the segment j..j+1 than its distance to the segment's middle less
+            // the half-length, and a push needs the nearer than the widest two sections plus the
+            // gap: when both points (k, and the middle of k..k+1) are clear of that, neither moves.
+            const mx = (val(X, 3 * j) + val(X, 3 * j + 3)) / 2, my = (val(X, 3 * j + 1) + val(X, 3 * j + 4)) / 2, mz = (val(X, 3 * j + 2) + val(X, 3 * j + 5)) / 2;
+            const hx = val(X, 3 * j + 3) - val(X, 3 * j), hy = val(X, 3 * j + 4) - val(X, 3 * j + 1), hz = val(X, 3 * j + 5) - val(X, 3 * j + 2);
+            const lim = needMax + Math.sqrt(hx * hx + hy * hy + hz * hz) / 2 + 1e-9, lim2 = lim * lim;
+            const d0x = val(X, 3 * k) - mx, d0y = val(X, 3 * k + 1) - my, d0z = val(X, 3 * k + 2) - mz;
+            const mid = k % n < n - 1 && !(root[k + 1] && (root[j] || root[j + 1]));
+            if (d0x * d0x + d0y * d0y + d0z * d0z < lim2) this.push(k, j, 0, gap);
             // and the middle of the segment it starts (two segments crossing middle to middle
             // come nearer than either's ends do)
-            if (k % n < n - 1 && !(root[k + 1] && (root[j] || root[j + 1]))) this.push(k, j, 0.5, gap);
+            if (mid) {
+              const d1x = (val(X, 3 * k) + val(X, 3 * k + 3)) / 2 - mx, d1y = (val(X, 3 * k + 1) + val(X, 3 * k + 4)) / 2 - my, d1z = (val(X, 3 * k + 2) + val(X, 3 * k + 5)) / 2 - mz;
+              if (d1x * d1x + d1y * d1y + d1z * d1z < lim2) this.push(k, j, 0.5, gap);
+            }
           }
     }
   }
@@ -165,11 +213,25 @@ export class ArmUntangler {
     } else { add(3 * k, dx * mk); add(3 * k + 1, dy * mk); add(3 * k + 2, dz * mk); }
     add(3 * j, -dx * m0); add(3 * j + 1, -dy * m0); add(3 * j + 2, -dz * m0);
     add(3 * j + 3, -dx * m1); add(3 * j + 4, -dy * m1); add(3 * j + 5, -dz * m1);
+    // (dx, dy, dz is a unit vector, so each point moved by at most the sum of the magnitudes)
+    const mv = this.moved, nn = this.n, Ak = Math.floor(k / nn), Aj = Math.floor(j / nn);
+    mv[Ak] = val(mv, Ak) + Math.abs(mk) + (s ? Math.abs(mk) / ((1 - s) ** 2 + s * s) : 0);
+    mv[Aj] = val(mv, Aj) + Math.abs(m0) + Math.abs(m1);
   }
 
   private keepOut(OB: readonly ObstacleFrame[], NA: number, n: number, D: THREE.Object3D, gap: number): void {
     const X = this.X, R = this.R, root = this.root, tol = gap;
-    for (const { to: T, from: F, r, sc } of OB) for (let A = 0; A < NA; A++) for (let i = 1; i < n; i++) {
+    const { armR, bound, stale } = this;
+    stale.fill(1);
+    for (const { to: T, from: F, r, sc, cx: ox, cy: oy, cz: oz, ms } of OB) for (let A = 0; A < NA; A++) {
+      // Skip an arm whose bounding sphere is clear of everything this obstacle could push (a
+      // segment is within the sphere; a correction needs local distance < r + (width + gap) / sc,
+      // and a local distance is at least the model-frame one over the matrix's largest stretch).
+      if (stale[A]) this.boundArm(A, n);
+      const reachA = ms * (r + (val(armR, A) + gap) / sc) + val(bound, 4 * A + 3) + 1e-6;
+      const bx = val(bound, 4 * A) - ox, by = val(bound, 4 * A + 1) - oy, bz = val(bound, 4 * A + 2) - oz;
+      if (bx * bx + by * by + bz * bz > reachA * reachA) continue;
+      for (let i = 1; i < n; i++) {
       // the segment's nearest point to the obstacle's centre (a segment can cut a corner its two
       // ends keep clear of): both ends move out by what it lacks (only the far one at the root)
       const k0 = A * n + i - 1, k1 = k0 + 1, a0 = 3 * k0, a1 = 3 * k1;
@@ -191,6 +253,8 @@ export class ArmUntangler {
       };
       if (i > 1) put(a0, s0x + mx, s0y + my, s0z + mz);
       put(a1, s1x + mx, s1y + my, s1z + mz);
+      stale[A] = 1;
+      }
     }
     // Nor can an arm, past its root, coil under the oral disc: there it would be squeezed between
     // the floor and the other arms' roots. Below the disc's top it keeps outside the disc's rim.
@@ -204,6 +268,17 @@ export class ArmUntangler {
       const f = rho > 1e-9 ? need / rho : 1;
       if (rho > 1e-9) { X[a] = val(X, a) * f; X[a + 2] = val(X, a + 2) * f; } else X[a] = need;
     }
+  }
+
+  private boundArm(A: number, n: number): void {
+    const X = this.X, o = A * n;
+    let x = 0, y = 0, z = 0;
+    for (let i = 0; i < n; i++) { x += val(X, 3 * (o + i)); y += val(X, 3 * (o + i) + 1); z += val(X, 3 * (o + i) + 2); }
+    x /= n; y /= n; z /= n;
+    let r2 = 0;
+    for (let i = 0; i < n; i++) { const dx = val(X, 3 * (o + i)) - x, dy = val(X, 3 * (o + i) + 1) - y, dz = val(X, 3 * (o + i) + 2) - z; r2 = Math.max(r2, dx * dx + dy * dy + dz * dz); }
+    this.bound[4 * A] = x; this.bound[4 * A + 1] = y; this.bound[4 * A + 2] = z; this.bound[4 * A + 3] = Math.sqrt(r2);
+    this.stale[A] = 0;
   }
 
   /** Each segment back to its rest length (both ends giving, the root held). */
