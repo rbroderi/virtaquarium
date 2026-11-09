@@ -26,6 +26,7 @@ import type { Fish } from '../fish.js';
 import { CritterBody, type BodyPiece, type Solid } from './partHull.js';
 import type { SwimWorld } from './ports.js';
 import { heedOf, type ContactInbox } from './contactInbox.js';
+import { planApart, type PlanObstacle } from './escapePlan.js';
 
 type RockQuery = Pick<SwimWorld, 'rockDist' | 'rockNormal'>;
 import { STEP_SLACK } from './stepLimit.js';
@@ -67,6 +68,17 @@ const FORESIGHT_CLEAR = 0.5;
 /** A fish's sphere for the forecast, a share of its reach (it is long and thin: a passing side-on
  *  fish is narrower than its length). */
 const FISH_SPHERE = 0.7;
+/** The forecast is spread over this many steps: each step looks at one share of the pairs, so every
+ *  pair is looked at every few frames (the warnings outlast that: world/contactInbox.ts) and no one
+ *  frame carries the whole of it. */
+const FORESIGHT_SLICES = 4;
+/** The most escape paths planned in one step; contacts beyond that are told plain "away" this step
+ *  and planned in a later one. */
+const PLAN_BUDGET = 8;
+/** Two creatures touching follow their planned escape paths this long before it is planned again (s). */
+const PLAN_HOLD = 0.8;
+/** The planner keeps the paths clear of others within this many times the pair's radii. */
+const PLAN_NEAR = 3;
 /** The most spheres a critter's bending limbs are asked to keep clear of (the nearest). */
 const LIMB_SPHERES = 24;
 
@@ -75,9 +87,13 @@ const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _n = new THREE.Vector3
 const _st: [number, number] = [0, 0];
 const _move = new THREE.Vector3(), _bn = new THREE.Vector3(), _away = new THREE.Vector3();
 const _rv = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+const _planA = new THREE.Vector3(), _planB = new THREE.Vector3();
+
+/** A pair's escape paths (world/escapePlan.ts): each one's heading, and when they were planned. */
+interface Plan { readonly dA: THREE.Vector3; readonly dB: THREE.Vector3; t: number }
 
 /** A creature in the orchestrator's forecast: where it is, how it is moving, and a sphere round it. */
-interface Mover { who: Party & { readonly sp?: unknown }; fish: Fish | null; p: THREE.Vector3; v: THREE.Vector3; r: number }
+interface Mover { who: Party & { readonly sp?: unknown }; fish: Fish | null; p: THREE.Vector3; v: THREE.Vector3; r: number; parts: PlanObstacle[] | null }
 
 /** One side of a contact, for the share of the push and of the heed. */
 interface Party { readonly inbox?: ContactInbox; readonly inDen?: boolean; readonly mass: number }
@@ -122,6 +138,17 @@ export class BodySeparation {
   private posting = true;
   /** The orchestrator's forecast list, reused step to step. */
   private readonly movers: Mover[] = [];
+  private readonly moverOf = new Map<object, Mover>();
+  /** Escape plans, by the pair (first, then second, as the contact named them). */
+  private readonly plans = new Map<object, Map<object, Plan>>();
+  private readonly nearby: PlanObstacle[] = [];
+  private readonly eelParts = new Map<Fish, PlanObstacle[]>();
+  private clock = 0;
+  /** Which share of the pairs the forecast looks at this step (FORESIGHT_SLICES). */
+  private slice = 0;
+  /** Escape paths planned so far this step (PLAN_BUDGET). */
+  private planned = 0;
+  private readonly rockDist = (p: THREE.Vector3): number => this.rock ? this.rock.rockDist(p) : Infinity;
 
   private dimsOf(f: Fish): BodyDims {
     let d = this.dims.get(f);
@@ -144,6 +171,9 @@ export class BodySeparation {
     const bodies = critters.map((c) => ({ c, b: this.bodyOf(c), vel: this.critterVel.get(c)?.vel ?? null }));
     for (const { b } of bodies) b.update();
     for (const f of fish) f.inbox.fade(dt);
+    this.clock += dt;
+    this.planned = 0;
+    this.slice = (this.slice + 1) % FORESIGHT_SLICES;
     this.foresee(fish, critters);
     for (let pass = 0; pass < PASSES; pass++) {
       this.posting = pass === 0;
@@ -331,12 +361,42 @@ export class BodySeparation {
    * The avoidance reflex: a and b overlap by pen (negative: the gap between them), n pointing from a
    * to b. Each within its margin of the other is told to steer away from it, the more urgently the
    * closer (touching: fully), heeding it by the other's share of their masses (one in its den is
-   * heeded fully, and heeds nothing). The smaller one's margin is the wider (lookoutOf).
+   * heeded fully, and heeds nothing). The smaller one's margin is the wider (lookoutOf). Touching,
+   * each is told its planned escape path instead of plain "away" (planFor).
    */
   private tellBoth(a: Party, b: Party, n: THREE.Vector3, pen: number, margin: number): void {
     const ma = margin * lookoutOf(a, b), mb = margin * lookoutOf(b, a);
-    if (pen > -ma) a.inbox?.post(b, _away.copy(n).negate(), Math.min(1, (pen + ma) / ma) * heedOfParty(a, b));
-    if (pen > -mb) b.inbox?.post(a, n, Math.min(1, (pen + mb) / mb) * heedOfParty(b, a));
+    let awayA = _away.copy(n).negate(), awayB = n;
+    if (pen > 0 && this.planFor(a, b, n)) { awayA = _planA; awayB = _planB; }
+    if (pen > -ma && awayA.lengthSq() > 0) a.inbox?.post(b, awayA, Math.min(1, (pen + ma) / ma) * heedOfParty(a, b));
+    if (pen > -mb && awayB.lengthSq() > 0) b.inbox?.post(a, awayB, Math.min(1, (pen + mb) / mb) * heedOfParty(b, a));
+  }
+
+  /**
+   * Local path finding for a touching pair (world/escapePlan.ts): their escape headings into _planA
+   * and _planB, kept for PLAN_HOLD so they follow the paths through (the eel as a chain of spheres).
+   * False when either is unknown to it, and plain "away" serves.
+   */
+  private planFor(a: Party, b: Party, n: THREE.Vector3): boolean {
+    const A = this.moverOf.get(a), B = this.moverOf.get(b);
+    if (!A || !B) return false;
+    let row = this.plans.get(a);
+    if (!row) { row = new Map(); this.plans.set(a, row); }
+    let plan = row.get(b);
+    if (plan && this.clock - plan.t < PLAN_HOLD) { _planA.copy(plan.dA); _planB.copy(plan.dB); return true; }
+    if (this.planned >= PLAN_BUDGET) return false;
+    this.planned++;
+    const near = this.nearby;
+    near.length = 0;
+    const reach = (A.r + B.r) * PLAN_NEAR;
+    for (const m of this.movers) {
+      if (m === A || m === B || !this.moverOf.has(m.who)) continue;
+      for (const s of m.parts ?? [m]) if (s.p.distanceTo(A.p) < reach + s.r || s.p.distanceTo(B.p) < reach + s.r) near.push({ p: s.p, r: s.r });
+    }
+    planApart({ p: A.p, v: A.v, r: A.r, share: shareOf(a, b), parts: A.parts }, { p: B.p, v: B.v, r: B.r, share: shareOf(b, a), parts: B.parts }, n, near, this.rockDist, _planA, _planB);
+    if (!plan) { plan = { dA: new THREE.Vector3(), dB: new THREE.Vector3(), t: 0 }; row.set(b, plan); }
+    plan.dA.copy(_planA); plan.dB.copy(_planB); plan.t = this.clock;
+    return true;
   }
 
   /** Move a critter (and its model, already placed this step) by n * by, sliding along the rock. */
@@ -364,23 +424,38 @@ export class BodySeparation {
   private foresee(fish: readonly Fish[], critters: readonly Solid[]): void {
     const ms = this.movers;
     let k = 0;
-    const add = (who: Mover['who'], f: Fish | null, p: THREE.Vector3, v: THREE.Vector3, r: number): void => {
+    const add = (who: Mover['who'], f: Fish | null, p: THREE.Vector3, v: THREE.Vector3, r: number, parts: PlanObstacle[] | null = null): void => {
       const m = ms[k];
-      if (m) { m.who = who; m.fish = f; m.p = p; m.v = v; m.r = r; } else ms.push({ who, fish: f, p, v, r });
+      if (m) { m.who = who; m.fish = f; m.p = p; m.v = v; m.r = r; m.parts = parts; } else ms.push({ who, fish: f, p, v, r, parts });
       k++;
     };
-    for (const f of fish) if (!f.spine) add(f, f, f.pos, f.vel, this.reach(f, this.dimsOf(f)) * FISH_SPHERE);
+    for (const f of fish) {
+      if (!f.spine) { add(f, f, f.pos, f.vel, this.reach(f, this.dimsOf(f)) * FISH_SPHERE); continue; }
+      // The eel: a chain of small spheres along its spine, for the escape planner (not forecast here:
+      // its contacts are found along the chain by the separation itself).
+      const r = this.dimsOf(f).halfDepth * EEL_RADIUS_SHARE;
+      let parts = this.eelParts.get(f);
+      if (!parts || parts.length !== f.spine.nodes.length) {
+        parts = f.spine.nodes.map((p) => ({ p, r }));
+        this.eelParts.set(f, parts);
+      }
+      add(f, f, f.pos, f.vel, r, parts);
+    }
     for (const c of critters) {
       const v = this.critterVel.get(c)?.vel;
       const b = this.bodyOf(c);
       if (v) add(c, null, b.centre, v, b.radius);
     }
+    this.moverOf.clear();
+    for (let i = 0; i < k; i++) { const m = ms[i]; if (m) this.moverOf.set(m.who, m); }
     for (let i = 0; i < k; i++) {
       const A = ms[i];
-      if (!A) continue;
-      for (let j = i + 1; j < k; j++) {
+      if (!A || A.parts) continue;
+      // This step's share of the pairs: those with (i + j) % FORESIGHT_SLICES === slice.
+      const j0 = i + 1 + (((this.slice - 2 * i - 1) % FORESIGHT_SLICES) + FORESIGHT_SLICES) % FORESIGHT_SLICES;
+      for (let j = j0; j < k; j += FORESIGHT_SLICES) {
         const B = ms[j];
-        if (!B) continue;
+        if (!B || A.parts || B.parts) continue;
         if (A.fish && B.fish && (A.fish.sp === B.fish.sp || touchingOnPurpose(A.fish, B.fish))) continue;
         _p.subVectors(B.p, A.p);
         _rv.subVectors(B.v, A.v);
@@ -454,6 +529,8 @@ export class BodySeparation {
       }
     }
     if (eel && this.posting && best > -wide) this.tellBoth(fishA, eel, _n, best, margin);
+    // Two fish touching: each is told its planned escape path.
+    else if (fishB && this.posting && best > 0) this.tellBoth(fishA, fishB, _n, best, CONTACT_MARGIN * Math.min(fishA.size, fishB.size));
     if (best <= 0) return false;
     // _n points from fishA towards the other body. The lighter fish takes the larger share (one in its
     // shelter, none).
