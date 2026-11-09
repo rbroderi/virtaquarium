@@ -189,6 +189,9 @@ export function buildFishModel(sp: Species, opts: BuildFishOptions = {}): FishMo
       const m = new THREE.Mesh(a.pectGeo, pectMatFor(still));
       m.renderOrder = 2;
       m.rotation.y = Math.PI; // point backwards
+      // The pivots mirror each other's pose; a fan's shape out of its plane (cup, cone, pleats) must be
+      // mirrored too, or the far fan cups the other way.
+      if (p.kind === 'fan' && side < 0) m.scale.z = -1;
       if (a.pectTubeGeo) m.add(new THREE.Mesh(a.pectTubeGeo, tubeMat(still, false, { pect: true })));
       const pivot = new PectoralPivot(side, m, still.uPBend, still.uPWave);
       pivot.position.set(px, py, side * pz * 0.9);
