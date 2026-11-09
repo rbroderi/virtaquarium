@@ -15,6 +15,8 @@
   #hint.fade { opacity: 0; }
   #help { position: fixed; top: 20px; left: 20px; padding: 14px 18px; border-radius: 12px; background: rgba(0, 20, 30, 0.7); font-size: 14px; line-height: 1.7; display: none; }
   #help.show { display: block; }
+  #help .credit { margin-top: 6px; font-size: 12px; opacity: 0.8; }
+  #help a { color: #9fd8ff; }
   #help kbd { display: inline-block; min-width: 18px; padding: 0 6px; margin-right: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.15); text-align: center; }
   #clock { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 16px; background: rgba(0, 20, 30, 0.6); font-size: 14px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity 0.5s; pointer-events: none; }
   #clock.show { opacity: 1; }
@@ -72,6 +74,12 @@
   #menu-btn i { display: block; height: 2px; border-radius: 1px; background: rgba(234, 246, 255, 0.85); }
   #menu-btn[aria-expanded="true"] { background: rgba(0, 20, 30, 0.6); }
   body.touch #menu-btn { display: flex; }
+  #sound-btn { position: fixed; left: 16px; bottom: 16px; width: 40px; height: 40px; padding: 9px; border: 0; border-radius: 20px; background: rgba(0, 20, 30, 0.35); backdrop-filter: blur(4px); color: rgba(234, 246, 255, 0.85); cursor: pointer; opacity: 0.7; transition: opacity 0.2s; }
+  #sound-btn:hover { opacity: 1; }
+  #sound-btn svg { display: block; width: 22px; height: 22px; }
+  #sound-btn .off { display: none; }
+  #sound-btn[aria-pressed="false"] .on { display: none; }
+  #sound-btn[aria-pressed="false"] .off { display: inline; }
   body.touch #tanks { display: none; }
   body.touch #brain { max-height: calc(100vh - 104px); }
   #menu { position: fixed; right: 16px; bottom: 72px; min-width: 190px; padding: 6px; border-radius: 14px; background: rgba(4, 24, 34, 0.8); backdrop-filter: blur(6px); display: none; flex-direction: column; }
@@ -88,6 +96,7 @@
 <div id="brain"><button type="button" id="brain-close" aria-label="Close">×</button><div id="brain-body"></div></div>
 <button type="button" id="menu-btn" aria-label="Menu" aria-expanded="false"><i></i><i></i><i></i></button>
 <div id="menu" role="menu"></div>
+<button type="button" id="sound-btn" data-sound-toggle aria-label="Ambient sound (M)" title="Ambient sound (M)" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" stroke="none"/><g class="on"><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></g><g class="off"><path d="M16 9l6 6M22 9l-6 6"/></g></svg></button>
 <div id="loading" role="progressbar" aria-label="Loading the aquarium">
   <div class="box">
     <img class="logo" src="./brand/logo.webp" alt="Virtual Aquarium" width="800" height="276">
@@ -114,8 +123,10 @@
   <div><kbd>R</kbd>back to the real-time clock</div>
   <div><kbd>T</kbd>switch between the reef and the moon jelly tank</div>
   <div><kbd>Space</kbd>pause</div>
+  <div><kbd>M</kbd>ambient sound on / off</div>
   <div><kbd>Esc</kbd>close the inspect panel</div>
   <div><kbd>F11</kbd>full screen</div>
+  <div class="credit">Ambient sound: Sound Effect by <a href="https://pixabay.com/users/dragon-studio-38165424/?utm_source=link-attribution&amp;utm_medium=referral&amp;utm_campaign=music&amp;utm_content=472383" target="_blank" rel="noopener">DRAGON-STUDIO</a> from <a href="https://pixabay.com//?utm_source=link-attribution&amp;utm_medium=referral&amp;utm_campaign=music&amp;utm_content=472383" target="_blank" rel="noopener">Pixabay</a> (<a href="https://pixabay.com/service/license-summary/" target="_blank" rel="noopener">Pixabay Content License</a>)</div>
 </div>
 <script type="module" src="./build/main.js"></script>
 </body>

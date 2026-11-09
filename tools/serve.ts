@@ -20,13 +20,13 @@ const DEFAULT_PORT = 8080;
 
 const SAVE_RETRIES = 20;
 const SAVE_RETRY_MS = 250;
-const HTTP_OK = 200, HTTP_FOUND = 302, HTTP_NOT_MODIFIED = 304, HTTP_FORBIDDEN = 403, HTTP_NOT_FOUND = 404, HTTP_ERROR = 500;
+const HTTP_OK = 200, HTTP_PARTIAL = 206, HTTP_RANGE_NOT_SATISFIABLE = 416, HTTP_FOUND = 302, HTTP_NOT_MODIFIED = 304, HTTP_FORBIDDEN = 403, HTTP_NOT_FOUND = 404, HTTP_ERROR = 500;
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.map': 'application/json', '.json': 'application/json', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif','.svg': 'image/svg+xml', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream',
-  '.txt': 'text/plain; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8', '.webm': 'audio/webm',
 };
 
 /** Top-level directories of the repository served (and saved into) as themselves, not under web/. */
@@ -70,6 +70,7 @@ const PUBLIC_PATHS: readonly RegExp[] = [
   /^models\/critters\/[^/]+\.glb$/,             // soft-body meshes
   /^models\/(skins|cache)\//,                   // generated caches (absent on a deploy unless baked in)
   /^brand\/logo\.webp$/,                        // the processed loading-screen logo (not the original)
+  /^audio\/deep-sea-ambience\.webm$/,           // the ambient sound (M)
   /^brand\/poster\.(avif|jpg)$/, /^about\.html$/, /^robots\.txt$/,   // what crawlers get instead
 ];
 
@@ -249,7 +250,7 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
 }
 
 /** Already-compressed formats: brotli or gzip would only spend time on them. */
-const PRECOMPRESSED = new Set(['.png', '.jpg', '.jpeg', '.webp', '.avif']);
+const PRECOMPRESSED = new Set(['.png', '.jpg', '.jpeg', '.webp', '.avif', '.webm']);
 const MIN_COMPRESS_BYTES = 1024;
 /** Brotli 11 takes seconds per megabyte; quality 5 is ~50x faster and within ~10% of it, so only small
  *  files get 11. The first request for a file waits for its compression, later ones hit the cache. */
@@ -311,9 +312,26 @@ async function compressedBody(file: string, mtimeMs: number, data: Buffer, enc: 
 /** Sends a file, brotli- or gzip-encoded when the client accepts it and it actually shrinks. */
 function sendBody(file: string, mtimeMs: number, data: Buffer, req: http.IncomingMessage, res: http.ServerResponse,
   headers: Record<string, string>): void {
-  const enc = data.length >= MIN_COMPRESS_BYTES && !PRECOMPRESSED.has(path.extname(file).toLowerCase()) ? pickEncoding(req) : null;
+  const precompressed = PRECOMPRESSED.has(path.extname(file).toLowerCase());
+  // Byte ranges for already-compressed files: <audio> asks for them to seek and to restart the loop.
+  const range = precompressed ? /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? '')) : null;
+  if (range && (range[1] || range[2])) {
+    const size = data.length;
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start > end || start >= size) {
+      res.writeHead(HTTP_RANGE_NOT_SATISFIABLE, { 'Content-Range': `bytes */${size}` });
+      res.end();
+      return;
+    }
+    res.writeHead(HTTP_PARTIAL, { ...headers, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': String(end - start + 1) });
+    res.end(data.subarray(start, end + 1));
+    return;
+  }
+  const enc = data.length >= MIN_COMPRESS_BYTES && !precompressed ? pickEncoding(req) : null;
   const plain = (): void => {
-    res.writeHead(HTTP_OK, { ...headers, 'Content-Length': String(data.length) });
+    res.writeHead(HTTP_OK, { ...headers, 'Content-Length': String(data.length), ...(precompressed ? { 'Accept-Ranges': 'bytes' } : {}) });
     res.end(data);
   };
   if (!enc) {

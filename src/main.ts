@@ -32,6 +32,7 @@ import { Feeder, type TankEvents } from './app/feeder.js';
 import { stockTank } from './app/stocking.js';
 import { trackViewer } from './app/viewer.js';
 import { TankLoop } from './app/tankLoop.js';
+import { Ambience } from './app/ambience.js';
 import { loadReefLightFingerprint } from './app/sourceFingerprint.js';
 import type { AquariumHandle, CheckModule } from './app/handle.js';
 
@@ -168,6 +169,14 @@ function swimBox(stage: Stage): TankBounds {
 }
 
 function bindKeys(loop: TankLoop, daylight: DaylightSource, ui: UI, toggleReefLight: () => void): void {
+  const ambience = new Ambience();
+  const soundBtn = requireElement('sound-btn', HTMLButtonElement);
+  const toggleSound = (): void => {
+    ambience.toggle();
+    soundBtn.setAttribute('aria-pressed', String(ambience.isOn));
+  };
+  soundBtn.setAttribute('aria-pressed', String(ambience.isOn));
+  soundBtn.addEventListener('click', toggleSound);
   window.addEventListener('keydown', (e) => {
     if (e.key === ' ') loop.togglePause();
     if (e.key === 'n' || e.key === 'N') { loop.toggleDayNight(); ui.showClock(daylight); }
@@ -175,11 +184,13 @@ function bindKeys(loop: TankLoop, daylight: DaylightSource, ui: UI, toggleReefLi
     if (e.key === '<') { daylight.slowDown(); ui.showClock(daylight); }
     if (e.key === '>') { daylight.speedUp(); ui.showClock(daylight); }
     if (e.key === 'r' || e.key === 'R') { daylight.reset(); ui.showClock(daylight); }
+    if (e.key === 'm' || e.key === 'M') toggleSound();
   });
   // The same controls for touch screens (ui.ts shows its menu only there).
   ui.addMenuItems([
     { label: 'Noon / midnight', run: () => { loop.toggleDayNight(); ui.showClock(daylight); } },
     { label: 'Pause', run: () => loop.togglePause(), on: () => loop.isPaused },
+    { label: 'Sound', run: toggleSound, on: () => ambience.isOn },
   ]);
 }
 
