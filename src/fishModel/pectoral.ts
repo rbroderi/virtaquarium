@@ -62,7 +62,10 @@ function pectZ(sp: Species, x: number, y: number): number {
   let a = Math.atan2(y / yk, Math.max(1e-4, x));
   if (pectShape(p).fan) for (let k = 0; k < 6; k++) a = Math.max(-spread / 2, Math.min(spread / 2, Math.atan2((y / pw + fanBase(-a, spread)) / yk, Math.max(1e-4, x / pw))));
   const t = pectShape(p).fan ? fanShare(a, spread, yk) : a / spread + 0.5;
-  return 0.03 * (p.pleat ?? 1) * pw * r * Math.cos(Math.PI * t * n) + 0.12 * pw * r * r;
+  // cone: the middle rays lean out of the plane (the outer ones stay), so the fan is a shallow cone that
+  // never collapses to a line seen edge-on.
+  const cone = (p.cone ?? 0) * pw * r * (1 - (2 * t - 1) ** 2);
+  return 0.03 * (p.pleat ?? 1) * pw * r * Math.cos(Math.PI * t * n) + 0.12 * pw * r * r + cone;
 }
 
 // Side view of a fan pectoral as the lab poses it (opened by `open` rad about the vertical), for
@@ -108,10 +111,14 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
   // A fan ray's membrane strap on the canvas: its length L (px, along the ray parameter r), unit
   // direction, k (canvas length per unit of r), half-width at share t of L, and the point at r offset
   // by `side` half-widths across it (-1 the upper edge, +1 the lower; canvas y runs down).
-  // A pointed strap (flagPoint) narrows over its last stretch as an ogive, (1 - u^2)^0.6: full-shouldered,
-  // then a blunt point rather than a needle.
-  const hw0 = ((p.flag ?? 0.012) / p.len) * W / 2, tip = p.flagTip ?? 1, pt = p.flagPoint ?? 0;
-  const point = (t: number): number => { const u = pt > 0 ? Math.min(1, Math.max(0, (t - 1 + pt) / pt)) : 0; return (1 - u * u) ** 0.6; };
+  // A pointed strap (flagPoint) closes over its last stretch as a half-ellipse, sqrt(1 - u^2): a rounded
+  // lance end, not a needle. flagSwell widens it just before, so the end reads as a leaf.
+  const hw0 = ((p.flag ?? 0.012) / p.len) * W / 2, tip = p.flagTip ?? 1, pt = p.flagPoint ?? 0, sw = p.flagSwell ?? 0;
+  const point = (t: number): number => {
+    if (pt <= 0) return 1;
+    const u = Math.min(1, Math.max(0, (t - 1 + pt) / pt)), b = (t - 1 + pt) / (2.5 * pt);
+    return Math.sqrt(1 - u * u) * (1 + sw * Math.exp(-b * b));
+  };
   const strap = (i: number): { L: number; dx: number; dy: number; k: number; hw: (t: number) => number; at: (r: number, side: number) => P2 } => {
     const a = ang(i), L = fanLen(sp, i) * W, k = Math.hypot(Math.cos(a), Math.sin(a) * yk);
     const dx = Math.cos(a) / k, dy = (Math.sin(a) * yk) / k, hw = (t: number): number => hw0 * (1 - (1 - tip) * Math.min(1, t)) * point(t);
@@ -145,10 +152,10 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
         }
         g.lineTo(...s.at(rIn, -1));
         if (pt > 0) {   // pointed: follow the narrowing edges out to the point and back
-          const r0 = Math.max(rIn, L * (1 - pt));
+          const r0 = Math.max(rIn, L * (1 - 5 * pt));   // from before the swell
           g.lineTo(...s.at(r0, -1));
-          for (let q = 1; q <= 12; q++) g.lineTo(...s.at(r0 + ((L - r0) * q) / 12, -1));
-          for (let q = 11; q >= 0; q--) g.lineTo(...s.at(r0 + ((L - r0) * q) / 12, 1));
+          for (let q = 1; q <= 20; q++) g.lineTo(...s.at(r0 + ((L - r0) * Math.sin((Math.PI / 2) * q / 20)), -1));
+          for (let q = 19; q >= 0; q--) g.lineTo(...s.at(r0 + ((L - r0) * Math.sin((Math.PI / 2) * q / 20)), 1));
         } else {
           g.lineTo(...s.at(rc, -1));
           const [cx, cy] = s.at(rc, 0), th = Math.atan2(s.dy, s.dx);
@@ -183,7 +190,11 @@ export function paintPectoral(sp: Species): HTMLCanvasElement {
         g.fillStyle = q % 2 && p.stripes ? p.stripes : p.fill;
         const r0 = Math.max((L * q) / nb, L * FAN_ROOT), r1 = q === nb - 1 ? L * 1.05 : (L * (q + 1)) / nb;
         if (r1 > r0) {
-          g.beginPath(); g.moveTo(...s.at(r0, -1)); g.lineTo(...s.at(r1, -1)); g.lineTo(...s.at(r1, 1)); g.lineTo(...s.at(r0, 1));
+          // Follow the strap's curved edges (swell, rounded end) rather than a straight quad.
+          const re = pt > 0 ? Math.min(r1, L) : r1, m = pt > 0 ? 10 : 1;
+          g.beginPath(); g.moveTo(...s.at(r0, -1));
+          for (let j = 1; j <= m; j++) g.lineTo(...s.at(r0 + ((re - r0) * j) / m, -1));
+          for (let j = m; j >= 0; j--) g.lineTo(...s.at(r0 + ((re - r0) * j) / m, 1));
           g.closePath(); g.fill();
         }
       }

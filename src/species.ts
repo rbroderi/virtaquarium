@@ -147,7 +147,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
     // between the eyes (about half the cheek width).
     // outline: the trunk is level and the head hangs off it nose-down (snout about 0.14 TL below the trunk
     // axis, head centre about 0.06, the head and trunk axes about 15 deg apart). The back climbs in three
-    // steps: a rounded nose dome over the upper lip, then a steep, slightly concave snout up to the brow (u 0.13), a flat nape over the eye (u 0.2-0.33), then the hump
+    // steps: a full, rounded nose dome over the upper lip, then a steep, slightly concave snout up to the brow (u 0.13), a flat nape over the eye (u 0.2-0.33), then the hump
     // under the spines (peak u 0.52, max depth 0.33 TL); the belly is one nearly straight line from the
     // chin to the anal fin; the body tapers concave to a peduncle about a third of the body depth.
     // widthCurve: from above the head is broadest across the cheeks (about 0.15 TL) and the trunk nearly
@@ -159,7 +159,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
       egg: [[0, 0.1], [0.28, 0.2], [0.42, 0], [0.55, -0.15], [0.8, -0.1], [1, 0]],
       cover: 0.012,
       outline: {
-        top: [[0, -0.55], [0.008, -0.55], [0.016, -0.57], [0.033, -0.66], [0.05, -0.68], [0.065, -0.62], [0.098, -0.37], [0.131, -0.24], [0.163, -0.27], [0.196, -0.37],
+        top: [[0, -0.55], [0.008, -0.43], [0.016, -0.4], [0.033, -0.43], [0.05, -0.5], [0.065, -0.53], [0.098, -0.37], [0.131, -0.24], [0.163, -0.27], [0.196, -0.37],
           [0.261, -0.51], [0.327, -0.54], [0.392, -0.31], [0.458, -0.04], [0.523, 0.19], [0.588, 0.23], [0.654, 0.22], [0.719, 0.23],
           [0.784, 0.23], [0.85, 0.2], [0.915, 0.1], [0.961, 0.05], [1, 0.05]],
         bot: [[0, -0.405], [0.016, -0.27], [0.033, -0.24], [0.065, -0.195], [0.098, -0.19], [0.131, -0.21], [0.163, -0.2], [0.196, -0.19],
@@ -212,13 +212,14 @@ const DEFINITIONS: SpeciesDefinition[] = [
       { pos: 'bottom', meristic: 'anal', u0: 0.75, u1: 0.94, pts: [[0, 0.03], [0.4, 0.14], [1, 0.03]], sweep: 0.3, fill: '#efe2d4', alpha: 0.45, spots: '#2a1a10', spotR: 0.0035, spotN: 90 },
     ],
     caudal: { type: 'round', spread: 0.16, pleat: 3, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
-    // Fans of 14 broad, banded strap rays, tapering and ending in blunt points, with webbing out to about
-    // 0.6 of each strap and shallow pleats: the upper ones about 0.7-0.85 TL, the lowest about 0.35, each a
-    // little longer or shorter than its neighbours. Held out like wings but turned
-    // toward the side view: the top ray swept about 50 deg back and slightly up, the lowest drooping about
-    // 47 deg, the fan's surface tilted about 48 deg from the horizontal.
-    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.05, flagTip: 0.6, flagPoint: 0.15, rayJitter: 0.09, web: 0.62, pleat: 0.4,
-      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.8, yaw: 0.35, flap: 0.2 },
+    // Fans of 14 broad, banded strap rays, tapering, then widening a little into a rounded, leaf-like lance
+    // end, with webbing out to about 0.6 of each strap and shallow pleats: the upper ones about 0.7-0.85
+    // TL, the lowest about 0.35, each a little longer or shorter than its neighbours. Held out like wings
+    // turned toward the side view: the top ray swept back and about 24 deg up, the lowest drooping about
+    // 51 deg. A shallow cone (the middle rays leaning out) keeps a fan from reading as a comb of
+    // separate straps when seen nearly edge-on.
+    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.05, flagTip: 0.6, flagPoint: 0.07, flagSwell: 0.35, rayJitter: 0.09, web: 0.62, pleat: 0.4, cone: 0.35,
+      rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.6, yaw: 0.35, flap: 0.1 },
       spots: '#20140c', spotR: 0.004, spotN: 50 },
     pelvic: { u: 0.41, len: 0.24, angle: 50, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
     brain: { maxSpeed: 0.75, turn: 1.4, zone: [0.4, 1.0], school: 0, grazer: 0, territorial: 0.2, boldness: 0.95, curiosity: 0.4, activity: 0.3, hover: true, predator: true, nocturnal: true, tailHz: 1.5 },
