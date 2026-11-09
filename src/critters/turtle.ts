@@ -26,6 +26,11 @@ const STROKE_HZ = 0.55;
 const CRUISE_SPEED = 0.45;
 const SURFACE_MARGIN = 0.4;
 const SPOT_TRIES = 30;
+/** It settles no nearer another critter's den than this many lengths (centre to den, across the floor). */
+const DEN_CLEAR = 1.5;
+/** Told this urgently to move off something while settling, its spot slides away at ROOM_SPEED (per s, at full urgency). */
+const ROOM_URGENCY = 0.2, ROOM_SPEED = 0.8;
+const _room = new THREE.Vector3();
 const SAND_HEIGHT = 0.25;     // rest where the reef is lower than this ...
 const ROCK_HEIGHT = 0.8;      // ... graze where it is higher than this
 
@@ -286,10 +291,11 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
   protected act(dt: number, world: CritterWorld): void {
     const b = this.body, settled = this.settled;
     if (this.mode === 'feed') this.chaseFood();
+    if (SETTLING.has(this.mode) && this.mode !== 'perch') this.giveRoom(dt, world);
     const d = this.pos.distanceTo(this.target);
     if (this.mode === 'cruise' && d < 1) this.target = randomTarget(this.rng, world, 2, 7);
     const speed = settled ? 0 : this.mode === 'breathe' ? 0.6 : this.mode === 'feed' ? 0.5 : (this.mode === 'cruise' ? CRUISE_SPEED : 0.3) * clamp(d, 0.3, 1);
-    b.steer(dt, world, this.target, { turn: 0.45, speed, accel: 0.6, clearance: this.L * 0.14, look: this.L * 1.2, chase: this.mode === 'feed' });
+    b.steer(dt, world, this.target, { turn: 0.45, speed, accel: 0.6, clearance: this.L * 0.14, look: this.L * 1.2, chase: this.mode === 'feed', yieldTo: SETTLING.has(this.mode) });
     if (settled) { b.pitch = lerp(b.pitch, 0, dt); b.roll = lerp(b.roll, 0, dt); }
     this.stroke += dt * STROKE_HZ * Math.PI * 2 * (settled ? 0 : clamp(Math.abs(b.speed) / CRUISE_SPEED, 0.25, 1.2));
     this.beatFlippers(settled);
@@ -360,16 +366,40 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
   private grassSpot(world: CritterWorld): THREE.Vector3 | null {
     const beds = world.reef.grassBeds;
     if (!beds?.length) return null;
-    const bed = beds[Math.floor(this.rng() * beds.length)] ?? beds[0];
-    if (!bed) return null;
-    const a = this.rng() * Math.PI * 2, r = Math.sqrt(this.rng()) * bed.r * 0.6;
-    const x = bed.x + Math.cos(a) * r, z = bed.z + Math.sin(a) * r;
-    return new THREE.Vector3(x, Math.max(world.reefHeight(x, z), 0) + this.L * 0.12, z);
+    for (let k = 0; k < SPOT_TRIES; k++) {
+      const bed = beds[Math.floor(this.rng() * beds.length)] ?? beds[0];
+      if (!bed) return null;
+      const a = this.rng() * Math.PI * 2, r = Math.sqrt(this.rng()) * bed.r * 0.6;
+      const x = bed.x + Math.cos(a) * r, z = bed.z + Math.sin(a) * r;
+      if (!this.byDen(world, x, z)) return new THREE.Vector3(x, Math.max(world.reefHeight(x, z), 0) + this.L * 0.12, z);
+    }
+    return null;
+  }
+
+  /**
+   * Settling where another creature already is (an octopus foraging on the spot), the spot slides away
+   * from it across the floor, so the turtle settles beside it rather than creeping in on top of it.
+   */
+  private giveRoom(dt: number, world: CritterWorld): void {
+    const u = this.inbox.read(_room);
+    if (u < ROOM_URGENCY) return;
+    _room.y = 0;
+    if (_room.lengthSq() < 1e-6) return;
+    const t = this.target.addScaledVector(_room.normalize(), ROOM_SPEED * u * dt), B = world.bounds;
+    t.x = clamp(t.x, B.x0 + 1, B.x1 - 1); t.z = clamp(t.z, B.z0 + 0.3, B.z1 - 0.3);
+    t.y = Math.max(world.reefHeight(t.x, t.z), 0) + this.L * 0.12;
+  }
+
+  /** Whether (x, z) is too near another critter's den to settle there (it would block the way in). */
+  private byDen(world: CritterWorld, x: number, z: number): boolean {
+    const clear = this.L * DEN_CLEAR;
+    for (const c of world.critters) if (c.den && Math.hypot(c.den.x - x, c.den.z - z) < clear) return true;
+    return false;
   }
 
   /** The top of a sponge (the highest of the sponge's top under the shell), to settle on. */
   private perchSpot(world: CritterWorld): THREE.Vector3 | null {
-    const perches = world.reef.perches;
+    const perches = world.reef.perches?.filter(q => !this.byDen(world, q.pos.x, q.pos.z));
     if (!perches?.length) return null;
     const p = perches[Math.floor(this.rng() * perches.length)] ?? perches[0];
     if (!p) return null;
@@ -383,7 +413,7 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
   private findSpot(world: CritterWorld, onSand: boolean): THREE.Vector3 | null {
     for (let k = 0; k < SPOT_TRIES; k++) {
       const t = randomTarget(this.rng, world, 0, 0), h = world.reefHeight(t.x, t.z);
-      if (onSand ? h < SAND_HEIGHT : h > ROCK_HEIGHT) { t.y = Math.max(h, 0) + this.L * 0.12; return t; }
+      if ((onSand ? h < SAND_HEIGHT : h > ROCK_HEIGHT) && !this.byDen(world, t.x, t.z)) { t.y = Math.max(h, 0) + this.L * 0.12; return t; }
     }
     return null;
   }

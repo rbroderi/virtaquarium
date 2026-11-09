@@ -28,6 +28,25 @@ export interface BodyPiece {
   readonly bends: boolean;
   update(): void;
   radiusToward(n: THREE.Vector3): number;
+  /** Spheres that fill the piece out to its sides (stand-ins for the octopus's arms to keep off). */
+  fill(add: (p: THREE.Vector3, r: number) => void): void;
+}
+
+/** At most this many rows of spheres across a flat piece. */
+const FILL_ROWS = 3;
+const _f = new THREE.Vector3();
+
+/** Spheres of radius r about every radius along core p0-p1, each row offset across by `off`. */
+function fillCore(p0: THREE.Vector3, p1: THREE.Vector3, r: number, add: (p: THREE.Vector3, r: number) => void, side?: THREE.Vector3, rows = 1, span = 0): void {
+  const n = Math.min(12, Math.ceil(p0.distanceTo(p1) / Math.max(r, 1e-3)));
+  for (let row = 0; row < rows; row++) {
+    const off = rows > 1 ? (row / (rows - 1) * 2 - 1) * span : 0;
+    for (let k = 0; k <= n; k++) {
+      _f.lerpVectors(p0, p1, n ? k / n : 0);
+      if (side && off) _f.addScaledVector(side, off);
+      add(_f, r);
+    }
+  }
 }
 
 /** A limb as a chain of points in its critter model's frame, with its radius at each point. */
@@ -97,6 +116,13 @@ export class PartHull implements BodyPiece {
     if (across < 1e-9) return this.hv;
     return 1 / Math.sqrt((cu * cu) / (across * this.hu * this.hu) + (cv * cv) / (across * this.hv * this.hv));
   }
+
+  /** Rows of spheres of its thin half-side across its wide one (a shell: out to its rim). */
+  fill(add: (p: THREE.Vector3, r: number) => void): void {
+    const rows = Math.min(FILL_ROWS, Math.max(1, Math.ceil(this.hu / this.hv)));
+    const r = Math.max(this.hv, this.hu / rows);
+    fillCore(this.p0, this.p1, r, add, this.u, rows, Math.max(0, this.hu - r));
+  }
 }
 
 /** One link of a limb chain: a round capsule between two of its points. */
@@ -125,6 +151,8 @@ class LinkPiece implements BodyPiece {
   }
 
   radiusToward(): number { return this.r; }
+
+  fill(add: (p: THREE.Vector3, r: number) => void): void { fillCore(this.p0, this.p1, this.r, add); }
 }
 
 /** What a critter offers for its collision body (the Critter contract's part of it). */

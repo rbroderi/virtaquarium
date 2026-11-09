@@ -7,7 +7,7 @@ import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
 import { gpuActive, tsl, webgpu, type FloatUniformNode, type Vec3UniformNode, type Node, type Tsl } from '../webgpu/tsl.js';
 import type { CritterNeighbour, CritterThreatFish, CritterWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
-import { ContactInbox, CHASE_HEED } from '../world/contactInbox.js';
+import { ContactInbox, CHASE_HEED, MIN_HEED } from '../world/contactInbox.js';
 
 /** How fast a critter may haul itself up or out (units/s) beyond its swimming speed (world/stepLimit.ts). */
 export const CRITTER_CRAWL = 0.3;
@@ -139,6 +139,8 @@ export interface SteerOptions {
   readonly reverse?: boolean;
   /** Going for food: the avoidance reflex is heeded less. */
   readonly chase?: boolean;
+  /** In no hurry (settling onto a spot): it stops for whatever is in its path, however small. */
+  readonly yieldTo?: boolean;
 }
 
 /** How far the avoidance reflex bends a critter's course (target distances, at full urgency). */
@@ -176,7 +178,7 @@ export class Swimmer {
   }
 
   /** Returns the horizontal distance to the target. */
-  steer(dt: number, world: CritterWorld, target: THREE.Vector3, { turn, speed, accel, clearance, look = 1.5, reverse = false, chase = false }: SteerOptions): number {
+  steer(dt: number, world: CritterWorld, target: THREE.Vector3, { turn, speed, accel, clearance, look = 1.5, reverse = false, chase = false, yieldTo = false }: SteerOptions): number {
     _v.subVectors(target, this.pos);
     const toTarget = Math.hypot(_v.x, _v.z);
     // The avoidance reflex bends the course off whatever it is touching or about to.
@@ -186,7 +188,9 @@ export class Swimmer {
     const s = Math.sign(this.speed || 1);
     const inPath = u > 0 ? Math.max(0, -this.dir.dot(_away) * s) : 0;
     if (u > 0) _v.addScaledVector(_away, u * AVOID_TURN * (1 + inPath) * Math.max(_v.length(), 1));
-    const eased = speed * Math.max(MIN_EASED, 1 - AVOID_EASE * u * inPath);
+    // Yielding (in no hurry: settling onto a spot), it heeds them fully and stops for them altogether.
+    const ease = yieldTo ? Math.min(1, u / MIN_HEED) : u;
+    const eased = speed * Math.max(yieldTo ? 0 : MIN_EASED, 1 - AVOID_EASE * ease * inPath);
     const flat = Math.hypot(_v.x, _v.z);
     let yawT = Math.atan2(_v.z, _v.x);
     if (reverse) yawT = wrapAngle(yawT + Math.PI);   // back towards the target (cuttlefish swim backwards)

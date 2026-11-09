@@ -47,6 +47,7 @@ export function applyReflexes(brain: Brain, me: Fish, world: SwimWorld, dt: numb
   // open water it does not need to climb over.
   const anchored = brain.mode === 'lurk';
   brain.crowding = 0;
+  brain.hurry = 0;
   keepTruce(brain, me, dir);
   if (!anchored) keepPersonalSpace(brain, me, world, dir);
   avoidGlass(me.pos, world, dir);
@@ -98,6 +99,8 @@ function heedContacts(brain: Brain, me: Fish, dir: THREE.Vector3): void {
   dir.addScaledVector(_n, u * CONTACT_AVOID);
   const ahead = -_n.dot(me.dir);
   if (ahead > 0) brain.crowding = Math.max(brain.crowding, u * ahead);
+  // Headed away from it already: get clear at a swimming pace, not a feeding or resting one.
+  else brain.hurry = u * -ahead;
 }
 
 /**

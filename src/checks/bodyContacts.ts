@@ -138,16 +138,22 @@ export class CritterOverlapTally {
     });
   }
 
-  step(): void {
+  step(dt = 1 / 30): void {
     for (const { b } of this.hulls) b.update();
     const H = this.hulls;
+    const touching = new Map<string, [Solid, Solid | Fish, number]>();
     for (let i = 0; i < H.length; i++) {
       const A = H[i];
       if (!A) continue;
-      for (const S of this.segs) {
+      for (let k = 0; k < this.segs.length; k++) {
+        const S = this.segs[k];
+        if (!S) continue;
         if (!S.eel && S.f.pos.distanceTo(A.b.centre) > A.b.radius + S.reach) continue;
         const pen = this.intoFish(A.h, S);
-        if (pen > 0) this.count(A.c.kind, S.eel ? 'eel' : S.f.sp.id, pen, `${A.c.kind}.${this.deepestPart}`);
+        if (pen > 0) {
+          this.count(A.c.kind, S.eel ? 'eel' : S.f.sp.id, pen, `${A.c.kind}.${this.deepestPart}`);
+          touching.set(`${i}:f${k}`, [A.c, S.f, pen]);
+        }
       }
       for (let j = i + 1; j < H.length; j++) {
         const B = H[j];
@@ -158,9 +164,69 @@ export class CritterOverlapTally {
           const got = this.deepest_(A.h, hb.p0, hb.p1, (n) => hb.radiusToward(n));
           if (got > best) { best = got; part = `${A.c.kind}.${this.deepestPart}/${B.c.kind}.${hb.name}`; }
         }
-        if (best > OVERLAP_SHARE) this.count(A.c.kind, B.c.kind, best, part);
+        if (best > OVERLAP_SHARE) {
+          this.count(A.c.kind, B.c.kind, best, part);
+          touching.set(`${i}:c${j}`, [A.c, B.c, best]);
+        }
       }
     }
+    this.episodeStep(touching, dt);
+  }
+
+  /**
+   * Contact episodes: a run of overlapping frames for one pair (gaps of up to EP_GAP frames bridged),
+   * with each side's mode, speed and closing speed at the start, and through it whether the separation
+   * had an escape plan for them and how urgently each was told to move off the other.
+   */
+  private frame = 0;
+  private readonly open = new Map<string, Episode>();
+  private readonly episodes: Episode[] = [];
+  private readonly prev = new Map<Solid, THREE.Vector3>();
+  private sep: { hasPlan(a: object, b: object): boolean } | null = null;
+
+  watch(sep: { hasPlan(a: object, b: object): boolean }): this { this.sep = sep; return this; }
+
+  /** After the overlap tests of a frame: open, extend or close the episodes. */
+  private episodeStep(touching: Map<string, [Solid, Solid | Fish, number]>, dt: number): void {
+    for (const [key, [a, b, pen]] of touching) {
+      let ep = this.open.get(key);
+      if (!ep) {
+        ep = { key: [a.kind, kindOf(b)].sort().join('+'), start: this.frame, frames: 0, gap: 0, deepest: 0, planFrames: 0, msgA: 0, msgB: 0, a: this.snap(a, b, dt), b: this.snap(b, a, dt), speedA: 0, speedB: 0 };
+        this.open.set(key, ep);
+      }
+      ep.frames++; ep.gap = 0;
+      ep.deepest = Math.max(ep.deepest, pen);
+      if (this.sep?.hasPlan(a, b)) ep.planFrames++;
+      ep.msgA = Math.max(ep.msgA, a.inbox?.urgencyFrom(b) ?? 0);
+      ep.msgB = Math.max(ep.msgB, ('inbox' in b ? b.inbox?.urgencyFrom(a) : 0) ?? 0);
+      ep.speedA += this.speedOf(a, dt); ep.speedB += this.speedOf(b, dt);
+    }
+    for (const [key, ep] of this.open) {
+      if (touching.has(key)) continue;
+      if (++ep.gap > EP_GAP) { this.open.delete(key); this.episodes.push(ep); }
+    }
+    for (const { c } of this.hulls) (this.prev.get(c) ?? this.prev.set(c, new THREE.Vector3()).get(c))?.copy(c.pos);
+    this.frame++;
+  }
+
+  private speedOf(x: Solid | Fish, dt: number): number {
+    if (isFish(x)) return x.vel.length();
+    const p = this.prev.get(x);
+    return p ? p.distanceTo(x.pos) / dt : 0;
+  }
+
+  private velOf(x: Solid | Fish, dt: number, out: THREE.Vector3): THREE.Vector3 {
+    if (isFish(x)) return out.copy(x.vel);
+    const p = this.prev.get(x);
+    return p ? out.subVectors(x.pos, p).multiplyScalar(1 / dt) : out.set(0, 0, 0);
+  }
+
+  /** One side at the start of an episode: its speed and how much of it goes into the other. */
+  private snap(x: Solid | Fish, other: Solid | Fish, dt: number): Snap {
+    const v = this.velOf(x, dt, _c);
+    _d.subVectors(other.pos, x.pos).normalize();
+    const mode = isFish(x) ? x.brain.mode : String(Reflect.get(x, 'mode') ?? '-');
+    return { mode, speed: +v.length().toFixed(2), into: +v.dot(_d).toFixed(2), den: !!x.inDen };
   }
 
   private count(a: string, b: string, pen: number, part: string): void {
@@ -206,9 +272,24 @@ export class CritterOverlapTally {
   }
 
   summary(minutes: number): Record<string, unknown> {
-    return { pairFrames: this.pairFrames, perMin: +(this.pairFrames / minutes).toFixed(1), deepestShare: +this.deepest.toFixed(2), byPair: this.byPair, byPart: this.byPart };
+    const eps = [...this.episodes, ...this.open.values()];
+    return { pairFrames: this.pairFrames, perMin: +(this.pairFrames / minutes).toFixed(1), deepestShare: +this.deepest.toFixed(2), byPair: this.byPair, byPart: this.byPart,
+      episodes: eps.map((e) => ({
+        pair: e.key, t: +(e.start / 30).toFixed(1), frames: e.frames, deep: +e.deepest.toFixed(2), plan: +(e.planFrames / e.frames).toFixed(2),
+        msgA: +e.msgA.toFixed(2), msgB: +e.msgB.toFixed(2), vA: +(e.speedA / e.frames).toFixed(2), vB: +(e.speedB / e.frames).toFixed(2), a: e.a, b: e.b,
+      })) };
   }
 }
+
+/** Overlapping frames this far apart still count as one contact episode. */
+const EP_GAP = 3;
+interface Snap { mode: string; speed: number; into: number; den: boolean }
+interface Episode {
+  key: string; start: number; frames: number; gap: number; deepest: number; planFrames: number;
+  msgA: number; msgB: number; speedA: number; speedB: number; a: Snap; b: Snap;
+}
+const isFish = (x: Solid | Fish): x is Fish => x.kind === 'fish';
+const kindOf = (x: Solid | Fish): string => isFish(x) ? (x.spine ? 'eel' : x.sp.id) : x.kind;
 
 /** Fish against the rock as drawn, and the field's error there. */
 export class RockTruthTally {

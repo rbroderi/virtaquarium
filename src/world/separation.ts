@@ -82,7 +82,7 @@ const PLAN_NEAR = 3;
 /** The most spheres a critter's bending limbs are asked to keep clear of (the nearest). */
 const LIMB_SPHERES = 24;
 
-const _a0 = new THREE.Vector3(), _a1 = new THREE.Vector3(), _b0 = new THREE.Vector3(), _b1 = new THREE.Vector3();
+const _a0 = new THREE.Vector3(), _a1 = new THREE.Vector3(), _b0 = new THREE.Vector3(), _b1 = new THREE.Vector3(), _wn = new THREE.Vector3();
 const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _n = new THREE.Vector3(), _m = new THREE.Vector3();
 const _st: [number, number] = [0, 0];
 const _move = new THREE.Vector3(), _bn = new THREE.Vector3(), _away = new THREE.Vector3();
@@ -272,9 +272,18 @@ export class BodySeparation {
   /** The spheres near c's bending limbs that stand in for the eel's chain and the other critters' parts. */
   private limbSpheres(c: Solid, critters: readonly Solid[], eels: readonly Fish[]): { c: THREE.Vector3; r: number }[] {
     const body = this.bodyOf(c), out: { c: THREE.Vector3; r: number; d: number }[] = [];
+    const limbs = body.pieces.filter((h) => h.bends);
+    // Ranked by the gap to the nearest limb (not to the body's centre), so the cap keeps what the arm
+    // tips are reaching into as well as what is under the body.
     const add = (p: THREE.Vector3, r: number): void => {
-      const d = p.distanceTo(body.centre) - r;
-      if (d < body.radius) out.push({ c: p.clone(), r, d });
+      if (p.distanceTo(body.centre) - r >= body.radius) return;
+      let d = Infinity;
+      for (const h of limbs) {
+        closestSegmentParams(h.p0, h.p1, p, p, _st);
+        d = Math.min(d, _q.lerpVectors(h.p0, h.p1, _st[0]).distanceTo(p) - r);
+      }
+      if (!limbs.length) d = p.distanceTo(body.centre) - r;
+      out.push({ c: p.clone(), r, d });
     };
     // A core p0-p1 as spheres of radius r, one about every radius along it.
     const along = (p0: THREE.Vector3, p1: THREE.Vector3, r: number): void => {
@@ -294,16 +303,19 @@ export class BodySeparation {
       if (o === c) continue;
       const ob = this.bodyOf(o);
       if (ob.centre.distanceTo(body.centre) > ob.radius + body.radius) continue;
-      for (const h of ob.pieces) if (!h.bends && h.centre.distanceTo(body.centre) < body.radius + h.reach) along(h.p0, h.p1, h.girth);
+      for (const h of ob.pieces) if (!h.bends && h.centre.distanceTo(body.centre) < body.radius + h.reach) h.fill(add);
     }
     out.sort((a, b) => a.d - b.d);
     return out.slice(0, LIMB_SPHERES);
   }
 
-  /** The deepest overlap between a's solid (non-bending) parts and segments q0-q1 of radius rq, into _n (a -> other). */
-  private deepestOnHulls(a: Solid, q0: THREE.Vector3, q1: THREE.Vector3, rq: (n: THREE.Vector3) => number, best: number): number {
+  /**
+   * The deepest overlap between a's solid (non-bending) parts and segments q0-q1 of radius rq, into _n
+   * (a -> other). With `limbs`, its bending limbs instead.
+   */
+  private deepestOnHulls(a: Solid, q0: THREE.Vector3, q1: THREE.Vector3, rq: (n: THREE.Vector3) => number, best: number, limbs = false): number {
     for (const h of this.bodyOf(a).pieces) {
-      if (h.bends) continue;
+      if (h.bends !== limbs) continue;
       closestSegmentParams(h.p0, h.p1, q0, q1, _st);
       _p.lerpVectors(h.p0, h.p1, _st[0]); _q.lerpVectors(q0, q1, _st[1]);
       const dist = _p.distanceTo(_q);
@@ -347,8 +359,22 @@ export class BodySeparation {
       const got = this.deepestOnHulls(a, _b0.copy(hb.p0), _b1.copy(hb.p1), (n) => hb.radiusToward(n), best);
       if (got > best) { best = got; _bn.copy(_n); }
     }
-    if (best <= -wide) return false;
-    if (this.posting) this.tellBoth(a, b, _bn, best, margin);
+    // Bending limbs (an octopus's arms) don't shove, but they do warn: the two steer apart as if the
+    // arm were body, so the octopus doesn't crawl or jet with its arms into another critter.
+    let warn = best;
+    _wn.copy(_bn);
+    for (const hb of B.pieces) {
+      if (hb.bends) continue;
+      const got = this.deepestOnHulls(a, _b0.copy(hb.p0), _b1.copy(hb.p1), (n) => hb.radiusToward(n), warn, true);
+      if (got > warn) { warn = got; _wn.copy(_n); }
+    }
+    for (const ha of A.pieces) {
+      if (!ha.bends) continue;
+      const got = this.deepestOnHulls(b, _b0.copy(ha.p0), _b1.copy(ha.p1), (n) => ha.radiusToward(n), warn);
+      if (got > warn) { warn = got; _wn.copy(_n).negate(); }
+    }
+    if (warn <= -wide) return false;
+    if (this.posting) this.tellBoth(a, b, _wn, warn, margin);
     if (best <= 0) return false;
     const push = Math.min(best * RELAX, CRITTER_PUSH_SPEED * dt);
     const shareA = shareOf(a, b);
@@ -377,6 +403,12 @@ export class BodySeparation {
    * and _planB, kept for PLAN_HOLD so they follow the paths through (the eel as a chain of spheres).
    * False when either is unknown to it, and plain "away" serves.
    */
+  /** Whether a and b (either order) have an escape plan being followed now; for the checks. */
+  hasPlan(a: object, b: object): boolean {
+    const p = this.plans.get(a)?.get(b) ?? this.plans.get(b)?.get(a);
+    return !!p && this.clock - p.t < PLAN_HOLD;
+  }
+
   private planFor(a: Party, b: Party, n: THREE.Vector3): boolean {
     const A = this.moverOf.get(a), B = this.moverOf.get(b);
     if (!A || !B) return false;

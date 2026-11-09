@@ -96,7 +96,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const cleaning = world.station ? new CleaningTally(world.station) : null;
   const shoals = new ShoalSampler(world.fish);
   const overlaps = new FishOverlapTally(world.fish);
-  const critterOverlaps = new CritterOverlapTally(world.solids, world.fish);
+  const critterOverlaps = new CritterOverlapTally(world.solids, world.fish).watch(world.separation);
   const truth = qs.get('truth') === '0' ? null : new RockTruthTally(world);
   if (qs.get('night') === '1') aq.setLight(0);
   if (qs.has('light')) aq.setLight(Number(qs.get('light')));   // e.g. 0.35: dusk, when lionfish hunt
@@ -120,7 +120,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
     }
     cleaning?.step(DT);
     overlaps.step();
-    critterOverlaps.step();
+    critterOverlaps.step(DT);
     truth?.step(world);
     for (const s of drawn) trackClimb(s, n, s.f.model.position.y);
     for (const s of stats) {

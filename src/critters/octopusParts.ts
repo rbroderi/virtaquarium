@@ -140,6 +140,10 @@ export class ArmTube {
   ph = 0;
   /** Rest length of one segment (set each frame, read by the untangle). */
   seg = 0;
+  /** Its own reflex (Octopus.armReflex): how far it has swung off what it touched (rad, about the
+   *  vertical) and how much it has drawn in (0..1). Both relax once it is clear. */
+  shy = 0;
+  pull = 0;
   private readonly suckers: THREE.InstancedMesh;
   private readonly first: number;
   private readonly nr: number;

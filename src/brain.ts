@@ -28,6 +28,9 @@ const DECISION_NOISE = 0.08;
 const STAY_BONUS = 0.15;
 /** The share of its pace a fish keeps when touching the fish ahead of it. */
 const CROWD_SLOW = 0.35;
+/** Told to get off something (reflexes heedContacts) and headed away, a fish swims at least this share
+ *  of its sustained speed, times how urgently: it clears off rather than drifting at its feeding pace. */
+const AVOID_HURRY = 0.6;
 /** A fish's own spot in a shelter: this share of its radius from the centre, plus up to SPREAD more. */
 const OWN_SPOT_NEAR = 0.25;
 const OWN_SPOT_SPREAD = 0.5;
@@ -102,6 +105,8 @@ export class Brain {
   lurkDir: THREE.Vector3 | null = null;
   /** How close the nearest body ahead is (reflexes avoidBody): 0 clear, 1 touching. The fish slows. */
   crowding = 0;
+  /** How urgently it is getting off what it touches, headed away (reflexes heedContacts): 0..1. */
+  hurry = 0;
   /** Reverse swimming speed (units/s), set while an eel backs into its cave. */
   backing = 0;
   /** An eel's cave clock: when it should be in its cave and when out on a foray (brain/caveClock.ts). */
@@ -425,7 +430,8 @@ export class Brain {
     behaviourFor(this.mode).steer(ctx);
     applyReflexes(this, me, world, dt, dir, out.clearance);
     // Close behind another fish it slows, down to CROWD_SLOW of its pace; a fleeing fish doesn't.
-    return this.mode === 'flee' ? out.speed : out.speed * (1 - (1 - CROWD_SLOW) * this.crowding);
+    const pace = this.mode === 'flee' ? out.speed : out.speed * (1 - (1 - CROWD_SLOW) * this.crowding);
+    return Math.max(pace, AVOID_HURRY * this.hurry);
   }
 }
 

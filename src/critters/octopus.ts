@@ -97,6 +97,17 @@ const BODY_PATCH: SoftBodyPatch = {
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _away = new THREE.Vector3();
 /** Within this of its den spot, it is in its den. */
 const DEN_REACHED = 0.4;
+/**
+ * Each arm's own reflex, apart from the body's: an arm that comes within ARM_SHY_MARGIN of its
+ * half-width of another body swings off it about the vertical (up to ARM_SHY_MAX, at ARM_SHY_RATE rad/s
+ * when touching) and draws in (by up to ARM_PULL_MAX of its reach, at ARM_PULL_RATE/s), so the next
+ * pose doesn't lay it straight back into what the untangle just pushed it out of. Clear, both relax
+ * over ARM_RELAX seconds. The body is not moved.
+ */
+const ARM_SHY_MARGIN = 3, ARM_SHY_MAX = 0.8, ARM_SHY_RATE = 2.5, ARM_PULL_MAX = 0.4, ARM_PULL_RATE = 2, ARM_RELAX = 2;
+/** A jet bends off what is in its way (rad/s at full urgency) and slows, down to MIN_EASED. */
+const JET_SWERVE = 3;
+const _arm = new THREE.Vector3(), _obs = new THREE.Vector3();
 /** How far the avoidance reflex bends the crawl (target distances, at full urgency). */
 const AVOID_TURN = 1.2;
 
@@ -366,12 +377,43 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
     this.worldToLocal.copy(this.model.matrixWorld).invert();
     this.poseArms(dt, world, ceil);
     this.untangler.solve(this.arms, this.outsideObstacles(), this.disc, this.M);
+    this.armReflex(dt);
     for (const arm of this.arms) {
       // tow on from where they settled, so the next frame starts nearly untangled
       for (let i = 1; i < arm.n; i++) arm.prevW[i - 1]?.copy(pointOf(arm, i)).applyMatrix4(this.model.matrixWorld);
       arm.build(this.down);
     }
     this.buildWeb();
+  }
+
+  /**
+   * Each arm's own reflex (ARM_SHY_*): after the untangle, the nearest any of its points comes to the
+   * other bodies' stand-ins; near one, it swings away from it round the body and draws in.
+   */
+  private armReflex(dt: number): void {
+    const relax = Math.exp(-dt / ARM_RELAX), m = this.model.matrixWorld;
+    for (const arm of this.arms) {
+      let close = 0, side = 0;
+      for (const { c, r } of this.outsideW) {
+        for (let i = 2; i < arm.n; i++) {
+          _arm.copy(pointOf(arm, i)).applyMatrix4(m);
+          const half = arm.rAt(i / (arm.n - 1)) * ARM_W;
+          const gap = _arm.distanceTo(c) - r - half, margin = ARM_SHY_MARGIN * half;
+          if (gap >= margin) continue;
+          const k = Math.min(1.5, 1 - gap / margin);
+          if (k <= close) continue;
+          close = k;
+          // Which way round the body is away: the obstacle's bearing from the body against the arm's.
+          _obs.copy(c).applyMatrix4(this.worldToLocal);
+          const local = pointOf(arm, i);
+          side = Math.sign(wrapAngle(Math.atan2(local.z, local.x) - Math.atan2(_obs.z, _obs.x))) || 1;
+        }
+      }
+      if (close > 0) {
+        arm.shy = clamp(arm.shy + side * ARM_SHY_RATE * close * dt, -ARM_SHY_MAX, ARM_SHY_MAX);
+        arm.pull = Math.min(1, arm.pull + ARM_PULL_RATE * close * dt);
+      } else { arm.shy *= relax; arm.pull *= relax; }
+    }
   }
 
   keepLimbsOff(spheres: readonly { readonly c: THREE.Vector3; readonly r: number }[]): void {
@@ -444,7 +486,15 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
   /** Body: crawl over the surface (or jet clear of it). */
   private moveBody(dt: number): void {
     if (this.mode === 'jet') {
-      this.pos.addScaledVector(this.jetDir, JET_SPEED * this.jet * dt);
+      // The avoidance reflex: a jet bends off whatever it is about to hit, and slows if it is dead ahead.
+      const u = this.inbox.read(_away);
+      let eased = 1;
+      if (u > 0) {
+        const inPath = Math.max(0, -this.jetDir.dot(_away));
+        this.jetDir.addScaledVector(_away, u * JET_SWERVE * (1 + inPath) * dt).normalize();
+        eased = Math.max(MIN_EASED, 1 - AVOID_EASE * u * inPath);
+      }
+      this.pos.addScaledVector(this.jetDir, JET_SPEED * this.jet * eased * dt);
       // Mantle first: it turns its sac into the jet, so the arms stream out behind it, clear of the sac.
       const yawT = Math.atan2(-this.jetDir.z, -this.jetDir.x);
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 6);
@@ -520,8 +570,8 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
     const local = new THREE.Vector3(), world_ = new THREE.Vector3();
     // In a cave the den's walls are behind and beside it, so the tucked arms spread out of the mouth
     // (over most of the ring: any narrower and eight arms can't lie side by side).
-    const a = this.cave ? wrapAngle(arm.angle) * (1 - 0.4 * this.tuck) : arm.angle;
-    const n = arm.n, seg = arm.len * (1 - 0.55 * this.tuck) / (n - 1);
+    const a = (this.cave ? wrapAngle(arm.angle) * (1 - 0.4 * this.tuck) : arm.angle) + arm.shy;
+    const n = arm.n, seg = arm.len * (1 - 0.55 * this.tuck) * (1 - ARM_PULL_MAX * arm.pull) / (n - 1);
     arm.seg = seg;   // (its rest length, for the untangle)
     const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
     const dir = jet

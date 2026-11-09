@@ -68,6 +68,8 @@ export interface CritterNeighbour {
   readonly pos: THREE.Vector3;
   readonly radius: number;
   readonly sp: { readonly predator?: boolean };
+  /** Its den (the octopus), which settling critters leave clear. */
+  readonly den?: THREE.Vector3;
 }
 
 /** The parts of the World a critter reads. */

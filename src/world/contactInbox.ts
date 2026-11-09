@@ -42,6 +42,9 @@ export class ContactInbox {
     else if (urgency >= m.urgency) { m.away.copy(away); m.urgency = Math.min(1, urgency); }
   }
 
+  /** How urgent the message from `sender` is now (0 when there is none); for the checks. */
+  urgencyFrom(sender: object): number { return this.from.get(sender)?.urgency ?? 0; }
+
   /**
    * Which way to turn, into `out` (unit, or zero), and how urgently (0..1): every sender but `ignore`
    * (the one it is chasing), scaled by `heed`. Pressed from both sides, the turns cancel.
