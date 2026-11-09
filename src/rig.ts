@@ -1,6 +1,7 @@
 // Light rigs shared by the tank (main, ?rig=led) and the fish lab (rig selector), so a fish looks the
 // same in both. Each rig is a Strategy for turning the overall light level into light intensities.
-//   sun  one key light through the surface (the default; caustics follow it)
+//   sun  one key light through the surface (the default; caustics follow it), plus a weak front
+//        spill: the lamp's light bounced off the room back in through the front glass
 //   led  an aquarium LED bar: a softer shadowing key plus two unshadowed fills spread along the bar,
 //        which fill the shadow side the way a long fixture does
 import * as THREE from 'three';
@@ -33,8 +34,11 @@ export function toneFor(params: URLSearchParams): ToneCurve {
 export const LIGHTS = {
   /** Directional intensity. */
   sun: 3.8,
-  /** Nearly overhead, a little towards the front. */
-  sunPos: [2, 24, 5] as const,
+  /** Nearly overhead, a little behind the middle, where a tank's lamp usually hangs. */
+  sunPos: [2, 24, -4] as const,
+  /** Room spill: the lamp's light bounced off the room back in through the front glass. Unshadowed. */
+  spill: 0.35,
+  spillPos: [0, 6, 20] as const,
   /** Hemisphere / sky fill with the baked reef light on (1 without it). */
   ambient: 0.5,
   /** Environment map intensity, times ambient. */
@@ -49,6 +53,8 @@ const KEY_FLOOR = 0.05;
 const LED_KEY = 1.5;
 const LED_FILL = 0.7;
 const FILL_COLOR = 0xf4f6ff;
+/** Room light is a little warmer than the lamp (walls, ceiling). */
+const SPILL_COLOR = 0xfff4e8;
 const FILL_OFFSET_X = 6, FILL_HEIGHT = 20, FILL_DEPTH = 6;
 
 export type RigName = 'sun' | 'led';
@@ -57,11 +63,12 @@ export type RigName = 'sun' | 'led';
 interface RigStrategy {
   keyIntensity(level: number): number;
   fillIntensity(level: number): number;
+  spillIntensity(level: number): number;
 }
 
 const RIGS: Readonly<Record<RigName, RigStrategy>> = {
-  sun: { keyIntensity: (l) => LIGHTS.sun * l + KEY_FLOOR, fillIntensity: () => 0 },
-  led: { keyIntensity: (l) => LED_KEY * l + KEY_FLOOR, fillIntensity: (l) => LED_FILL * l },
+  sun: { keyIntensity: (l) => LIGHTS.sun * l + KEY_FLOOR, fillIntensity: () => 0, spillIntensity: (l) => LIGHTS.spill * l },
+  led: { keyIntensity: (l) => LED_KEY * l + KEY_FLOOR, fillIntensity: (l) => LED_FILL * l, spillIntensity: () => 0 },
 };
 
 export const isRigName = (name: string): name is RigName => name in RIGS;
@@ -69,9 +76,12 @@ export const isRigName = (name: string): name is RigName => name in RIGS;
 export class LightRig {
   private presetName: RigName = 'sun';
   private readonly fills: readonly THREE.DirectionalLight[];
+  private readonly spill = new THREE.DirectionalLight(SPILL_COLOR, 0);
 
   constructor(scene: THREE.Scene, private readonly sun: THREE.DirectionalLight, preset: string = 'sun') {
     this.preset = preset;
+    this.spill.position.set(...LIGHTS.spillPos);
+    scene.add(this.spill);
     this.fills = [-1, 1].map((side) => {
       const light = new THREE.DirectionalLight(FILL_COLOR, 0);
       light.position.set(side * FILL_OFFSET_X, FILL_HEIGHT, FILL_DEPTH);
@@ -94,5 +104,6 @@ export class LightRig {
     const strategy = RIGS[this.presetName];
     this.sun.intensity = strategy.keyIntensity(level);
     for (const fill of this.fills) fill.intensity = strategy.fillIntensity(level);
+    this.spill.intensity = strategy.spillIntensity(level);
   }
 }

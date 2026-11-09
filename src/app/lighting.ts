@@ -33,8 +33,8 @@ const SUN_MOON = new THREE.Color(0x9fb4d8);
 const WATER_DAY = INSCATTER_DAY.clone();
 /** The water column at night: dark moonlit navy, never the warm sun's brown. */
 const WATER_NIGHT = new THREE.Color(0.006, 0.040, 0.120);
-/** The ends of the sun's arc: low over the tank at dawn/dusk. */
-const SUN_LOW = { x: 14, y: 11, z: 5 } as const;
+/** The ends of the sun's arc: low over the tank at dawn/dusk, behind the middle like the noon lamp. */
+const SUN_LOW = { x: 14, y: 11, z: -4 } as const;
 
 export interface LightingTargets {
   readonly stage: Stage;
