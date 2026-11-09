@@ -123,9 +123,18 @@ function fitGrid(size: THREE.Vector3, startCell: number, maxTex: number): GridLa
   }
 }
 
+/** Objects with this userData flag (and everything under them) are left out of the bake: light
+ *  overlays laid on the ground, which would otherwise shade the very ground they lie on. */
+export const NO_REEF_LIGHT = 'noReefLight';
+
+export function skipsReefLight(o: THREE.Object3D): boolean {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData[NO_REEF_LIGHT] === true) return true;
+  return false;
+}
+
 function reefBounds(group: THREE.Object3D, sand: THREE.Object3D | undefined): THREE.Box3 {
   const box = new THREE.Box3();
-  group.traverse((o) => { if (isMesh(o) && o !== sand) box.expandByObject(o); });
+  group.traverse((o) => { if (isMesh(o) && o !== sand && !skipsReefLight(o)) box.expandByObject(o); });
   box.min.y = Math.max(box.min.y, GRID_LIMITS.minY); box.max.y += GRID_LIMITS.topMargin;
   box.min.x = Math.max(box.min.x, -GRID_LIMITS.halfX); box.max.x = Math.min(box.max.x, GRID_LIMITS.halfX);
   box.min.z = Math.max(box.min.z, GRID_LIMITS.minZ); box.max.z = Math.min(box.max.z, GRID_LIMITS.maxZ);
@@ -258,6 +267,9 @@ function* bakeSteps(renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: 
   renderer.setClearColor(0x000000, 0);
   reefLightUniforms.uRLOn.value = 0; reefLightUniforms.uRLAOOn.value = 0; causticUniforms.uCauOn.value = 0;
   const sandVisible = sand ? sand.visible : false;
+  const skipped: [THREE.Object3D, boolean][] = [];
+  group.traverse((o) => { if (o.userData[NO_REEF_LIGHT] === true) skipped.push([o, o.visible]); });
+  for (const [o] of skipped) o.visible = false;
 
   const U = {
     uMin: uniform(box.min.clone()), uSize: uniform(size.clone()), uRes: uniform(n.clone()), uTiles: uniform(tiles),
@@ -373,6 +385,7 @@ function* bakeSteps(renderer: THREE.WebGLRenderer, reef: ReefLightTarget, opts: 
   occ.remove(amb);
   parent?.add(group);
   if (sand) sand.visible = sandVisible;
+  for (const [o, v] of skipped) o.visible = v;
   // The reef's sun shadows are baked now: the live shadow map keeps only what moves.
   group.traverse((o) => { if (isMesh(o)) o.castShadow = false; });
   [visRT, backRT, albRT, sunRT, bounceRTFor(bounces), screen?.gbuffer].forEach((t) => { if (t && t !== fin) t.dispose(); });

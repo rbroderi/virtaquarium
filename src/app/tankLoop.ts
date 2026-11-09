@@ -12,6 +12,7 @@ import type { Critter } from '../critters.js';
 import type { TankScene } from '../reef/types.js';
 import { updateFishPush } from '../reef/fishPush.js';
 import { renderCrystalBgScene, type CrystalBgRenderer } from '../reef/crystalBg.js';
+import { updateCrystalLight } from '../reef/crystalLight.js';
 import type { Stage } from './stage.js';
 import { CAMERA_BASE, CAMERA_LOOK } from './stage.js';
 import type { LightingController } from './lighting.js';
@@ -126,6 +127,7 @@ export class TankLoop {
     for (const j of jellies) j.update(dt, world, jellies);
     for (const c of critters) c.update(dt, world);
     updateWaves(this.time);
+    updateCrystalLight(this.time);
     if (!this.parts.isJellyTank && stage.caustics) stage.caustics.update();   // no surface in view in the jelly tank
     snow.update(dt, this.time, this.flow);
     bubbles?.update(dt, this.time, this.flow, world.light);

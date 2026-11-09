@@ -21,6 +21,7 @@ import { setFishPushReactors, type FishPushReactor } from './fishPush.js';
 import { gpuActive } from '../webgpu/tsl.js';
 import { swapCoral } from './scenery.js';
 import { orientCrystal, readCrystalFace, registerCrystalPiece } from './crystal.js';
+import { makeCrystalLight } from './crystalLight.js';
 import { inKeepOut, signClear, signKeepOut, surfacePoints, vertexBox, type SignKeepOut } from './signClearance.js';
 import { inNoHeightSubtree, isMesh, isSolid, markNoHeight, markSolid, naturalSize } from './flags.js';
 import {
@@ -609,9 +610,12 @@ export class ReefBuilder {
       console.warn('crystal: no spot clear of rock and coral; using the preferred one');
       box = stand(sign.x, sign.z);
     }
-    m.traverse((o) => { if (isMesh(o)) o.castShadow = o.receiveShadow = true; });
+    // Glass: no solid shadow-map shadow. Its faint shade and focused caustic go on the ground instead.
+    m.traverse((o) => { if (isMesh(o)) { o.castShadow = false; o.receiveShadow = true; } });
     m.name = 'crystal';
     this.corals.add(m);
+    // On the top group, not the corals: it must stay out of the height field splat.
+    this.group.add(makeCrystalLight(box, (x, z) => this.groundAt(x, z)));
     registerCrystalPiece(m);
     this.signKeepOut = signKeepOut(box, sign.plantMargin, sign.frontStrip);
   }

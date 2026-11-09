@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { isRecord } from '../core/dom.js';
 import { canSaveCache, fetchCached, saveCached } from '../core/cacheStore.js';
 import { isInstancedMesh, isLine, isMesh, isPoints, materialsOf } from '../water/objectGuards.js';
-import { bakeReefLightPackedAsync, type BakeResult, type PackedBake } from './bake.js';
+import { bakeReefLightPackedAsync, skipsReefLight, type BakeResult, type PackedBake } from './bake.js';
 import { Hasher, TextureHasher } from './hash.js';
 import { markReefLightOwned, reefLightUniforms, replaceMap } from './uniforms.js';
 import type { ReefLightCacheOptions, ReefLightInfo, ReefLightOptions, ReefLightTarget } from './types.js';
@@ -73,6 +73,7 @@ function hashReefScene(H: Hasher, group: THREE.Object3D): void {
     return key;
   };
   group.traverse((o) => {
+    if (skipsReefLight(o)) return;   // not baked, and its visibility follows the sun
     H.str(`${o.type}|${o.name}|${o.visible}`);
     if (!isMesh(o) && !isPoints(o) && !isLine(o)) return;
     H.floats(o.matrixWorld.elements);

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { lerp } from '../core/math.js';
 import { INSCATTER_DAY, setSunDirection, waterUniforms, type SurfaceUniforms } from '../water.js';
 import { reefLightUniforms } from '../reefLight.js';
+import { setCrystalSun } from '../reef/crystalLight.js';
 import { LIGHTS, SUN_NOON } from '../rig.js';
 import type { TankScene } from '../reef/types.js';
 import type { Stage } from './stage.js';
@@ -79,6 +80,7 @@ export class LightingController {
     sunDirectionInto(this.sunDir, level > 0 ? sun.phase : NOON_SUN.phase);
     stage.sun.position.copy(this.sunDir);
     setSunDirection(stage.sun.position);
+    setCrystalSun(stage.sun.position, this.sunTint, level);
     // Ambient water light is occluded by the baked reef light, so it can sit lower against the sun and
     // let the shadows read.
     const ambient = reefLightUniforms.uRLOn.value ? LIGHTS.ambient : AMBIENT_WITHOUT_BAKE;
