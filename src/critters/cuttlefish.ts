@@ -9,13 +9,12 @@
 import * as THREE from 'three';
 import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js';
 import { mantleR } from '../softBodies.js';
-import { softBodyGeometry } from './softBodyMeshes.js';
-import { skin, spring, threatNear, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, type ShaderHook, type NodeHook, type SpringState } from './shared.js';
+import { skin, spring, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, softBodyHook, type NodeHook, type SpringState, type SoftBodyPatch } from './shared.js';
 import { boundMaterialColor, type NodeObject } from '../webgpu/tsl.js';
 import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
-import type { InspectPanel } from '../inspect.js';
+import { Cephalopod } from './base.js';
 import { CritterBrain, type DriveInfo } from './critterBrain.js';
-import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
+import type { CheckVisit, CritterContext, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
 export type CuttlefishMode = 'hover' | 'cruise' | 'rest' | 'hunt' | 'jet';
 
@@ -65,12 +64,17 @@ const MODE_NOTES: Readonly<Record<CuttlefishMode, string>> = {
   jet: 'Startled: jetting away, pale as a ghost',
 };
 
-const MANTLE_VERT_HEAD = 'uniform vec3 uSqueeze;\nattribute float aWeight;\nvarying float vMantle;\n';
-const MANTLE_VERT_BEGIN = `#include <begin_vertex>
+/**
+ * The mantle and head are one mesh (softBodies.ts): the mantle's share (aWeight) squeezes in a
+ * jet, about the head end, and the head takes its own colour.
+ */
+const MANTLE_PATCH: SoftBodyPatch = {
+  vertHead: 'uniform vec3 uSqueeze;\nattribute float aWeight;\nvarying float vMantle;\n',
+  vertBegin: `#include <begin_vertex>
         transformed *= mix(vec3(1.0), uSqueeze, aWeight);
-        vMantle = aWeight;`;
-const MANTLE_FRAG_HEAD = 'uniform float uTime, uCloud, uMottle, uPale;\nvarying float vMantle;\n';
-const MANTLE_FRAG_MAP = `#include <map_fragment>
+        vMantle = aWeight;`,
+  fragHead: 'uniform float uTime, uCloud, uMottle, uPale;\nvarying float vMantle;\n',
+  fragMap: `#include <map_fragment>
         {
           float dors = smoothstep(0.35, 0.0, min(abs(vMapUv.x - 0.75), 1.0 - abs(vMapUv.x - 0.75)));
           diffuseColor.rgb = mix(vec3(0.3, 0.16, 0.11) * (1.1 - 0.35 * dors), diffuseColor.rgb, smoothstep(0.15, 0.7, vMantle));   // the head
@@ -78,19 +82,19 @@ const MANTLE_FRAG_MAP = `#include <map_fragment>
           float mott = smoothstep(0.4, 0.7, fract(sin(dot(floor(vec2(fract(vMapUv.x), vMapUv.y) * vec2(60.0, 40.0)), vec2(12.9898, 78.233))) * 43758.5453));
           diffuseColor.rgb *= 1.0 - dors * (uCloud * 0.55 * cloud + uMottle * 0.35 * mott);
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.82, 0.78, 0.74), uPale * 0.6);
-        }`;
+        }`,
+};
 
 const _v = new THREE.Vector3();
 
-export class Cuttlefish implements Critter {
+export class Cuttlefish extends Cephalopod<CuttlefishMode, CuttleDrive, CuttleTrait> {
   readonly kind = 'cuttlefish' as const;
-  readonly sp: CritterSpecies;
-  readonly radius: number;
+  readonly displayName = 'Cuttlefish';
+  readonly checkVisits: readonly CheckVisit[] = [['cruise', [3, 0, 0]], ['hover', [0.3, 0, 0]], ['rest', null]];
   /** Mantle length (units). */
   readonly ML: number;
   /** Click-proxy radius for the inspection overlay. */
   readonly pickRadius: number;
-  readonly model = new THREE.Group();
   readonly mantle: THREE.Mesh;
   readonly crown = new THREE.Group();
   readonly arms: THREE.Mesh[] = [];
@@ -103,25 +107,28 @@ export class Cuttlefish implements Critter {
   mode: CuttlefishMode = 'hover';
   modeT = 0;
   target: THREE.Vector3;
-  /** Jet strength left, 1 at the start of a jet. */
-  jet = 0;
   /** Strike time left (s): the tentacles are out. */
   strike = 0;
-  private readonly rng: Rng;
+  protected readonly threatRange = THREAT_RANGE;
   private readonly u: CuttleUniforms;
   private readonly finN = FIN_SEGMENTS;
   private finPhase = 0;
   private readonly sArmY: SpringState = { x: 0, v: 0 };
   private readonly sArmZ: SpringState = { x: 0, v: 0 };
   private readonly sSqueeze: SpringState = { x: 0, v: 0 };
-  private calm = 0;
   private reverse = false;
   /** The food it last saw (new food in sight makes it think again). */
   private seen: CritterFood | null = null;
+  /** The nearest food in sight this step. */
+  private prey: CritterFood | null = null;
   readonly brain: CritterBrain<CuttleDrive, CuttlefishMode, CuttleTrait>;
 
+  static create(sp: CritterSpecies, { rng, world }: CritterContext): Cuttlefish {
+    return new Cuttlefish(sp, rng, world);
+  }
+
   constructor(sp: CritterSpecies, rng: Rng, world: CritterWorld) {
-    this.sp = sp; this.rng = rng; this.radius = sp.radius;
+    super(sp, rng);
     this.brain = new CritterBrain(DRIVES,
       { hunger: range(rng, 0.2, 0.5), fatigue: range(rng, 0.1, 0.3), fear: 0, restless: range(rng, 0.1, 0.4) },
       { appetite: rng(), activity: rng(), calm: rng() }, TRAITS);
@@ -130,15 +137,10 @@ export class Cuttlefish implements Critter {
     this.u = { uTime: { value: 0 }, uCloud: { value: 0 }, uMottle: { value: 0 }, uPale: { value: 0 }, uSqueeze: { value: new THREE.Vector3(1, 1, 1) }, uExt: { value: 1 } };
     const skinTex = cuttleSkin(rng);
     skinTex.wrapS = THREE.RepeatWrapping;   // the seam's own vertices run on past u = 1
-    const mantleMat = skin({ map: skinTex, roughness: 0.45, metalness: 0 }, 'cuttle-mantle', this.mantleHook(), CEPH_SSS, this.mantleNodeHook());
+    const mantleMat = skin({ map: skinTex, roughness: 0.45, metalness: 0 }, 'cuttle-mantle', softBodyHook(this.u, MANTLE_PATCH), CEPH_SSS, this.mantleNodeHook());
 
     // Mantle, head, eye bulges and the arm crown: one blended mesh (built for ML = 1).
-    const body = new THREE.Mesh(softBodyGeometry('cuttlefish-body'), mantleMat);
-    body.scale.setScalar(ML);
-    body.castShadow = true;
-    body.name = 'mantle';
-    this.model.add(body);
-    this.mantle = body;
+    this.mantle = this.addSoftBody('cuttlefish-body', mantleMat, ML, 'mantle');
     this.addEyes(ML);
     const t0 = performance.now();
     this.addArms(ML);
@@ -151,19 +153,7 @@ export class Cuttlefish implements Critter {
     this.target = this.pos.clone();
   }
 
-  /**
-   * The mantle and head are one mesh (softBodies.ts): the mantle's share (aWeight) squeezes in a
-   * jet, about the head end, and the head takes its own colour.
-   */
-  private mantleHook(): ShaderHook {
-    return (shader) => {
-      Object.assign(shader.uniforms, this.u);
-      shader.vertexShader = MANTLE_VERT_HEAD + shader.vertexShader.replace('#include <begin_vertex>', MANTLE_VERT_BEGIN);
-      shader.fragmentShader = MANTLE_FRAG_HEAD + shader.fragmentShader.replace('#include <map_fragment>', MANTLE_FRAG_MAP);
-    };
-  }
-
-  /** TSL form of mantleHook(): the mantle squeeze (position) and the head/cloud/mottle/pale patch. */
+  /** TSL form of MANTLE_PATCH: the mantle squeeze (position) and the head/cloud/mottle/pale patch. */
   private mantleNodeHook(): NodeHook {
     return (t, mat) => {
       const uSqueeze = vec3Node(t, this.u.uSqueeze);
@@ -335,19 +325,21 @@ export class Cuttlefish implements Critter {
     this.strike = seconds;
   }
 
-  /** The click panel, laid out as the fish panel. */
-  inspect(): InspectPanel {
-    return this.brain.panel(this.sp, this.mode, MODE_NOTES[this.mode]);
-  }
+  protected thought(): string { return MODE_NOTES[this.mode]; }
 
-  update(dt: number, world: CritterWorld): void {
-    this.modeT -= dt;
+  /** Startle (Cephalopod.reactToThreat), the drives, then the nearest food in sight. */
+  protected sense(dt: number, world: CritterWorld): void {
     this.u.uTime.value += dt;
     this.reactToThreat(dt, world);
     this.feelDrives(dt);
-    const food = this.lookForFood(world);
-    if (this.modeT <= 0 || this.foodChanged(food)) this.decide(world, food);
-    const speed = this.speedFor(dt, food);
+    this.prey = this.lookForFood(world);
+  }
+
+  /** New food in sight calls for a decision now. */
+  protected override wantsToDecide(): boolean { return this.foodChanged(this.prey); }
+
+  protected act(dt: number, world: CritterWorld): void {
+    const speed = this.speedFor(dt, this.prey);
     const b = this.body, yaw0 = b.yaw, pitch0 = b.pitch;
     b.steer(dt, world, this.target, { turn: 0.9, speed, accel: this.mode === 'jet' ? 6 : 1.2, clearance: 0.25 * this.ML, reverse: speed < 0 });
     if (this.mode === 'rest' && this.pos.distanceTo(this.target) < 0.4) b.pitch = lerp(b.pitch, 0, dt);
@@ -359,13 +351,10 @@ export class Cuttlefish implements Critter {
   }
 
   /** Startle: jet away backwards, going pale; after a jet it stays put a while before it can startle again. */
-  private reactToThreat(dt: number, world: CritterWorld): void {
-    this.calm -= dt;
-    const threat = this.calm <= 0 && this.mode !== 'jet' ? threatNear(this, world, THREAT_RANGE) : null;
-    if (!threat) return;
+  protected jetFrom(_world: CritterWorld, from: THREE.Vector3): void {
     this.mode = 'jet'; this.modeT = JET_SECONDS; this.jet = 1; this.calm = CALM_AFTER_JET;
     this.brain.add('fear', 1);
-    this.target.copy(this.pos).addScaledVector(_v.subVectors(this.pos, threat.pos).setY(0).normalize(), JET_AWAY_DISTANCE);
+    this.target.copy(this.pos).addScaledVector(_v.subVectors(this.pos, from).setY(0).normalize(), JET_AWAY_DISTANCE);
   }
 
   /** The nearest food in sight (none during a jet). */
@@ -393,8 +382,9 @@ export class Cuttlefish implements Critter {
   }
 
   /** Score hover, cruise, rest and (with food in sight) hunt; a jet runs its course first. */
-  private decide(world: CritterWorld, food: CritterFood | null): void {
+  protected decide(world: CritterWorld): void {
     if (this.mode === 'jet' && this.modeT > 0) return;
+    const food = this.prey;
     const br = this.brain, { hunger, fatigue, fear, restless } = br.drives;
     const scores: Partial<Record<CuttlefishMode, number>> = {
       hover: 0.3 + fear * 0.6,

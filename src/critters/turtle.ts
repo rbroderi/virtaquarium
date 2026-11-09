@@ -12,9 +12,9 @@ import * as THREE from 'three';
 import { range, clamp, lerp, type Rng } from '../util.js';
 import { skin, randomTarget, Swimmer } from './shared.js';
 import { carapaceTex, scaleTex, paddle } from './turtleParts.js';
+import { CritterBase } from './base.js';
 import { CritterBrain, type DriveInfo } from './critterBrain.js';
-import type { InspectPanel } from '../inspect.js';
-import type { Critter, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
+import type { CheckVisit, CritterContext, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
 export type TurtleMode = 'cruise' | 'rest' | 'graze' | 'browse' | 'perch' | 'feed' | 'breathe';
 type TurtleDrive = 'air' | 'hunger' | 'fatigue' | 'restless';
@@ -91,15 +91,14 @@ function plastronGeometry(L: number): THREE.SphereGeometry {
   return pg;
 }
 
-export class Turtle implements Critter {
+export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
   readonly kind = 'turtle' as const;
-  readonly sp: CritterSpecies;
-  readonly radius: number;
+  readonly displayName = 'Turtle';
+  readonly checkVisits: readonly CheckVisit[] = [['cruise', [4, 0, 1]], ['graze', null], ['rest', null]];
   /** Carapace length (units). */
   readonly L: number;
   /** Click-proxy radius for the inspection overlay. */
   readonly pickRadius: number;
-  readonly model = new THREE.Group();
   readonly head = new THREE.Group();
   readonly buildMs = 0;
   // Where parts are attached (and may run into each other): critterCheck.ts.
@@ -110,7 +109,6 @@ export class Turtle implements Critter {
   mode: TurtleMode = 'cruise';
   modeT: number;
   target: THREE.Vector3;
-  private readonly rng: Rng;
   private readonly flip: Flipper[] = [];
   readonly brain: CritterBrain<TurtleDrive, TurtleMode, TurtleTrait>;
   /** Seconds between breaths (air need fills over this). */
@@ -119,10 +117,15 @@ export class Turtle implements Critter {
   private food: CritterFood | null = null;
   private perchName = '';
   private stroke = 0;
-  private t = 0;
+  /** Settled on the bottom where it was going, as of the start of this step. */
+  private settled = false;
+
+  static create(sp: CritterSpecies, { rng, world }: CritterContext): Turtle {
+    return new Turtle(sp, rng, world);
+  }
 
   constructor(sp: CritterSpecies, rng: Rng, world: CritterWorld) {
-    this.sp = sp; this.rng = rng; this.radius = sp.radius;
+    super(sp, rng);
     const L = this.L = range(rng, 1.8, 2.1);
     this.pickRadius = 0.8 * L;
     const shell = new THREE.Mesh(carapaceGeometry(L), skin({ map: carapaceTex(rng), roughness: 0.42, metalness: 0 }, 'turtle-shell'));
@@ -205,21 +208,26 @@ export class Turtle implements Critter {
     }
   }
 
-  /** The click panel, laid out as the fish panel. */
-  inspect(): InspectPanel {
-    return this.brain.panel(this.sp, this.mode, this.mode === 'perch' ? `Settled on ${this.perchName}` : MODE_NOTES[this.mode]);
+  protected thought(): string {
+    return this.mode === 'perch' ? `Settled on ${this.perchName}` : MODE_NOTES[this.mode];
   }
 
-  update(dt: number, world: CritterWorld): void {
-    this.t += dt; this.modeT -= dt;
-    const b = this.body;
-    let d = this.pos.distanceTo(this.target);
-    const settled = SETTLING.has(this.mode) && d < 0.5;
-    this.feelDrives(dt, settled);
+  /** Whether it has settled where it was going, then the drives move with that. */
+  protected sense(dt: number, _world: CritterWorld): void {
+    this.settled = SETTLING.has(this.mode) && this.pos.distanceTo(this.target) < 0.5;
+    this.feelDrives(dt, this.settled);
+  }
+
+  /** At the surface a breath ends in a fresh choice; out of air it decides at once, whatever it was doing. */
+  protected override think(world: CritterWorld): void {
     if (this.mode === 'breathe' && this.pos.y > world.bounds.y1 - SURFACE_MARGIN) { this.brain.drives.air = 0; this.decide(world, true); }
     else if (this.modeT <= 0 || (this.brain.drives.air >= 1 && this.mode !== 'breathe')) this.decide(world, false);
+  }
+
+  protected act(dt: number, world: CritterWorld): void {
+    const b = this.body, settled = this.settled;
     if (this.mode === 'feed') this.chaseFood();
-    d = this.pos.distanceTo(this.target);
+    const d = this.pos.distanceTo(this.target);
     if (this.mode === 'cruise' && d < 1) this.target = randomTarget(this.rng, world, 2, 7);
     const speed = settled ? 0 : this.mode === 'breathe' ? 0.6 : this.mode === 'feed' ? 0.5 : (this.mode === 'cruise' ? CRUISE_SPEED : 0.3) * clamp(d, 0.3, 1);
     b.steer(dt, world, this.target, { turn: 0.45, speed, accel: 0.6, clearance: this.L * 0.14, look: this.L * 1.2 });
@@ -241,7 +249,7 @@ export class Turtle implements Critter {
   }
 
   /** Score every option from the drives and take the best (sticking with the current one unless beaten). */
-  private decide(world: CritterWorld, fresh: boolean): void {
+  protected decide(world: CritterWorld, fresh = false): void {
     const br = this.brain, { air, hunger, fatigue, restless } = br.drives, reef = world.reef;
     const food = this.nearestFood(world), appetite = br.weight('appetite'), calm = br.weight('calm'), grass = br.weight('grazer');
     const scores: Partial<Record<TurtleMode, number>> = {
