@@ -82,6 +82,9 @@ export interface Body {
   /** How far the gill cover stands proud of the flank at its free margin, as a share of the half-width
    *  (0.05 when unset). Smaller: a cover that lies flush, its margin a soft edge rather than a step. */
   cover?: number;
+  /** The gill cover's rear margin in body u, where a species' head is longer behind the eye than the
+   *  default (which follows the eye). */
+  gillU?: number;
 }
 
 /** Control points [u, dy] that move the dorsal (top) and ventral (bot) outlines up or down by dy (in
@@ -102,6 +105,8 @@ export interface Eye {
   pupil?: number;
   fleck?: string;
   fleckR?: number;
+  /** A raised mound the eye sits on, standing proud of the head by this many eye radii (none when unset). */
+  boss?: number;
 }
 
 export interface Mouth { u: number; v: number; v0: number; lining?: number }

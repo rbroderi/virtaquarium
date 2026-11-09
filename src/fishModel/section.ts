@@ -54,7 +54,9 @@ export function flankZ(sp: Species, prof: Profile, u: number, v: number, cover?:
   z *= 1 - eggOf(sp)(u) * cy;                                           // egg-shaped section (sp.body.egg)
   z *= 1 + coverOf(sp) * coverAt(gillOf(sp), u, v, cover);              // gill cover overhangs the flank
   const du = (u - e.u) / (e.r * 1.6 / len), dv = (v - e.v) / (e.r * 1.6 / Math.max(h, 1e-3));
-  z *= 1 + 0.07 * Math.exp(-(du * du + dv * dv));                       // eye socket
+  const socket = Math.exp(-(du * du + dv * dv));
+  z *= 1 + 0.07 * socket;                                                // eye socket
+  if (e.boss) z += e.boss * e.r * Math.exp(-0.6 * (du * du + dv * dv));  // the eye's mound (sp.eye.boss)
   return z;
 }
 

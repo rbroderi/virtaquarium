@@ -136,8 +136,8 @@ export const COVER = 0.05;
 /** The gill cover's stand-off for this species (sp.body.cover, else COVER). */
 export const coverOf = (sp: Species): number => sp.body.cover ?? COVER;
 
-// Rear edge of the gill cover (operculum), in body u.
-export const gillU = (sp: Species): number => sp.eye.u + (0.09 / sp.body.len) + sp.eye.r * 0.6;
+// Rear edge of the gill cover (operculum), in body u: sp.body.gillU, else a fixed distance behind the eye.
+export const gillU = (sp: Species): number => sp.body.gillU ?? sp.eye.u + (0.09 / sp.body.len) + sp.eye.r * 0.6;
 
 const GILL_BOW = 0.035, GILL_TOP = -0.55, GILL_BOTTOM = 0.85;
 

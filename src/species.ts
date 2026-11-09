@@ -140,8 +140,9 @@ const DEFINITIONS: SpeciesDefinition[] = [
     anatomy: { bodyDepthSL: [0.28, 0.38], dorsalSoft: { spines: 0, rays: 11 }, anal: { spines: 3, rays: 7 }, pectoralRays: 14, pelvic: { spines: 1, rays: 5 } },
     albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
     // Proportions in SL (u runs over SL: len 0.765 TL, the caudal fin the other 0.235), from side-on photos
-    // and renders of lionfish models: eye 0.06 across, its centre 0.25 behind the snout and almost on the
-    // dorsal profile; gill margin about 0.38; supraocular tentacles about 0.2; the longest dorsal spines
+    // and renders of lionfish models: eye 0.06 across, just behind a vertical from the end of the mouth
+    // slit (its centre 0.2 behind the snout), almost on the dorsal profile and set on a small raised mound
+    // (eye.boss); gill margin about 0.38 (body.gillU, since the eye no longer sets it); supraocular tentacles about 0.2; the longest dorsal spines
     // 0.37-0.5 (1.1-1.7 body depths). mouth: the snout tip sits low; headW: a narrow, compressed face.
     // section: head-on the face is a blunt wedge, the cheeks widest and the forehead a narrow ridge
     // between the eyes (about half the cheek width).
@@ -157,7 +158,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
       section: { u0: 0, u1: 0.34, ease: 0.07, lo: -0.6, hi: 0.2, round: 0.15, sharp: 0.8 },
       widthCurve: [[0, 0], [0.08, 0.1], [0.2, 0.5], [0.32, 0.55], [0.42, 0.4], [0.52, 0.25], [0.7, 0.1], [0.9, 0]],
       egg: [[0, 0.1], [0.28, 0.2], [0.42, 0], [0.55, -0.15], [0.8, -0.1], [1, 0]],
-      cover: 0.012,
+      cover: 0.012, gillU: 0.382,
       outline: {
         top: [[0, -0.55], [0.008, -0.43], [0.016, -0.4], [0.033, -0.43], [0.05, -0.5], [0.065, -0.53], [0.098, -0.37], [0.131, -0.24], [0.163, -0.27], [0.196, -0.37],
           [0.261, -0.51], [0.327, -0.54], [0.392, -0.31], [0.458, -0.04], [0.523, 0.19], [0.588, 0.23], [0.654, 0.22], [0.719, 0.23],
@@ -166,8 +167,8 @@ const DEFINITIONS: SpeciesDefinition[] = [
           [0.261, -0.16], [0.327, -0.14], [0.392, -0.13], [0.458, -0.2], [0.523, -0.23], [0.588, -0.23], [0.654, -0.22], [0.719, -0.18],
           [0.784, -0.15], [0.85, -0.12], [0.915, -0.1], [0.961, -0.1], [1, -0.11]],
       } },
-    eye: { u: 0.25, v: -0.75, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8 },
-    mouth: { u: 0.16, v: 0.85, v0: -0.3, lining: 0.018 },   // oblique, along the jaw edge, the corner under the front of the eye
+    eye: { u: 0.2, v: -0.75, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8, boss: 1.4 },
+    mouth: { u: 0.16, v: 0.85, v0: -0.3, lining: 0.018 },   // oblique, along the jaw edge, the corner just ahead of the eye
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
       // Body bars from the opercle back: broad red-brown, narrow pale gaps, leaning back at the top and
@@ -176,28 +177,28 @@ const DEFINITIONS: SpeciesDefinition[] = [
       // Head lines at about twice the body's frequency, radiating from the eye: down and forward to the
       // lips, a broad bar straight down over the cheek, three back across the cheek to the preopercle,
       // and a few arcs over the forehead and nape.
-      { op: 'rings', u: 0.25, v: -0.75, n: 3, r0: 0.04, dr: 0.022, w: 0.01, a0: -175, a1: -25, color: '#923f22', uMax: 0.35,
+      { op: 'rings', u: 0.2, v: -0.75, n: 3, r0: 0.04, dr: 0.022, w: 0.01, a0: -175, a1: -25, color: '#923f22', uMax: 0.35,
         spokes: [[90, 0.026], 112, 128, 144, 160, 176, 50, 66], spokeR0: 0.03, spokeR1: 0.2, spokeW: 0.011 },
       { op: 'blob', u: 0.45, v: 0.75, ru: 0.4, rv: 0.4, color: '#f5ece2', soft: 0.7 },
     ],
     // Mail-cheeked fish: a bony stay runs from under the eye back across the cheek to the preopercle, a
     // ridge arches over each eye and the lacrimal bone ridges the snout ahead of it.
     ridges: [
-      { u0: 0.25, v0: -0.4, u1: 0.33, v1: -0.15, w: 0.008, h: 0.005 },   // suborbital stay
-      { u0: 0.21, v0: -0.95, u1: 0.3, v1: -0.98, w: 0.007, h: 0.005 },   // supraorbital ridge
-      { u0: 0.1, v0: -0.4, u1: 0.2, v1: -0.62, w: 0.006, h: 0.003 },   // lacrimal
+      { u0: 0.2, v0: -0.4, u1: 0.33, v1: -0.15, w: 0.008, h: 0.005 },   // suborbital stay
+      { u0: 0.16, v0: -0.95, u1: 0.25, v1: -0.98, w: 0.007, h: 0.005 },   // supraorbital ridge
+      { u0: 0.08, v0: -0.4, u1: 0.155, v1: -0.62, w: 0.006, h: 0.003 },   // lacrimal
       { u0: 0.31, v0: -0.4, u1: 0.33, v1: 0.45, w: 0.006, h: 0.003 },   // preopercle margin
     ],
     // A long, banded, leaf-like tentacle over each eye; fringed flaps hanging from the lacrimal over the
     // upper jaw and under the chin; short bony spines on the snout, over the eye, the nape and the
     // preopercle margin.
     appendages: [
-      { u: 0.255, v: -0.97, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0025, flat: 0.18, shape: 'frond', color: '#f2e8dc', stripes: '#8a3a1c', nb: 6, bend: -0.12 },
+      { u: 0.205, v: -0.97, len: 0.15, dir: [0.4, 1, 0.15], r: 0.0025, flat: 0.18, shape: 'frond', color: '#f2e8dc', stripes: '#8a3a1c', nb: 6, bend: -0.12 },
       { u: 0.13, v: 0.25, len: 0.03, dir: [0.35, -1, 0.5], r: 0.004, flat: 0.35, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 3 },
       { u: 0.04, v: 0.75, len: 0.016, dir: [0.3, -1, 0.4], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
       { u: 0.12, v: 0.85, len: 0.014, dir: [0, -1, 0.5], r: 0.003, flat: 0.4, shape: 'leaf', color: '#efe3d6', stripes: '#8a3a1c', nb: 2 },
       { u: 0.1, v: -0.6, len: 0.012, dir: [0.6, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // nasal spine
-      { u: 0.29, v: -0.98, len: 0.014, dir: [-0.4, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // supraocular spine
+      { u: 0.24, v: -0.98, len: 0.014, dir: [-0.4, 1, 0.3], r: 0.0018, color: '#f2e6d8', bend: 0 },   // supraocular spine
       { u: 0.33, v: -1.0, len: 0.016, dir: [-0.7, 1, 0.25], r: 0.002, color: '#f2e6d8', bend: 0 },   // parietal spine
       { u: 0.33, v: 0.2, len: 0.016, dir: [-1, -0.2, 0.4], r: 0.002, color: '#f2e6d8', bend: 0 },   // preopercular spines
       { u: 0.325, v: 0.5, len: 0.013, dir: [-1, -0.7, 0.4], r: 0.0018, color: '#f2e6d8', bend: 0 },
@@ -213,12 +214,12 @@ const DEFINITIONS: SpeciesDefinition[] = [
     ],
     caudal: { type: 'round', spread: 0.16, pleat: 3, fill: '#efe2d4', alpha: 0.35, spots: '#1a1410', spotR: 0.003, spotN: 220 },
     // Fans of 14 broad, banded strap rays, tapering, then widening a little into a rounded, leaf-like lance
-    // end, with webbing out to about 0.6 of each strap and shallow pleats: the upper ones about 0.7-0.85
-    // TL, the lowest about 0.35, each a little longer or shorter than its neighbours. Held out like wings
+    // end, with webbing out to about 0.6 of each strap and shallow pleats: the upper ones about 0.5-0.6
+    // TL, the lowest about 0.25, each a little longer or shorter than its neighbours. Held out like wings
     // turned toward the side view: the top ray swept back and about 24 deg up, the lowest drooping about
     // 51 deg. A shallow cone (the middle rays leaning out) keeps a fan from reading as a comb of
     // separate straps when seen nearly edge-on.
-    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.85, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.05, flagTip: 0.6, flagPoint: 0.07, flagSwell: 0.35, rayJitter: 0.09, web: 0.62, pleat: 0.4, cone: 0.35,
+    pectoral: { kind: 'fan', u: 0.42, v: 0.15, len: 0.595, w: 0.3, fill: '#efe2d4', alpha: 0.6, stripes: '#8a3a1c', rayColor: '#f2e6d8', rayR: 0.0045, flag: 0.05, flagTip: 0.6, flagPoint: 0.07, flagSwell: 0.35, rayJitter: 0.09, web: 0.62, pleat: 0.4, cone: 0.35,
       rayLen: [[0, 0.86], [0.3, 1], [0.55, 0.86], [0.8, 0.6], [1, 0.42]], pose: { roll: 0.6, yaw: 0.35, flap: 0.1 },
       spots: '#20140c', spotR: 0.004, spotN: 50 },
     pelvic: { u: 0.41, len: 0.24, angle: 50, base: 0.03, splay: 0.4, fill: '#3a2a24', alpha: 0.85, spots: '#7d9ad6', spotR: 0.004, spotN: 50 },
