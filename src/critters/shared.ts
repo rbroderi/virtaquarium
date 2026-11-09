@@ -149,6 +149,10 @@ const AVOID_TURN = 1.2;
 export const AVOID_EASE = 1.2;
 /** ...but never below this share. */
 export const MIN_EASED = 0.4;
+/** Yielding, something this far into its path (dot with its heading) stops it fully. */
+const YIELD_PATH = 0.5;
+/** Yielding, it slows at this rate (per s), not its swimming acceleration. */
+const YIELD_BRAKE = 4;
 const _away = new THREE.Vector3();
 
 const _v = new THREE.Vector3();
@@ -189,8 +193,11 @@ export class Swimmer {
     const inPath = u > 0 ? Math.max(0, -this.dir.dot(_away) * s) : 0;
     if (u > 0) _v.addScaledVector(_away, u * AVOID_TURN * (1 + inPath) * Math.max(_v.length(), 1));
     // Yielding (in no hurry: settling onto a spot), it heeds them fully and stops for them altogether.
+    // Something even half in its path stops it, and it brakes at once rather than coasting in.
     const ease = yieldTo ? Math.min(1, u / MIN_HEED) : u;
-    const eased = speed * Math.max(yieldTo ? 0 : MIN_EASED, 1 - AVOID_EASE * ease * inPath);
+    const blocked = yieldTo ? Math.min(1, inPath / YIELD_PATH) : inPath;
+    const eased = speed * Math.max(yieldTo ? 0 : MIN_EASED, 1 - AVOID_EASE * ease * blocked);
+    if (yieldTo && eased < this.speed) accel = Math.max(accel, YIELD_BRAKE);
     const flat = Math.hypot(_v.x, _v.z);
     let yawT = Math.atan2(_v.z, _v.x);
     if (reverse) yawT = wrapAngle(yawT + Math.PI);   // back towards the target (cuttlefish swim backwards)

@@ -30,7 +30,7 @@ const SPOT_TRIES = 30;
 const DEN_CLEAR = 1.5;
 /** Told this urgently to move off something while settling, its spot slides away at ROOM_SPEED (per s, at full urgency). */
 const ROOM_URGENCY = 0.2, ROOM_SPEED = 0.8;
-const _room = new THREE.Vector3();
+const _room = new THREE.Vector3(), _one = new THREE.Vector3();
 const SAND_HEIGHT = 0.25;     // rest where the reef is lower than this ...
 const ROCK_HEIGHT = 0.8;      // ... graze where it is higher than this
 
@@ -381,7 +381,15 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
    * from it across the floor, so the turtle settles beside it rather than creeping in on top of it.
    */
   private giveRoom(dt: number, world: CritterWorld): void {
-    const u = this.inbox.read(_room);
+    // Only other critters move the spot: fish brushing past get out of the way themselves, and
+    // shuffling for them would walk the turtle into the shoal.
+    _room.set(0, 0, 0);
+    let u = 0;
+    for (const c of world.critters) {
+      if (c === this) continue;
+      const got = this.inbox.awayFrom(c, _one);
+      if (got > 0) { _room.addScaledVector(_one, got); u = Math.max(u, got); }
+    }
     if (u < ROOM_URGENCY) return;
     _room.y = 0;
     if (_room.lengthSq() < 1e-6) return;

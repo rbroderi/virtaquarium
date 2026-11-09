@@ -45,6 +45,14 @@ export class ContactInbox {
   /** How urgent the message from `sender` is now (0 when there is none); for the checks. */
   urgencyFrom(sender: object): number { return this.from.get(sender)?.urgency ?? 0; }
 
+  /** The message from `sender`: away from it into `out` (zero when there is none), and its urgency. */
+  awayFrom(sender: object, out: THREE.Vector3): number {
+    const m = this.from.get(sender);
+    if (!m) { out.set(0, 0, 0); return 0; }
+    out.copy(m.away);
+    return m.urgency;
+  }
+
   /**
    * Which way to turn, into `out` (unit, or zero), and how urgently (0..1): every sender but `ignore`
    * (the one it is chasing), scaled by `heed`. Pressed from both sides, the turns cancel.
