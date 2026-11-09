@@ -9,10 +9,11 @@
 // hunger (it grazes the turtle grass, browses algae off the rock, and goes for food in the water),
 // fatigue (it settles on a sponge or the sand) and restlessness (it gets up and cruises the tank).
 import * as THREE from 'three';
-import { range, clamp, lerp, type Rng } from '../util.js';
+import { range, clamp, lerp, mulberry32, Noise, type Rng } from '../util.js';
 import { skin, randomTarget, Swimmer } from './shared.js';
-import { carapaceTex, scaleTex, paddle } from './turtleParts.js';
+import { carapaceTex, scaleTex, paddle, scuteAt } from './turtleParts.js';
 import { CritterBase } from './base.js';
+import type { ContactInbox } from '../world/contactInbox.js';
 import { CritterBrain, type DriveInfo } from './critterBrain.js';
 import type { CheckVisit, CritterContext, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
@@ -65,26 +66,81 @@ const MODE_NOTES: Readonly<Record<Exclude<TurtleMode, 'perch'>, string>> = {
 /** A shell half: a half-ellipsoid with a slightly pointed tail end and a broader front. */
 const taperAt = (x: number): number => (x < 0 ? 1 - 0.12 * x * x : 1);
 
-function carapaceGeometry(L: number): THREE.SphereGeometry {
+/** Shell segments round and from the top down: fine enough for the rim's serrations and the scute seams. */
+const SHELL_ROUND = 160, SHELL_DOWN = 48;
+const SHELL_SEED = 0x5e11;
+/** The rim's slow wander: harmonics round the shell and the largest share of the radius each moves it. */
+const RIM_HARMONICS = [2, 3, 4, 5, 7] as const, RIM_WANDER = 0.014;
+/** Serrated rear margin (a share of the radius), notched at the seams between marginal scutes. */
+const RIM_SERRATION = 0.014;
+/** Relief as a share of the unit dome: each scute bulges a little and its seams sink; slow lumps. */
+const SCUTE_BULGE = 0.014, SEAM_GROOVE = 0.012, SCUTE_JITTER = 0.008, LUMPS = 0.012, KEEL = 0.025;
+
+/**
+ * No shell is a perfect ellipsoid: the rim wanders and is serrated behind, the dome stands a little
+ * higher or lower and leans to one side, a faint keel runs down the vertebrals, and each scute is a
+ * slightly raised plate (some more than others) with shallow seams between. Drawn from a stream of its
+ * own, seeded from the carapace length, so the turtle's rng draws are unchanged.
+ */
+interface ShellShape {
+  /** Rim radius factor at angle phi round the shell (shared by the carapace and the plastron). */
+  readonly rim: (phi: number) => number;
+  /** Outward relief of the unit dome at (x, y, z), planform uv (u, v). */
+  readonly relief: (x: number, y: number, z: number, u: number, v: number) => number;
+  readonly height: number;
+  readonly lean: number;
+}
+function shellShape(L: number): ShellShape {
+  const vary = mulberry32(Math.round(L * 1e6) ^ SHELL_SEED), noise = new Noise(vary);
+  const waves = RIM_HARMONICS.map((k) => ({ k, a: (RIM_WANDER * range(vary, 0.3, 1)) / Math.sqrt(k), p: vary() * Math.PI * 2 }));
+  const plate = Array.from({ length: 64 }, () => range(vary, -1, 1) * SCUTE_JITTER);
+  const height = range(vary, 0.93, 1.06), lean = range(vary, -0.04, 0.04), keel = KEEL * range(vary, 0.5, 1.2);
+  const ox = vary() * 50, oz = vary() * 50;
+  return {
+    height, lean,
+    rim: (phi) => {
+      let f = 1;
+      const x = Math.cos(phi), z = Math.sin(phi);
+      for (const w of waves) f += w.a * Math.sin(w.k * phi + w.p);
+      // the marginals' rear tips stand out; their seams notch in
+      const rear = clamp((-x - 0.25) / 0.5, 0, 1), { b1, b2 } = scuteAt(0.5 + x * 0.5, 0.5 + z * 0.5);
+      return f - RIM_SERRATION * rear * (1 - clamp((b2 - b1) * 6, 0, 1));
+    },
+    relief: (x, y, z, u, v) => {
+      const { i, b1, b2 } = scuteAt(u, v), seam = clamp((b2 - b1) * 7, 0, 1);
+      const r = (SCUTE_BULGE * clamp(1 - b1, 0, 1) + (plate[i] ?? 0)) * seam - SEAM_GROOVE * (1 - seam)
+        + LUMPS * (noise.noise3(x * 2.5 + ox, y * 2.5, z * 2.5 + oz) - 0.5) * 2
+        + keel * Math.exp(-((z / 0.1) ** 2)) * clamp(x + 0.9, 0, 1);
+      return r * clamp(y / 0.25, 0, 1);   // nothing at the rim, which the plastron shares
+    },
+  };
+}
+
+function carapaceGeometry(L: number, S: ShellShape): THREE.SphereGeometry {
   // Carapace: an upper half-ellipsoid. Mapped by angle from the top of the dome (not flat from above),
   // so the costal scutes reach down the steep sides and the marginals stay a narrow rim.
-  const cg = new THREE.SphereGeometry(1, 56, 28, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cg = new THREE.SphereGeometry(1, SHELL_ROUND, SHELL_DOWN, 0, Math.PI * 2, 0, Math.PI / 2);
   const cp = cg.getAttribute('position'), cuv = cg.getAttribute('uv');
   for (let i = 0; i < cp.count; i++) {
-    const x = cp.getX(i), y = cp.getY(i), z = cp.getZ(i);
-    cp.setXYZ(i, x * L * 0.5, Math.pow(y, 0.85) * L * 0.24 * (1 + 0.12 * x), z * L * 0.4 * taperAt(x));   // domed highest over the front third (bourjon_immature.jpg)
-    const rr = (Math.acos(clamp(y, -1, 1)) / (Math.PI / 2)) * 0.5, hz = Math.hypot(x, z) || 1;
-    cuv.setXY(i, 0.5 + (x / hz) * rr, 0.5 + (z / hz) * rr);
+    const x0 = cp.getX(i), y0 = cp.getY(i), z0 = cp.getZ(i);
+    const rr = (Math.acos(clamp(y0, -1, 1)) / (Math.PI / 2)) * 0.5, hz = Math.hypot(x0, z0) || 1;
+    const u = 0.5 + (x0 / hz) * rr, v = 0.5 + (z0 / hz) * rr;
+    cuv.setXY(i, u, v);
+    const k = 1 + S.relief(x0, y0, z0, u, v), f = S.rim(Math.atan2(z0, x0));
+    const x = x0 * k * f, y = y0 * k, z = z0 * k * f;
+    const h = Math.pow(Math.max(0, y), 0.85) * L * 0.24 * (1 + 0.12 * x) * S.height * (1 + S.lean * z);   // domed highest over the front third (bourjon_immature.jpg)
+    cp.setXYZ(i, x * L * 0.5, h, z * L * 0.4 * taperAt(x));
   }
   cg.computeVertexNormals();
   return cg;
 }
 
-function plastronGeometry(L: number): THREE.SphereGeometry {
+function plastronGeometry(L: number, S: ShellShape): THREE.SphereGeometry {
   // Plastron: a shallow lower dome on the carapace's own rim, closing the shell.
-  const pg = new THREE.SphereGeometry(1, 56, 10, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), pp = pg.getAttribute('position');
+  const pg = new THREE.SphereGeometry(1, SHELL_ROUND, 10, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), pp = pg.getAttribute('position');
   for (let i = 0; i < pp.count; i++) {
-    const x = pp.getX(i), y = pp.getY(i), z = pp.getZ(i);
+    const x0 = pp.getX(i), y = pp.getY(i), z0 = pp.getZ(i), f = S.rim(Math.atan2(z0, x0));
+    const x = x0 * f, z = z0 * f;
     pp.setXYZ(i, x * L * 0.5, y * L * 0.05, z * L * 0.4 * taperAt(x));
   }
   pg.computeVertexNormals();
@@ -102,9 +158,11 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
   readonly head = new THREE.Group();
   readonly buildMs = 0;
   // Where parts are attached (and may run into each other): critterCheck.ts.
+  readonly hullParts: readonly string[] = ['shell', 'plastron', 'head', 'flipper0', 'flipper1', 'rearflipper0', 'rearflipper1'];
   readonly joins: readonly JoinRule[] = [['shell', 'plastron'], ['head', 'neck'], ['eye*', 'head'], ['neck', 'collar'], ['neck', 'shell'], ['neck', 'plastron'], ['collar', 'shell'], ['collar', 'plastron'],
     ['shoulder*', 'shell'], ['shoulder*', 'plastron'], ['shoulder*', 'collar'], ['flipper*', 'shoulder*'], ['hip*', 'shell'], ['hip*', 'plastron'], ['rearflipper*', 'hip*']];
   readonly body: Swimmer;
+  get inbox(): ContactInbox { return this.body.inbox; }
   readonly pos: THREE.Vector3;
   mode: TurtleMode = 'cruise';
   modeT: number;
@@ -128,9 +186,10 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
     super(sp, rng);
     const L = this.L = range(rng, 1.8, 2.1);
     this.pickRadius = 0.8 * L;
-    const shell = new THREE.Mesh(carapaceGeometry(L), skin({ map: carapaceTex(rng), roughness: 0.42, metalness: 0 }, 'turtle-shell'));
+    const shape = shellShape(L);
+    const shell = new THREE.Mesh(carapaceGeometry(L, shape), skin({ map: carapaceTex(rng), roughness: 0.42, metalness: 0 }, 'turtle-shell'));
     shell.castShadow = true;
-    const plast = new THREE.Mesh(plastronGeometry(L), skin({ color: 0xe8d8a8, roughness: 0.6 }, 'turtle-plastron'));
+    const plast = new THREE.Mesh(plastronGeometry(L, shape), skin({ color: 0xe8d8a8, roughness: 0.6 }, 'turtle-plastron'));
     shell.name = 'shell'; plast.name = 'plastron';
     this.model.add(shell, plast);
     const fleshMat = skin({ map: scaleTex(rng), roughness: 0.55 }, 'turtle-flesh');
@@ -230,7 +289,7 @@ export class Turtle extends CritterBase<TurtleMode, TurtleDrive, TurtleTrait> {
     const d = this.pos.distanceTo(this.target);
     if (this.mode === 'cruise' && d < 1) this.target = randomTarget(this.rng, world, 2, 7);
     const speed = settled ? 0 : this.mode === 'breathe' ? 0.6 : this.mode === 'feed' ? 0.5 : (this.mode === 'cruise' ? CRUISE_SPEED : 0.3) * clamp(d, 0.3, 1);
-    b.steer(dt, world, this.target, { turn: 0.45, speed, accel: 0.6, clearance: this.L * 0.14, look: this.L * 1.2 });
+    b.steer(dt, world, this.target, { turn: 0.45, speed, accel: 0.6, clearance: this.L * 0.14, look: this.L * 1.2, chase: this.mode === 'feed' });
     if (settled) { b.pitch = lerp(b.pitch, 0, dt); b.roll = lerp(b.roll, 0, dt); }
     this.stroke += dt * STROKE_HZ * Math.PI * 2 * (settled ? 0 : clamp(Math.abs(b.speed) / CRUISE_SPEED, 0.25, 1.2));
     this.beatFlippers(settled);

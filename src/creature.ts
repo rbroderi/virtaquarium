@@ -22,9 +22,9 @@ export interface CreatureSpecies {
 }
 
 /**
- * When a creature moves in the World's step. 'bodies' (the fish): before the body separation pass,
- * which then pushes overlapping bodies apart, and drawn after it. 'free' (jellies, critters): after
- * the bodies and the fan worms, which react to where the critters were.
+ * When a creature moves in the World's step. 'bodies' (the fish): first. 'free' (jellies, critters):
+ * next, then kept off the eel and each other. Then the body separation pushes the fish apart and off
+ * the critters, the fish are drawn, and the fan worms react to the critters.
  */
 export type StepPhase = 'bodies' | 'free';
 

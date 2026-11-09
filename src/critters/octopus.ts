@@ -12,7 +12,8 @@ import { OCTO_SAC } from '../softBodies.js';
 import { skin, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, softBodyHook, type ShaderHook, type NodeHook, type SoftBodyPatch } from './shared.js';
 import { boundMaterialColor, gpuActive } from '../webgpu/tsl.js';
 import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
-import { ArmUntangler, type ArmObstacle } from './armUntangle.js';
+import { ArmUntangler, ROOT_POINTS, type ArmObstacle } from './armUntangle.js';
+import { ContactInbox, CHASE_HEED } from '../world/contactInbox.js';
 import { Cephalopod } from './base.js';
 import { CritterBrain, type DriveInfo } from './critterBrain.js';
 import type { CheckVisit, CritterCave, CritterContext, CritterFood, CritterSpecies, CritterWorld, JoinRule, OctopusDen } from './types.js';
@@ -93,7 +94,11 @@ const BODY_PATCH: SoftBodyPatch = {
         diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.55, 0.5), uShade);`,
 };
 
-const _v = new THREE.Vector3(), _w = new THREE.Vector3();
+const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _away = new THREE.Vector3();
+/** Within this of its den spot, it is in its den. */
+const DEN_REACHED = 0.4;
+/** How far the avoidance reflex bends the crawl (target distances, at full urgency). */
+const AVOID_TURN = 1.2;
 
 function pointOf(arm: ArmTube, i: number): THREE.Vector3 {
   const p = arm.pts[i];
@@ -116,6 +121,14 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
   readonly web: THREE.Mesh;
   readonly buildMs: number;
   // Where parts are attached (and may run into each other): critterCheck.ts.
+  readonly hullParts: readonly string[] = ['body'];
+  /** The arms for collisions: their points, and half-width at each. */
+  readonly limbChains: readonly { readonly pts: readonly THREE.Vector3[]; radiusAt(i: number): number; readonly firstLink: number }[];
+  /** Other bodies the arms keep clear of (spheres, world), set by the body separation after each step. */
+  private readonly outsideW: { c: THREE.Vector3; r: number }[] = [];
+  /** The same as obstacles in the model's frame, for the untangler. */
+  private readonly outside: ArmObstacle[] = [];
+  private readonly outsidePool: THREE.Object3D[] = [];
   readonly joins: readonly JoinRule[] = [['eye*', 'body'], ['arm*', 'body'], ['web', 'arm*'], ['web', 'body'], ['suckers', '*']];
   readonly den: THREE.Vector3;
   readonly cave: CritterCave | null;
@@ -124,6 +137,10 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
   private readonly prevPos = new THREE.Vector3();
   yaw: number;
   mode: OctopusMode = 'den';
+  /** The avoidance reflex's messages (world/contactInbox.ts). */
+  readonly inbox = new ContactInbox();
+  /** Settled in its den: the others give way to it (world/separation.ts). */
+  inDen = false;
   modeT: number;
   target: THREE.Vector3;
   /** Speed over the ground from the last step (units/s). */
@@ -178,6 +195,8 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
     // The obstacles are spheres in their own frames (the sac's stretched): the turrets (stand-ins),
     // the eyes, and the siphon's tube, in two balls along it.
     this.obstacles = [{ object: this.sac, radius: OBSTACLE_SAC_RADIUS }, ...eyeParts, ...this.siphonBalls.map((o) => ({ object: o, radius: SIPHON_BALL_RADIUS * M }))];
+    // (the root, merged into the body, is the body's)
+    this.limbChains = this.arms.map((a) => ({ pts: a.pts, radiusAt: (i: number) => a.rAt(i / (a.n - 1)) * ARM_W, firstLink: ROOT_POINTS }));
 
     this.den = den.pos.clone();
     this.pos = this.den.clone();
@@ -346,13 +365,33 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
     this.model.updateMatrixWorld(true);
     this.worldToLocal.copy(this.model.matrixWorld).invert();
     this.poseArms(dt, world, ceil);
-    this.untangler.solve(this.arms, this.obstacles, this.disc, this.M);
+    this.untangler.solve(this.arms, this.outsideObstacles(), this.disc, this.M);
     for (const arm of this.arms) {
       // tow on from where they settled, so the next frame starts nearly untangled
       for (let i = 1; i < arm.n; i++) arm.prevW[i - 1]?.copy(pointOf(arm, i)).applyMatrix4(this.model.matrixWorld);
       arm.build(this.down);
     }
     this.buildWeb();
+  }
+
+  keepLimbsOff(spheres: readonly { readonly c: THREE.Vector3; readonly r: number }[]): void {
+    this.outsideW.length = 0;
+    for (const s of spheres) this.outsideW.push({ c: s.c.clone(), r: s.r });
+  }
+
+  /** Its own obstacles, and the other bodies near it brought into the model's frame (stand-ins). */
+  private outsideObstacles(): readonly ArmObstacle[] {
+    if (!this.outsideW.length) return this.obstacles;
+    const scale = this.model.scale.x || 1;
+    this.outside.length = 0;
+    this.outsideW.forEach(({ c, r }, i) => {
+      let o = this.outsidePool[i];
+      if (!o) { o = new THREE.Object3D(); this.outsidePool.push(o); }
+      o.position.copy(c).applyMatrix4(this.worldToLocal);
+      o.updateMatrix();
+      this.outside.push({ object: o, radius: r / scale });
+    });
+    return this.obstacles.concat(this.outside);
   }
 
   /** Out foraging it tires and feeds a little on what it finds; in the den it rests and gets restless. */
@@ -410,12 +449,17 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
       const yawT = Math.atan2(-this.jetDir.z, -this.jetDir.x);
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 6);
       this.jet = Math.max(0, this.jet - dt * 0.7);
+      this.inDen = false;
       return;
     }
     _v.subVectors(this.target, this.pos).setY(0);
     const d = _v.length();
     const speed = this.mode === 'pounce' ? POUNCE_SPEED : this.mode === 'den' && d < 0.2 ? 0 : CRAWL_SPEED;
+    this.inDen = this.mode === 'den' && d < DEN_REACHED;
     if (d > 0.05) {
+      // The avoidance reflex bends the crawl off whatever it is touching or about to (a pounce, less).
+      const u = this.inbox.read(_away, null, this.mode === 'pounce' ? CHASE_HEED : 1);
+      if (u > 0) _v.addScaledVector(_away.setY(0), u * AVOID_TURN * Math.max(d, 1));
       const yawT = Math.atan2(_v.z, _v.x);
       this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(yawT - this.yaw), -1, 1) * dt * 0.8);
       this.pos.addScaledVector(_v.normalize(), Math.min(d, speed * dt));

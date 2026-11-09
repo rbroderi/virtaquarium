@@ -108,9 +108,19 @@ export interface Critter extends Creature<CritterWorld> {
   readonly checkVisits: readonly CheckVisit[];
   readonly sp: CritterSpecies;
   readonly radius: number;
+  /** Its bulk against a fish's (Fish.mass, length cubed): its length taken as twice its radius. */
+  readonly mass: number;
   readonly model: THREE.Group;
   /** Attachments the shape check allows to touch. */
   readonly joins: readonly JoinRule[];
+  /** Its solid parts by mesh name: other bodies are kept out of these (world/partHull.ts). */
+  readonly hullParts: readonly string[];
+  /** Of those, the parts whose vertices it rewrites each frame (their box is refitted). */
+  readonly liveHullParts?: readonly string[];
+  /** Limbs as point chains in the model's frame (an octopus's arms): they bend round other bodies. */
+  readonly limbChains?: readonly { readonly pts: readonly THREE.Vector3[]; radiusAt(i: number): number; readonly firstLink?: number; readonly bends?: boolean }[];
+  /** Spheres (world) its limb chains keep clear of next step: the eel, other critters. */
+  keepLimbsOff?(spheres: readonly { readonly c: THREE.Vector3; readonly r: number }[]): void;
   /** Time spent building the animated parts (ms). */
   readonly buildMs: number;
   /** Current behaviour (the shape check forces each in turn), its time left and goal. */

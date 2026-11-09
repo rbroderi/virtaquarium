@@ -20,7 +20,7 @@ export interface ArmObstacle {
 
 const GRID = 32;                 // cells to a side about the body
 const PASSES = 6;
-const ROOT_POINTS = 4;           // an arm's first few points can be root (merged in the disc)
+export const ROOT_POINTS = 4;           // an arm's first few points can be root (merged in the disc)
 const FIRST_DISC_CHECKED = 5;    // points from here on keep outside the disc's rim
 const GAP_PER_MANTLE = 0.01;     // clearance kept between surfaces, per unit mantle scale
 

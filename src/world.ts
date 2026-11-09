@@ -10,6 +10,7 @@ import type { Anemone, CaveRoof, TankScene } from './reef/types.js';
 import type { FanWormWorld } from './fanWorms.js';
 import type { SwimWorld } from './world/ports.js';
 import { BodySeparation } from './world/separation.js';
+import type { Solid } from './world/partHull.js';
 import type { Food, Station, TankBounds, Viewer } from './world/types.js';
 
 export type { Food, Station, TankBounds, Viewer, WorldCritter, Threat } from './world/types.js';
@@ -66,6 +67,8 @@ export class World implements SwimWorld, JellyWorld, CritterWorld, FanWormWorld 
   /** Cuttlefish, octopus, turtle (critters.ts). */
   readonly critters: Critter[] = [];
   readonly jellies: Jelly[] = [];
+  /** The critters and jellies: the bodies the separation keeps others out of (world/separation.ts). */
+  readonly solids: Solid[] = [];
   readonly food: Food[] = [];
   light = 1;
   time = 0;
@@ -174,8 +177,8 @@ export class World implements SwimWorld, JellyWorld, CritterWorld, FanWormWorld 
     if (c.kind === 'fish') {
       this.fish.push(c);
       this.speciesById.set(c.sp.id, c.sp);
-    } else if (c.kind === 'jelly') this.jellies.push(c);
-    else this.critters.push(c);
+    } else if (c.kind === 'jelly') { this.jellies.push(c); this.solids.push(c); }
+    else { this.critters.push(c); this.solids.push(c); }
     this.scene.add(c.model);
   }
 
@@ -232,13 +235,15 @@ export class World implements SwimWorld, JellyWorld, CritterWorld, FanWormWorld 
     for (const g of this.goals.values()) g.t -= dt;
     this.updateFood(dt);
     this.drawFood();
-    // The bodies (fish) move, are pushed apart where they overlap, then drawn; the fan worms react to
-    // the critters where they were; then the free swimmers (critters, jellies) move.
+    // The bodies (fish) move; the free swimmers (critters, jellies) move and are kept off the eel and
+    // each other; then the fish are pushed apart, and off the critters where they now are (the critters
+    // giving way by mass), and drawn; the fan worms react to the critters.
     for (const c of this.creatures) if (c.stepPhase === 'bodies') c.update(dt, this);
-    if (SEPARATE) this.separation.step(this.fish, dt, this);
+    for (const c of this.creatures) if (c.stepPhase === 'free') c.update(dt, this);
+    if (SEPARATE) this.separation.stepCritters(this.solids, this.fish, dt, this);
+    if (SEPARATE) this.separation.step(this.fish, dt, this, this.solids);
     for (const f of this.fish) f.present(dt);
     this.reef.fanWorms?.update(dt, this);
-    for (const c of this.creatures) if (c.stepPhase === 'free') c.update(dt, this);
   }
 
   /** Food sinks with a gentle flutter, settles on rock or sand, then dissolves. */

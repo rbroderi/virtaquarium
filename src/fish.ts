@@ -32,6 +32,7 @@ import type { SwimUniforms } from './fishModel/swimShader.js';
 import { SpineChain, spineClearance, type SpineBody } from './fish/spineChain.js';
 import { spring, springState, smoothstep, type SpringState } from './fish/spring.js';
 import { bodyDims, radiusToward, type BodyDims } from './fish/bodyShape.js';
+import { ContactInbox } from './world/contactInbox.js';
 
 export type { SwimUniforms } from './fishModel/swimShader.js';
 
@@ -150,6 +151,8 @@ export class Fish extends CreatureBase<SwimWorld> implements SpineBody {
   erect: number | undefined = undefined;
   readonly spine: SpineChain | null;
   readonly brain: Brain;
+  /** The avoidance reflex's messages: the critters, jellies and eel it is touching or about to. */
+  readonly inbox = new ContactInbox();
 
   // Secondary motion springs: body bend (front, and the tail behind it), tail amplitude, median fin
   // fold, caudal cup; each pectoral gets its own (opening, stroke roll).
@@ -201,6 +204,9 @@ export class Fish extends CreatureBase<SwimWorld> implements SpineBody {
     if (this.spine) this.model.traverse((o) => { o.frustumCulled = false; });
     this.brain = new Brain(this, rng);
   }
+
+  /** In its den (the eel lurking in its crevice, a fish in its shelter): the others give way to it. */
+  get inDen(): boolean { return this.brain.mode === 'lurk' || this.brain.sheltered !== null; }
 
   get mass(): number {
     return this.size ** 3;

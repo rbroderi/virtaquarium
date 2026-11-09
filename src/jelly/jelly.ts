@@ -12,6 +12,7 @@ import type { JellyBounds, JellySpecies, JellyWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
 import { fmtMetres, fmtSeconds, fmtSpeed, type InspectPanel } from '../inspect.js';
 import { CreatureBase } from '../creature.js';
+import { ContactInbox } from '../world/contactInbox.js';
 
 /** How fast a jelly may be eased back inside the tank beyond its own drift (units/s). */
 const JELLY_CRAWL = 0.05;
@@ -34,6 +35,14 @@ const SINK_RATE = 0.42;              // units/s^2
 const DRAG_RATE = 3.5;
 const BUMP_RANGE = 1.15;             // bells nearer than this many summed radii push apart
 const BUMP_STRENGTH = 0.6;
+/** How hard a jelly tilts away from another it is touching or about to (against its wander, length 1). */
+const JELLY_AVOID = 2;
+/** The oral arms for collisions: their length (bell radii, as the arm shader draws them), the points
+ *  along them (a share of the length: from just under the bell), and the bundle's radius there (bell
+ *  radii, as base + slope * share: the four arms spread as they hang). */
+const ARM_LENGTH = 1.3;
+const ARM_CHAIN_S = [0.15, 0.45, 0.75, 1] as const;
+const ARM_BUNDLE_R = [0.15, 0.2] as const;
 const RIGHTING_RATE = 0.25;
 /** Heading tilt from vertical (radians) a wander picks: from nearly upright to well over on its side. */
 const WANDER_TILT: readonly [number, number] = [0.4, 1.45];
@@ -69,6 +78,13 @@ export class Jelly extends CreatureBase<JellyWorld> {
   readonly pos: THREE.Vector3;
   readonly vel = new THREE.Vector3();
   readonly axis: THREE.Vector3;
+  /** The avoidance reflex's messages (world/contactInbox.ts): the bell tilts away and pulses clear. */
+  readonly inbox = new ContactInbox();
+  private readonly _away = new THREE.Vector3();
+  /** Its solid body (world/partHull.ts): the bell, and the oral arms hanging under it as one soft chain. */
+  readonly hullParts: readonly string[] = ['bell'];
+  readonly limbChains: readonly { readonly pts: readonly THREE.Vector3[]; radiusAt(i: number): number; readonly bends: boolean }[];
+  private readonly armPts = ARM_CHAIN_S.map(() => new THREE.Vector3());
   private readonly rng: Rng;
   private readonly u: JellyUniforms;
   private readonly prefY: number;
@@ -112,6 +128,7 @@ export class Jelly extends CreatureBase<JellyWorld> {
       ? g.arms.map((a) => new THREE.Mesh(a, gpuMats.arms))
       : g.arms.map((a) => new THREE.Mesh(a, mat(ARM_VERT, ARM_FRAG)));
     this.inner.scale.setScalar(this.R);
+    bell.name = 'bell'; sub.name = 'subumbrella';
     this.inner.add(bell, sub, tent, ...arms);
     this.model.add(this.inner);
     for (const m of [bell, sub, tent, ...arms]) m.frustumCulled = false;
@@ -123,6 +140,18 @@ export class Jelly extends CreatureBase<JellyWorld> {
     this.axis = new THREE.Vector3(range(rng, -0.4, 0.4), 1, range(rng, -0.4, 0.4)).normalize();
     this.hz = range(rng, PULSE_HZ_RANGE[0], PULSE_HZ_RANGE[1]) * (PULSE_HZ_SCALE / Math.sqrt(this.R / PULSE_HZ_REFERENCE_RADIUS));   // bigger bells pulse slower
     this.phase = rng();
+    const R = this.R;
+    this.limbChains = [{ pts: this.armPts, radiusAt: (i: number) => R * (ARM_BUNDLE_R[0] + ARM_BUNDLE_R[1] * (ARM_CHAIN_S[i] ?? 1)), bends: false }];
+    this.placeArms();
+  }
+
+  /** Mass by the fish's measure (length cubed), its length taken as the bell's width. */
+  get mass(): number { return (2 * this.R) ** 3; }
+
+  /** The oral arms' chain, as the arm shader hangs them: down from under the bell, swung by the trail. */
+  private placeArms(): void {
+    const tr = this.u.uTrail.value, R = this.R;
+    ARM_CHAIN_S.forEach((s, i) => this.armPts[i]?.set(0, -ARM_LENGTH * s, 0).addScaledVector(tr, ARM_LENGTH * s * s).multiplyScalar(R));
   }
 
   /** The click panel: its real pulse, drift, favoured level and home column. */
@@ -181,6 +210,7 @@ export class Jelly extends CreatureBase<JellyWorld> {
     this.model.quaternion.copy(this._q.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, this.axis));
     this.u.uPulse.value = c;
     this.trail(dt);
+    this.placeArms();
     this.u.uTime.value += dt;
     this.u.uLight.value = NIGHT_GLOW + (1 - NIGHT_GLOW) * world.light;
   }
@@ -237,6 +267,8 @@ export class Jelly extends CreatureBase<JellyWorld> {
     if (this.pos.z > B.z1 - mz) want.z -= 1.5;
     if (this.pos.y > B.y1 - TOP_MARGIN) want.y -= 2.5;   // near the top: tip over and drift back down
     if (this.pos.y < LOW_Y) want.y += 1.5;
+    const u = this.inbox.read(this._away);
+    if (u > 0) want.addScaledVector(this._away, u * JELLY_AVOID);
     this.axis.lerp(want.normalize(), Math.min(1, dt * RIGHTING_RATE)).normalize();
     this.pos.x = clamp(this.pos.x, B.x0, B.x1);
     this.pos.y = clamp(this.pos.y, MIN_Y, B.y1);

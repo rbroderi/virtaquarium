@@ -6,6 +6,52 @@ import { canvasTexture } from './shared.js';
 import { organicPass, type OrganicOptions } from '../core/organic.js';
 
 const FULL_CIRCLE = 7;   // > 2 PI: canvas arcs drawn as whole discs
+
+/** Mantle irregularity (mantle lengths): slow lumps, one flank fuller, a low ridge over the cuttlebone,
+ * the tail tip off the midline. Kept inside the fin skirt's buried root (about 0.02). */
+const BODY_LUMPS = 0.007, BODY_LUMP_FREQ = 4.5, BODY_FLANK = 0.005, BODY_CREST = 0.006, BODY_TAIL_SWAY = 0.025;
+
+/** How far the mantle's tail end turns aside at x (ML = 1 frame): only the last part of the mantle. */
+export const tailSwayAt = (sway: number, x: number): number => sway * clamp((-x - 0.55) / 0.45, 0, 1) ** 2;
+
+/**
+ * Each cuttlefish's own copy of the shared body mesh (built for ML = 1), no longer a perfect solid of
+ * revolution: the mantle's share (aWeight) is pushed out or in along its normals by slow lumps, one
+ * flank stands a little fuller, a low ridge runs over the cuttlebone, and the tail tip turns a little
+ * to one side (tailSwayAt; the fin skirt follows it). The head, eye bulges and arm crown keep their shape (the eyes and arms sit on them).
+ */
+export function varyCuttleBody(base: THREE.BufferGeometry, rng: Rng): { geometry: THREE.BufferGeometry; tailSway: number } {
+  const g = base.clone(), noise = new Noise(rng);
+  const pos = g.getAttribute('position'), nrm = g.getAttribute('normal'), w = g.getAttribute('aWeight');
+  const flank = range(rng, -1, 1) * BODY_FLANK, crest = range(rng, 0.2, 1) * BODY_CREST, sway = range(rng, -1, 1) * BODY_TAIL_SWAY;
+  const lumps = BODY_LUMPS * range(rng, 0.6, 1), o = [rng() * 40, rng() * 40, rng() * 40];
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), m = clamp(w.getX(i), 0, 1);
+    if (m <= 0) continue;
+    const d = m * (lumps * 2 * (noise.noise3(x * BODY_LUMP_FREQ + (o[0] ?? 0), y * BODY_LUMP_FREQ + (o[1] ?? 0), z * BODY_LUMP_FREQ + (o[2] ?? 0)) - 0.5)
+      + flank * (z / 0.24) + crest * Math.exp(-((z / 0.07) ** 2)) * clamp(y / 0.05, 0, 1));
+    const tail = m * tailSwayAt(sway, x);
+    pos.setXYZ(i, x + nrm.getX(i) * d, y + nrm.getY(i) * d, z + nrm.getZ(i) * d + tail);
+  }
+  g.computeVertexNormals();
+  // The UV seam's duplicated vertices: share one normal, or the seam shows as a crease.
+  const n = g.getAttribute('normal'), same = new Map<string, number[]>();
+  for (let i = 0; i < pos.count; i++) {
+    const key = `${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;
+    const list = same.get(key);
+    if (list) list.push(i); else same.set(key, [i]);
+  }
+  const v = new THREE.Vector3();
+  for (const list of same.values()) {
+    if (list.length < 2) continue;
+    v.set(0, 0, 0);
+    for (const i of list) v.x += n.getX(i), v.y += n.getY(i), v.z += n.getZ(i);
+    v.normalize();
+    for (const i of list) n.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeBoundingSphere();
+  return { geometry: g, tailSway: sway };
+}
 /** Grown, not drawn: the bars and spot rows wander and the colour is patchy. u wraps round the mantle. */
 const SKIN_ORGANIC: OrganicOptions = { warp: [[8, 4, 10, 6], [24, 12, 3, 2]], mottle: { cellsX: 10, cellsY: 5, value: 0.07, chroma: 0.03 }, wrapX: true };
 const FIN_ORGANIC: OrganicOptions = { warp: [[10, 2, 4, 2]], mottle: { cellsX: 8, cellsY: 2, value: 0.06, chroma: 0.03 } };

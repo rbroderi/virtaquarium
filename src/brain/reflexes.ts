@@ -6,6 +6,7 @@ import type { Brain } from '../brain.js';
 import type { Fish } from '../fish.js';
 import type { SwimWorld } from '../world/ports.js';
 import { closestSegmentParams } from '../fish/bodyShape.js';
+import { CHASE_HEED } from '../world/contactInbox.js';
 
 /** A rival's territory a twice-beaten fish keeps out of (radius). */
 const TRUCE_RADIUS = 2.6;
@@ -29,6 +30,8 @@ const BODY_MARGIN = 0.15;
 const BODY_AVOID = 3;
 /** A fish slows once another body ahead of it is nearer than this (body lengths of the smaller fish). */
 const CROWD_GAP = 0.3;
+/** How hard a fish turns off a body it has been told it is touching (world/contactInbox.ts). */
+const CONTACT_AVOID = 3;
 /** Room a sheltering fish wants between its snout or tail and the rock, beyond its half-depth. */
 export const SHELTER_ROCK_ROOM = 0.05;
 /** A sheltering fish within this many body lengths of its spot's height leaves its height alone. */
@@ -78,6 +81,23 @@ function keepPersonalSpace(brain: Brain, me: Fish, world: SwimWorld, dir: THREE.
     const dist = _v.length(), min = o.radius + me.size * 0.5;
     if (dist < min && dist > 1e-4) dir.addScaledVector(_v, ((min - dist) / min) * 3 / dist);
   }
+  heedContacts(brain, me, dir);
+}
+
+/**
+ * The avoidance reflex: turn off the critters, jellies and eel the separation says it is touching or
+ * about to (their real shapes, not the centre distance above), and slow if one is ahead. A fish on
+ * patrol ignores the intruder it is chasing and a cleaner its client; one going for food heeds the rest
+ * less, so it can push in.
+ */
+function heedContacts(brain: Brain, me: Fish, dir: THREE.Vector3): void {
+  const chasing = brain.mode === 'patrol' || brain.mode === 'clean' ? brain.focus : null;
+  const heed = chasing || brain.mode === 'feed' ? CHASE_HEED : 1;
+  const u = me.inbox.read(_n, chasing, heed);
+  if (u <= 0) return;
+  dir.addScaledVector(_n, u * CONTACT_AVOID);
+  const ahead = -_n.dot(me.dir);
+  if (ahead > 0) brain.crowding = Math.max(brain.crowding, u * ahead);
 }
 
 /**

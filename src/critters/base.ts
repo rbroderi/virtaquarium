@@ -36,6 +36,8 @@ export abstract class CritterBase<Mode extends string, Drive extends string = st
   readonly model = new THREE.Group();
   // Where parts are attached (and may run into each other): critterCheck.ts.
   abstract readonly joins: readonly JoinRule[];
+  abstract readonly hullParts: readonly string[];
+  get mass(): number { return (2 * this.radius) ** 3; }
   abstract readonly buildMs: number;
   abstract mode: Mode;
   abstract modeT: number;

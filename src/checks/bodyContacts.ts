@@ -1,12 +1,14 @@
 // Body contacts for the motion check (motionCheck.ts):
 //   - FishOverlapTally: pairs of fish whose bodies interpenetrate, each body its axis with an
 //     elliptical, tapering section (fish/bodyShape.ts), the eel its spine chain;
+//   - CritterOverlapTally: the critters' solid parts (world/partHull.ts) into a fish, the eel or each other;
 //   - RockTruthTally: points along every body (snout, middle, peduncle) tested against the rock as
 //     drawn (checks/rockMesh.ts), and the rock field's error against it at the same points, so a clip
 //     can be told apart as the field's fault (resolution, interpolation) or the fish's (response).
 import * as THREE from 'three';
 import type { Fish } from '../fish.js';
 import type { World } from '../world.js';
+import { CritterBody, type BodyPiece, type Solid } from '../world/partHull.js';
 import { bodyDims, closestSegmentParams, radiusToward, type BodyDims } from '../fish/bodyShape.js';
 import { RockMesh } from './rockMesh.js';
 import { spineNodes } from './motionStats.js';
@@ -114,6 +116,97 @@ export class FishOverlapTally {
 
   summary(minutes: number): Record<string, unknown> {
     return { pairFrames: this.pairFrames, fishFrames: this.fishFrames, perMin: +(this.pairFrames / minutes).toFixed(1), deepestShare: +this.deepest.toFixed(2), bySpecies: this.bySpecies };
+  }
+}
+
+/** A critter's parts into a fish, the eel or another critter, per frame (a share of the summed radii). */
+export class CritterOverlapTally {
+  pairFrames = 0;
+  deepest = 0;
+  readonly byPair: Record<string, number> = {};
+  /** The same frames by the critter's part that went deepest (critter.part). */
+  readonly byPart: Record<string, number> = {};
+  private deepestPart = '';
+  private readonly hulls: { c: Solid; b: CritterBody; h: BodyPiece[] }[];
+  private readonly segs: Seg[];
+
+  constructor(critters: readonly Solid[], fish: readonly Fish[]) {
+    this.hulls = critters.map((c) => { const b = new CritterBody(c); return { c, b, h: b.pieces }; });
+    this.segs = fish.map((f) => {
+      const d = bodyDims(f);
+      return { f, d, eel: !!f.spine, reach: f.spine ? f.size : Math.max(d.nose, -d.fin) + d.halfDepth };
+    });
+  }
+
+  step(): void {
+    for (const { b } of this.hulls) b.update();
+    const H = this.hulls;
+    for (let i = 0; i < H.length; i++) {
+      const A = H[i];
+      if (!A) continue;
+      for (const S of this.segs) {
+        if (!S.eel && S.f.pos.distanceTo(A.b.centre) > A.b.radius + S.reach) continue;
+        const pen = this.intoFish(A.h, S);
+        if (pen > 0) this.count(A.c.kind, S.eel ? 'eel' : S.f.sp.id, pen, `${A.c.kind}.${this.deepestPart}`);
+      }
+      for (let j = i + 1; j < H.length; j++) {
+        const B = H[j];
+        if (!B || A.b.centre.distanceTo(B.b.centre) > A.b.radius + B.b.radius) continue;
+        let best = 0;
+        let part = '';
+        for (const hb of B.h) {
+          const got = this.deepest_(A.h, hb.p0, hb.p1, (n) => hb.radiusToward(n));
+          if (got > best) { best = got; part = `${A.c.kind}.${this.deepestPart}/${B.c.kind}.${hb.name}`; }
+        }
+        if (best > OVERLAP_SHARE) this.count(A.c.kind, B.c.kind, best, part);
+      }
+    }
+  }
+
+  private count(a: string, b: string, pen: number, part: string): void {
+    this.byPart[part] = (this.byPart[part] ?? 0) + 1;
+    this.pairFrames++;
+    this.deepest = Math.max(this.deepest, pen);
+    const key = [a, b].sort().join('+');
+    this.byPair[key] = (this.byPair[key] ?? 0) + 1;
+  }
+
+  private intoFish(hulls: BodyPiece[], S: Seg): number {
+    const f = S.f;
+    let best = 0;
+    if (S.eel) {
+      const nodes = spineNodes(f) ?? [], r = S.d.halfDepth * EEL_RADIUS_SHARE;
+      for (let k = 0; k + 1 < nodes.length; k++) {
+        const p = nodes[k], q = nodes[k + 1];
+        if (p && q) best = Math.max(best, this.deepest_(hulls, _a.copy(p), _b.copy(q), () => r));
+      }
+    } else {
+      _a.copy(f.pos).addScaledVector(f.dir, S.d.nose); _b.copy(f.pos).addScaledVector(f.dir, S.d.fin);
+      best = this.deepest_(hulls, _a, _b, (n) => radiusToward(f, S.d, (S.d.nose + S.d.fin) / 2, n));
+    }
+    return best > OVERLAP_SHARE ? best : 0;
+  }
+
+  /** The deepest share any hull reaches into segment q0-q1 of radius rq(n), n pointing at the hull. */
+  private deepest_(hulls: BodyPiece[], q0: THREE.Vector3, q1: THREE.Vector3, rq: (n: THREE.Vector3) => number): number {
+    let best = 0;
+    for (const h of hulls) {
+      closestSegmentParams(h.p0, h.p1, q0, q1, _st);
+      _p.lerpVectors(h.p0, h.p1, _st[0]); _q.lerpVectors(q0, q1, _st[1]);
+      const dist = _p.distanceTo(_q);
+      _n.subVectors(_q, _p);
+      if (dist > 1e-6) _n.multiplyScalar(1 / dist); else _n.set(0, 1, 0);
+      const ra = h.radiusToward(_n);
+      _n.negate();
+      const rb = rq(_n);
+      const share = (ra + rb - dist) / (ra + rb);
+      if (share > best) { best = share; this.deepestPart = h.name; }
+    }
+    return best;
+  }
+
+  summary(minutes: number): Record<string, unknown> {
+    return { pairFrames: this.pairFrames, perMin: +(this.pairFrames / minutes).toFixed(1), deepestShare: +this.deepest.toFixed(2), byPair: this.byPair, byPart: this.byPart };
   }
 }
 

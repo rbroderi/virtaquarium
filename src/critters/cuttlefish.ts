@@ -11,8 +11,9 @@ import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js'
 import { mantleR } from '../softBodies.js';
 import { skin, spring, randomTarget, Swimmer, CEPH_SSS, scalarNode, vec3Node, softBodyHook, type NodeHook, type SpringState, type SoftBodyPatch } from './shared.js';
 import { boundMaterialColor, type NodeObject } from '../webgpu/tsl.js';
-import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL } from './cuttlefishParts.js';
+import { cuttleSkin, cuttleFinTex, wPupilEye, cuttleArmGeometry, armVariation, finGeometry, FIN_K, CUTTLE_ARM_GLSL, varyCuttleBody, tailSwayAt } from './cuttlefishParts.js';
 import { Cephalopod } from './base.js';
+import type { ContactInbox } from '../world/contactInbox.js';
 import { CritterBrain, type DriveInfo } from './critterBrain.js';
 import type { CheckVisit, CritterContext, CritterFood, CritterSpecies, CritterWorld, JoinRule } from './types.js';
 
@@ -28,6 +29,7 @@ const ARM_COUNT = 8;
 const TENTACLE_ARMS: ReadonlySet<number> = new Set([1, 3]);
 const ARM_LENGTH = 0.27;
 const ARM_SEED = 0xa2b5;
+const BODY_SEED = 0xb0d7;
 const TENTACLE_LENGTH_SHARE = 0.85;
 const FIN_SEGMENTS = 48;
 const STRIKE_SECONDS = 0.4;
@@ -96,13 +98,18 @@ export class Cuttlefish extends Cephalopod<CuttlefishMode, CuttleDrive, CuttleTr
   /** Click-proxy radius for the inspection overlay. */
   readonly pickRadius: number;
   readonly mantle: THREE.Mesh;
+  /** How far this one's mantle tail turns aside (ML = 1), so the fin skirt follows it. */
+  private tailSway = 0;
   readonly crown = new THREE.Group();
   readonly arms: THREE.Mesh[] = [];
   readonly fins: THREE.Mesh[];
   readonly buildMs: number;
   // Where parts are attached (and may run into each other): critterCheck.ts.
+  readonly hullParts: readonly string[] = ['mantle', 'fin0', 'fin1', ...Array.from({ length: ARM_COUNT }, (_, i) => `arm${i}`)];
+  readonly liveHullParts: readonly string[] = ['fin0', 'fin1'];
   readonly joins: readonly JoinRule[] = [['eye*', 'mantle'], ['arm*', 'mantle'], ['fin*', 'mantle']];
   readonly body: Swimmer;
+  get inbox(): ContactInbox { return this.body.inbox; }
   readonly pos: THREE.Vector3;
   mode: CuttlefishMode = 'hover';
   modeT = 0;
@@ -141,6 +148,10 @@ export class Cuttlefish extends Cephalopod<CuttlefishMode, CuttleDrive, CuttleTr
 
     // Mantle, head, eye bulges and the arm crown: one blended mesh (built for ML = 1).
     this.mantle = this.addSoftBody('cuttlefish-body', mantleMat, ML, 'mantle');
+    // Its own lumpy, slightly lopsided copy (a stream of its own, so the rng draws are unchanged).
+    const own = varyCuttleBody(this.mantle.geometry, mulberry32(Math.round(ML * 1e6) ^ BODY_SEED));
+    this.mantle.geometry = own.geometry;
+    this.tailSway = own.tailSway;
     this.addEyes(ML);
     const t0 = performance.now();
     this.addArms(ML);
@@ -296,7 +307,7 @@ export class Cuttlefish extends Cephalopod<CuttlefishMode, CuttleDrive, CuttleTr
       const ny = 1 / Math.hypot(1, 0.4), nz = 0.4 * side * ny;
       for (let i = 0; i <= this.finN; i++) {
         const t = i / this.finN, x = -ML * (0.04 + 0.94 * t);                   // head -> tail
-        const half = mantleR(0.96 - 0.94 * t) * ML;
+        const half = mantleR(0.96 - 0.94 * t) * ML, sway = tailSwayAt(this.tailSway, x / ML) * ML;
         const w = 0.085 * ML * Math.sin(Math.PI * Math.min(1, t * 1.02 + 0.02)) ** 0.2;   // even width, full length
         for (let j = 0; j < R; j++) {
           // The base runs along the lower flank (a third of the way down, where the mantle is ~0.84
@@ -305,7 +316,7 @@ export class Cuttlefish extends Cephalopod<CuttlefishMode, CuttleDrive, CuttleTr
           // then back along the bottom one.
           const k = FIN_K[j] ?? 0, kk = Math.max(0, k), y = Math.sin(this.finPhase + t * 9) * a * kk * kk;
           const th = 0.5 * 0.022 * ML * (1 - kk) ** 0.6 * (0.4 + 0.6 * Math.sin(Math.PI * Math.min(1, t * 1.05 + 0.03)) ** 0.5);
-          const X = x * ms.x, Y = y - 0.62 * 0.55 * half * ms.y - 0.4 * w * k, Z = side * (half * 0.82 * ms.z + w * k);
+          const X = x * ms.x, Y = y - 0.62 * 0.55 * half * ms.y - 0.4 * w * k, Z = side * (half * 0.82 * ms.z + w * k) + sway;
           p.setXYZ(i * 2 * R + j, X, Y + ny * th, Z + nz * th);
           p.setXYZ(i * 2 * R + 2 * R - 1 - j, X, Y - ny * th, Z - nz * th);
         }
@@ -341,7 +352,7 @@ export class Cuttlefish extends Cephalopod<CuttlefishMode, CuttleDrive, CuttleTr
   protected act(dt: number, world: CritterWorld): void {
     const speed = this.speedFor(dt, this.prey);
     const b = this.body, yaw0 = b.yaw, pitch0 = b.pitch;
-    b.steer(dt, world, this.target, { turn: 0.9, speed, accel: this.mode === 'jet' ? 6 : 1.2, clearance: 0.25 * this.ML, reverse: speed < 0 });
+    b.steer(dt, world, this.target, { turn: 0.9, speed, accel: this.mode === 'jet' ? 6 : 1.2, clearance: 0.25 * this.ML, reverse: speed < 0, chase: this.mode === 'hunt' });
     if (this.mode === 'rest' && this.pos.distanceTo(this.target) < 0.4) b.pitch = lerp(b.pitch, 0, dt);
     const { armY, armZ } = this.swingArms(dt, yaw0, pitch0);
     this.colourSkin(dt);

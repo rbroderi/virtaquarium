@@ -7,6 +7,7 @@ import { range, clamp, lerp, wrapAngle, type Rng } from '../util.js';
 import { gpuActive, tsl, webgpu, type FloatUniformNode, type Vec3UniformNode, type Node, type Tsl } from '../webgpu/tsl.js';
 import type { CritterNeighbour, CritterThreatFish, CritterWorld } from './types.js';
 import { limitStep } from '../world/stepLimit.js';
+import { ContactInbox, CHASE_HEED } from '../world/contactInbox.js';
 
 /** How fast a critter may haul itself up or out (units/s) beyond its swimming speed (world/stepLimit.ts). */
 export const CRITTER_CRAWL = 0.3;
@@ -136,7 +137,13 @@ export interface SteerOptions {
   readonly clearance: number;
   readonly look?: number;
   readonly reverse?: boolean;
+  /** Going for food: the avoidance reflex is heeded less. */
+  readonly chase?: boolean;
 }
+
+/** How far the avoidance reflex bends a critter's course (target distances, at full urgency). */
+const AVOID_TURN = 1.2;
+const _away = new THREE.Vector3();
 
 const _v = new THREE.Vector3();
 const _e = new THREE.Euler(0, 0, 0, 'YZX');
@@ -156,6 +163,8 @@ export class Swimmer {
   roll = 0;
   speed = 0;
   readonly dir: THREE.Vector3;
+  /** The avoidance reflex's messages (world/contactInbox.ts). */
+  readonly inbox = new ContactInbox();
 
   constructor(pos: THREE.Vector3, yaw: number) {
     this.pos = pos; this.yaw = yaw;
@@ -163,8 +172,12 @@ export class Swimmer {
   }
 
   /** Returns the horizontal distance to the target. */
-  steer(dt: number, world: CritterWorld, target: THREE.Vector3, { turn, speed, accel, clearance, look = 1.5, reverse = false }: SteerOptions): number {
+  steer(dt: number, world: CritterWorld, target: THREE.Vector3, { turn, speed, accel, clearance, look = 1.5, reverse = false, chase = false }: SteerOptions): number {
     _v.subVectors(target, this.pos);
+    const toTarget = Math.hypot(_v.x, _v.z);
+    // The avoidance reflex bends the course off whatever it is touching or about to.
+    const u = this.inbox.read(_away, null, chase ? CHASE_HEED : 1);
+    if (u > 0) _v.addScaledVector(_away, u * AVOID_TURN * Math.max(_v.length(), 1));
     const flat = Math.hypot(_v.x, _v.z);
     let yawT = Math.atan2(_v.z, _v.x);
     if (reverse) yawT = wrapAngle(yawT + Math.PI);   // back towards the target (cuttlefish swim backwards)
@@ -190,7 +203,7 @@ export class Swimmer {
     if (this.pos.y < floor) this.pos.y = Math.min(floor, this.pos.y + (Math.abs(this.speed) + CRITTER_CRAWL) * dt);
     this.pos.y = Math.min(this.pos.y, B.y1);
     limitStep(_prev, this.pos, this.speed, CRITTER_CRAWL, dt);
-    return flat;
+    return toTarget;
   }
 
   place(model: THREE.Object3D): void {

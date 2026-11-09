@@ -23,6 +23,19 @@ function scuteCentres(): Scute[] {
   }
   return scutes;
 }
+const SCUTES = scuteCentres();
+
+/** The scute at planform point (u, v): its index, and the scaled distances to the nearest scute centre
+ * (b1) and the next nearest (b2). b2 - b1 is small along a seam; b1 small at a growth centre. Shared by
+ * the painted carapace and its relief, so the plates bulge where they are painted. */
+export function scuteAt(u: number, v: number): { i: number; b1: number; b2: number } {
+  let b1 = 9, b2 = 9, i = 0;
+  SCUTES.forEach(([cx, cy, r], k) => {
+    const dd = Math.hypot(u - cx, (v - cy) * 1.05) / (r + 0.06);
+    if (dd < b1) { b2 = b1; b1 = dd; i = k; } else if (dd < b2) b2 = dd;
+  });
+  return { i, b1, b2 };
+}
 
 /**
  * The carapace: five vertebral, four pairs of costal and the marginal scutes, each with the radiating
@@ -31,18 +44,13 @@ function scuteCentres(): Scute[] {
 export function carapaceTex(rng: Rng): THREE.CanvasTexture {
   const S = 1024, c = makeCanvas(S, S), g = context2d(c), n = new Noise(rng);
   g.fillStyle = '#6a3a1e'; g.fillRect(0, 0, S, S);
-  const scutes = scuteCentres();
   const dark = [62, 40, 22] as const, amber = [170, 100, 48] as const, seamC = [168, 140, 104] as const;
   // Voronoi cells: each pixel belongs to the nearest scute; streaks radiate from its centre.
   const img = g.createImageData(S, S), d = img.data;
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const u = x / S, v = y / S;
-    let b1 = 9, b2 = 9, bi = 0;
-    scutes.forEach(([cx, cy, r], i) => {
-      const dd = Math.hypot(u - cx, (v - cy) * 1.05) / (r + 0.06);
-      if (dd < b1) { b2 = b1; b1 = dd; bi = i; } else if (dd < b2) b2 = dd;
-    });
-    const [cx, cy] = scutes[bi] ?? [0.5, 0.5, 0];
+    const { i: bi, b1, b2 } = scuteAt(u, v);
+    const [cx, cy] = SCUTES[bi] ?? [0.5, 0.5, 0];
     // Dark olive-brown scutes; irregular amber streaks radiate from each scute's growth centre, broken
     // up by noise so they read as a juvenile's sunburst, not a regular star.
     const ang = Math.atan2(v - cy, u - cx), wav = n.noise2(u * 40, v * 40);

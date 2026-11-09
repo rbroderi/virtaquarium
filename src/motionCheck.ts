@@ -15,7 +15,7 @@ import type { AquariumHandle } from './app/handle.js';
 import type { Fish } from './fish.js';
 import type { World } from './world.js';
 import { postDone } from './checks/report.js';
-import { FishOverlapTally, RockTruthTally } from './checks/bodyContacts.js';
+import { CritterOverlapTally, FishOverlapTally, RockTruthTally } from './checks/bodyContacts.js';
 import { CleaningTally, EelTally, ShoalSampler, spineNodes, type FishStats } from './checks/motionStats.js';
 
 const STEPS_PER_SECOND = 30;
@@ -96,6 +96,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
   const cleaning = world.station ? new CleaningTally(world.station) : null;
   const shoals = new ShoalSampler(world.fish);
   const overlaps = new FishOverlapTally(world.fish);
+  const critterOverlaps = new CritterOverlapTally(world.solids, world.fish);
   const truth = qs.get('truth') === '0' ? null : new RockTruthTally(world);
   if (qs.get('night') === '1') aq.setLight(0);
   if (qs.has('light')) aq.setLight(Number(qs.get('light')));   // e.g. 0.35: dusk, when lionfish hunt
@@ -119,6 +120,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
     }
     cleaning?.step(DT);
     overlaps.step();
+    critterOverlaps.step();
     truth?.step(world);
     for (const s of drawn) trackClimb(s, n, s.f.model.position.y);
     for (const s of stats) {
@@ -164,6 +166,8 @@ export async function main(aq: AquariumHandle): Promise<void> {
     // Mean wall time of one world step (fish, brains, collision), ms: compare runs interleaved.
     updateMs: +(updateMs / frames).toFixed(3),
     fishOverlap: overlaps.summary(minutes),
+    // The critters' solid parts into a fish, the eel or each other.
+    critterOverlap: critterOverlaps.summary(minutes),
     // Snout, middle and peduncle against the rock as drawn (BVH), and the field's error there.
     rockTruth: truth?.summary() ?? null,
     // Fear passed on by a neighbour's flight (brain _perceive), per simulated minute.
