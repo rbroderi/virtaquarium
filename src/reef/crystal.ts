@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { addCaustics } from '../water.js';
 import { gpuActive, tsl } from '../webgpu/tsl.js';
-import { gpuCrystalMaterial, type GpuCrystalOptions } from './crystalGpu.js';
+import { CRYSTAL_THICK_ATTR as THICK_ATTR, gpuCrystalMaterial, type GpuCrystalOptions } from './crystalGpu.js';
 import { isMesh } from './flags.js';
 import { DEFAULT_CRYSTAL_TEXT, DEFAULT_LABEL, renderMask } from './crystalMask.js';
 import { crystalBgUniforms } from './crystalBg.js';
@@ -28,8 +28,18 @@ const FACE_NORMAL_DOT = 0.93;
 const FACE_STRONG_DOT = 0.8;
 /** Etched-mask texture width in pixels (height follows the strong-facing region's projected aspect). */
 const FACE_TEXTURE_W = 2048;
-/** Slight cyan tint of the glass (Beer-Lambert attenuation). */
-const ATTENUATION_COLOR = new THREE.Color(0.72, 0.92, 1.0);
+/** Slight even cyan tint of the glass; the thickness-dependent part is THICK_TRANSMIT. */
+const ATTENUATION_COLOR = new THREE.Color(0.86, 0.96, 1.0);
+/** Milky white-blue body colour. The haze replaces part of the see-through background with the glass's
+ *  own lit colour, so the rocks behind read as softened through the crystal rather than seen clean. */
+const HAZE_COLOR = new THREE.Color(0.8, 0.9, 1.0);
+/** Share of the refracted background the body's haze replaces (0 clear .. 1 opaque). */
+const BODY_HAZE = 0.35;
+/** The face plaque hazes a little less, so the letters keep their contrast. */
+const FACE_HAZE = 0.25;
+/** IOR spread between green and red/blue (dispersion). Real lead crystal is about 0.015; this is
+ *  raised so the rainbow fringes show at viewing distance. */
+const CRYSTAL_DISPERSION = 0.04;
 /** Fresnel F0 for crystal glass (IOR 1.54): near-normal faces stay clear, grazing edges turn mirror. */
 const CRYSTAL_F0 = 0.045;
 /** Fraction of the refracted background the body shows straight through (the rest is absorbed). */
@@ -53,6 +63,15 @@ const GROOVE_BLUR = 0.003;
 const GROOVE_BRIGHT = 1.07;
 /** Max refraction displacement along the face normal, world units (the cluster's real depth is ~1). */
 const BODY_THICKNESS_MAX = 0.34;
+
+/** Beer's-law transmission through the thickest part of the rock, per channel: red is absorbed most,
+ *  so thick glass turns a deeper blue-green while thin edges stay clear. Thickness is baked per vertex
+ *  as 0..1 of the rock's thickest, so sigma = -ln(this). */
+const THICK_TRANSMIT = new THREE.Color(0.5, 0.74, 0.86);
+/** How the haze grows with the glass's thickness: thin edges keep this share of it, the thickest
+ *  parts get THICK_HAZE_MAX times it (more glass scatters more). */
+const THIN_HAZE = 0.45;
+const THICK_HAZE_MAX = 1.4;
 
 /** The flat face, in the group's local space, as plain numbers (userData must survive JSON cloning). */
 export interface CrystalFaceInfo {
@@ -152,6 +171,88 @@ function mergedGeometry(group: THREE.Object3D): MergedGeometry | null {
     vo += p.pos.length / 3; io += p.idx.length;
   }
   return { pos, nrm, uv, idx };
+}
+
+/**
+ * Bakes each vertex's glass thickness: a ray from the vertex straight inward (against its normal) to
+ * the far side of the rock, run once at load over a uniform grid of the triangles. Returned as 0..1 of
+ * the thickest (95th percentile, so a stray long ray through a gap doesn't set the scale).
+ */
+function bakeThickness(geo: MergedGeometry): Float32Array {
+  const { pos, nrm, idx } = geo;
+  const verts = pos.length / 3, tris = idx.length / 3;
+  const out = new Float32Array(verts).fill(0.5);
+  if (!tris) return out;
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < verts; i++) {
+    const x = pos[i * 3] as number, y = pos[i * 3 + 1] as number, z = pos[i * 3 + 2] as number;
+    if (x < x0) x0 = x; if (y < y0) y0 = y; if (z < z0) z0 = z;
+    if (x > x1) x1 = x; if (y > y1) y1 = y; if (z > z1) z1 = z;
+  }
+  const size = Math.max(x1 - x0, y1 - y0, z1 - z0, 1e-6);
+  const G = 24, cell = size / G * 1.0001;
+  const cellOf = (v: number, o: number): number => Math.min(G - 1, Math.max(0, Math.floor((v - o) / cell)));
+  const bins: number[][] = Array.from({ length: G * G * G }, () => []);
+  for (let t = 0; t < tris; t++) {
+    let ax = Infinity, ay = Infinity, az = Infinity, bx = -Infinity, by = -Infinity, bz = -Infinity;
+    for (let k = 0; k < 3; k++) {
+      const v = idx[t * 3 + k] as number;
+      const x = pos[v * 3] as number, y = pos[v * 3 + 1] as number, z = pos[v * 3 + 2] as number;
+      if (x < ax) ax = x; if (y < ay) ay = y; if (z < az) az = z;
+      if (x > bx) bx = x; if (y > by) by = y; if (z > bz) bz = z;
+    }
+    for (let i = cellOf(ax, x0); i <= cellOf(bx, x0); i++)
+      for (let j = cellOf(ay, y0); j <= cellOf(by, y0); j++)
+        for (let k = cellOf(az, z0); k <= cellOf(bz, z0); k++) (bins[(i * G + j) * G + k] as number[]).push(t);
+  }
+  const stamp = new Int32Array(tris).fill(-1);
+  const eps = size * 1e-4;
+  const raw = new Float32Array(verts);
+  const hits: number[] = [];
+  for (let vi = 0; vi < verts; vi++) {
+    let dx = -(nrm[vi * 3] as number), dy = -(nrm[vi * 3 + 1] as number), dz = -(nrm[vi * 3 + 2] as number);
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-6) { raw[vi] = -1; continue; }
+    dx /= len; dy /= len; dz /= len;
+    const ox = pos[vi * 3] as number, oy = pos[vi * 3 + 1] as number, oz = pos[vi * 3 + 2] as number;
+    let best = Infinity;
+    // March the ray a half cell at a time, testing each new cell's triangles (Moller-Trumbore).
+    for (let s = 0; s * cell * 0.5 <= size * 1.8 && best === Infinity; s++) {
+      const d = s * cell * 0.5;
+      const px = ox + dx * d, py = oy + dy * d, pz = oz + dz * d;
+      if (px < x0 - cell || py < y0 - cell || pz < z0 - cell || px > x1 + cell || py > y1 + cell || pz > z1 + cell) break;
+      const bin = bins[(cellOf(px, x0) * G + cellOf(py, y0)) * G + cellOf(pz, z0)] as number[];
+      for (const t of bin) {
+        if (stamp[t] === vi) continue;
+        stamp[t] = vi;
+        const a = (idx[t * 3] as number) * 3, b = (idx[t * 3 + 1] as number) * 3, c = (idx[t * 3 + 2] as number) * 3;
+        const e1x = (pos[b] as number) - (pos[a] as number), e1y = (pos[b + 1] as number) - (pos[a + 1] as number), e1z = (pos[b + 2] as number) - (pos[a + 2] as number);
+        const e2x = (pos[c] as number) - (pos[a] as number), e2y = (pos[c + 1] as number) - (pos[a + 1] as number), e2z = (pos[c + 2] as number) - (pos[a + 2] as number);
+        const px2 = dy * e2z - dz * e2y, py2 = dz * e2x - dx * e2z, pz2 = dx * e2y - dy * e2x;
+        const det = e1x * px2 + e1y * py2 + e1z * pz2;
+        if (Math.abs(det) < 1e-12) continue;
+        const inv = 1 / det;
+        const tx = ox - (pos[a] as number), ty = oy - (pos[a + 1] as number), tz = oz - (pos[a + 2] as number);
+        const u = (tx * px2 + ty * py2 + tz * pz2) * inv;
+        if (u < 0 || u > 1) continue;
+        const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+        const v = (dx * qx + dy * qy + dz * qz) * inv;
+        if (v < 0 || u + v > 1) continue;
+        const h = (e2x * qx + e2y * qy + e2z * qz) * inv;
+        if (h > eps && h < best) best = h;
+      }
+    }
+    raw[vi] = best === Infinity ? -1 : best;
+    if (best !== Infinity) hits.push(best);
+  }
+  if (!hits.length) return out;
+  hits.sort((a, b) => a - b);
+  const scale = hits[Math.floor((hits.length - 1) * 0.95)] as number;
+  for (let i = 0; i < verts; i++) {
+    const r = raw[i] as number;
+    out[i] = r < 0 ? 0.5 : Math.min(1, r / Math.max(1e-6, scale));
+  }
+  return out;
 }
 
 /** Key for an undirected triangle edge (two vertex indices). */
@@ -341,6 +442,10 @@ interface CrystalShaderOptions {
   readonly transmission: number;
   readonly thickness: number;
   readonly tint: THREE.Color;
+  /** Share of the background replaced by the glass's own lit milky colour, and that colour. */
+  readonly haze: number;
+  readonly hazeColor: THREE.Color;
+  readonly sigma: THREE.Vector3;
   readonly f0: number;
   readonly etchTrans: number;
   readonly frost: THREE.Color;
@@ -355,7 +460,7 @@ interface CrystalShaderOptions {
 function bodyMaterial(thickness: number, etch: CrystalEtch, plane: CrystalFaceInfo): THREE.MeshPhysicalMaterial {
   const options = {
     transmission: BODY_TRANSMISSION, thickness: Math.min(BODY_THICKNESS_MAX, thickness),
-    tint: ATTENUATION_COLOR.clone(), f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK,
+    tint: ATTENUATION_COLOR.clone(), haze: BODY_HAZE, hazeColor: HAZE_COLOR.clone(), sigma: thickSigma(), f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK,
     frostMode: 'frame', plane,
   } as const;
   if (gpuActive()) {
@@ -383,9 +488,10 @@ function bodyMaterial(thickness: number, etch: CrystalEtch, plane: CrystalFaceIn
 }
 
 /** The etched face plaque: the same clear glass, with the frosted letters shared with the body. */
-function makeFaceMaterial(etch: CrystalEtch, plane: CrystalFaceInfo): THREE.MeshPhysicalMaterial {
+function makeFaceMaterial(thickness: number, etch: CrystalEtch, plane: CrystalFaceInfo): THREE.MeshPhysicalMaterial {
   const options = {
-    transmission: FACE_TRANSMISSION, thickness: 0, tint: new THREE.Color(1, 1, 1),
+    transmission: FACE_TRANSMISSION, thickness: Math.min(BODY_THICKNESS_MAX, thickness), tint: new THREE.Color(1, 1, 1),
+    haze: FACE_HAZE, hazeColor: HAZE_COLOR.clone(), sigma: thickSigma(),
     f0: CRYSTAL_F0, etchTrans: FACE_ETCH_TRANSMISSION, frost: FROST_COLOR.clone(), dark: FACE_DARK,
     frostMode: 'plaque', plane,
   } as const;
@@ -409,10 +515,17 @@ function makeFaceMaterial(etch: CrystalEtch, plane: CrystalFaceInfo): THREE.Mesh
   return addCrystalShader(addCaustics(mat), options);
 }
 
+/** Beer's-law coefficients for the 0..1 baked thickness: -ln of the thickest glass's transmission. */
+function thickSigma(): THREE.Vector3 {
+  return new THREE.Vector3(-Math.log(THICK_TRANSMIT.r), -Math.log(THICK_TRANSMIT.g), -Math.log(THICK_TRANSMIT.b));
+}
+
 /** The GPU material options (the WebGL path reads the same numbers from the shader options). */
 function gpuOptions(options: CrystalShaderOptions, etch: CrystalEtch): GpuCrystalOptions {
   return {
-    transmission: options.transmission, thickness: options.thickness, tint: options.tint, f0: options.f0,
+    transmission: options.transmission, thickness: options.thickness, tint: options.tint,
+    haze: options.haze, hazeColor: options.hazeColor, f0: options.f0,
+    sigma: options.sigma, dispersion: CRYSTAL_DISPERSION, thinHaze: THIN_HAZE, thickHaze: THICK_HAZE_MAX,
     etchTrans: options.etchTrans, frost: options.frost, dark: options.dark, frostMode: options.frostMode,
     mask: etch.mask,
     textN: new THREE.Vector3(...options.plane.n), textU: new THREE.Vector3(...options.plane.u), textV: new THREE.Vector3(...options.plane.v),
@@ -437,8 +550,13 @@ function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShade
       uCrystalFade: fade ?? { value: 1 },
       uCrystalTransmission: { value: options.transmission },
       uCrystalIor: { value: 1.54 },
+      uCrystalDispersion: { value: CRYSTAL_DISPERSION },
       uCrystalThickness: { value: options.thickness },
       uCrystalTint: { value: options.tint },
+      uCrystalHaze: { value: options.haze },
+      uCrystalHazeColor: { value: options.hazeColor },
+      uCrystalSigma: { value: options.sigma },
+      uCrystalHazeRange: { value: new THREE.Vector2(THIN_HAZE, THICK_HAZE_MAX) },
       uCrystalF0: { value: options.f0 },
       uCrystalEtchTrans: { value: options.etchTrans },
       uCrystalFrost: { value: options.frost },
@@ -456,8 +574,9 @@ function addCrystalShader(mat: THREE.MeshPhysicalMaterial, options: CrystalShade
       uCrystalBright: { value: GROOVE_BRIGHT },
       uEtchTex: { value: mat.userData['crystalMask'] as THREE.Texture },
     });
-    shader.vertexShader = 'varying vec3 vCrystalLocal;\n' + shader.vertexShader;
-    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', 'vCrystalLocal = transformed.xyz;\n#include <project_vertex>');
+    shader.vertexShader = `attribute float ${THICK_ATTR};\nvarying float vCrystalThick;\nvarying vec3 vCrystalLocal;\n` + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>',
+      `vCrystalLocal = transformed.xyz;\nvCrystalThick = ${THICK_ATTR};\n#include <project_vertex>`);
 
     const head = `
 uniform sampler2D uCrystalBg;
@@ -471,6 +590,11 @@ uniform float uCrystalF0;
 uniform float uCrystalEtchTrans;
 uniform float uCrystalDark;
 uniform vec3 uCrystalTint;
+uniform float uCrystalHaze;
+uniform vec3 uCrystalHazeColor;
+uniform vec3 uCrystalSigma;
+uniform vec2 uCrystalHazeRange;
+varying float vCrystalThick;
 uniform vec3 uCrystalFrost;
 uniform sampler2D uEtchTex;
 uniform vec3 uTextN;
@@ -485,7 +609,12 @@ uniform float uCrystalGroove;
 uniform float uCrystalGrooveBlur;
 uniform float uCrystalBright;
 uniform mat4 modelMatrix;
+uniform float uCrystalDispersion;
 varying vec3 vCrystalLocal;
+vec2 crystalBgUv( vec3 p ) {
+  vec4 ndc = uCrystalBgProj * vec4( p, 1.0 );
+  return clamp( ndc.xy / max( 1e-5, ndc.w ) * 0.5 + 0.5, vec2( 0.0 ), vec2( 1.0 ) );
+}
 `;
     shader.fragmentShader = head + shader.fragmentShader;
 
@@ -540,13 +669,26 @@ varying vec3 vCrystalLocal;
     // light and refract differently from the facet around them.
     vec3 crystalNEngraved = normalize( crystalN + crystalPerturbW * uCrystalGroove );
     vec3 crystalR = refract( -crystalV, crystalNEngraved, 1.0 / uCrystalIor );
+    // Dispersion: red bends a little less than green, blue a little more, so edges and letter walls
+    // split into faint rainbow fringes.
+    vec3 crystalRr = refract( -crystalV, crystalNEngraved, 1.0 / ( uCrystalIor - uCrystalDispersion ) );
+    vec3 crystalRb = refract( -crystalV, crystalNEngraved, 1.0 / ( uCrystalIor + uCrystalDispersion ) );
     // Cheap parallax: the letter floor is recessed, so it looks through a little less glass.
-    float crystalThick = max( 0.0, uCrystalThickness - crystalLetter * uCrystalGroove );
-    vec3 crystalExit = vCW + crystalR * crystalThick;
-    vec4 crystalNdc = uCrystalBgProj * vec4( crystalExit, 1.0 );
-    vec2 crystalUv = crystalNdc.xy / max( 1e-5, crystalNdc.w ) * 0.5 + 0.5;
-    crystalUv = clamp( crystalUv, vec2( 0.0 ), vec2( 1.0 ) );
-    vec3 crystalTransmitted = texture2D( uCrystalBg, crystalUv ).rgb * uCrystalTint * uCrystalTransmission;
+    // The refraction offset follows the baked thickness: thin edges barely bend the view.
+    float crystalThick = max( 0.0, uCrystalThickness * vCrystalThick - crystalLetter * uCrystalGroove );
+    vec3 crystalBgSample = vec3(
+      texture2D( uCrystalBg, crystalBgUv( vCW + crystalRr * crystalThick ) ).r,
+      texture2D( uCrystalBg, crystalBgUv( vCW + crystalR * crystalThick ) ).g,
+      texture2D( uCrystalBg, crystalBgUv( vCW + crystalRb * crystalThick ) ).b );
+    // Beer's law: the path through the glass is the baked thickness over the refracted ray's cosine,
+    // so thick parts and oblique views absorb more (red first), and thin edges stay clear.
+    float crystalCosR = max( abs( dot( crystalR, crystalNEngraved ) ), 0.3 );
+    vec3 crystalAbsorb = exp( -uCrystalSigma * ( vCrystalThick / crystalCosR ) );
+    vec3 crystalTransmitted = crystalBgSample * uCrystalTint * crystalAbsorb * uCrystalTransmission;
+    // Milky haze: part of the background gives way to the glass's own lit white-blue, so it follows
+    // the reef light (no glow at night); more glass scatters more.
+    float crystalHazeAmt = min( 0.95, uCrystalHaze * mix( uCrystalHazeRange.x, uCrystalHazeRange.y, vCrystalThick ) );
+    crystalTransmitted = mix( crystalTransmitted, outgoingLight * uCrystalHazeColor, crystalHazeAmt );
     crystalTransmitted = mix( crystalTransmitted, crystalTransmitted * uCrystalEtchTrans + uCrystalFrost, crystalEtch );
     // The frosted floor reads a touch brighter than the surrounding clear glass.
     crystalTransmitted *= mix( 1.0, uCrystalBright, crystalEtch );
@@ -615,7 +757,8 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
       const fu = new THREE.Vector3(...split.info.u), fv = new THREE.Vector3(...split.info.v);
       const centre = new THREE.Vector3(...split.info.center);
       const remap = new Int32Array(geo.pos.length / 3).fill(-1);
-      const fpos: number[] = [], fnrm: number[] = [], fuv: number[] = [];
+      const thick = bakeThickness(geo);
+      const fpos: number[] = [], fnrm: number[] = [], fuv: number[] = [], fthick: number[] = [];
       const faceIdx = new Uint32Array(split.faceIdx.length);
       for (let i = 0; i < split.faceIdx.length; i++) {
         const vi = split.faceIdx[i] as number;
@@ -626,6 +769,7 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
           const p = new THREE.Vector3(geo.pos[vi * 3] as number, geo.pos[vi * 3 + 1] as number, geo.pos[vi * 3 + 2] as number);
           fpos.push(p.x, p.y, p.z);
           fnrm.push(fn.x, fn.y, fn.z);
+          fthick.push(thick[vi] as number);
           fuv.push((p.dot(fu) - centre.dot(fu) - split.info.silU0) / split.info.silExtentU,
                    (p.dot(fv) - centre.dot(fv) - split.info.silV0) / split.info.silExtentV);
         }
@@ -635,6 +779,7 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
       faceGeo.setAttribute('position', new THREE.Float32BufferAttribute(fpos, 3));
       faceGeo.setAttribute('normal', new THREE.Float32BufferAttribute(fnrm, 3));
       faceGeo.setAttribute('uv', new THREE.Float32BufferAttribute(fuv, 2));
+      faceGeo.setAttribute(THICK_ATTR, new THREE.Float32BufferAttribute(fthick, 1));
       faceGeo.setIndex(new THREE.BufferAttribute(faceIdx, 1));
       faceGeo.computeBoundingBox(); faceGeo.computeBoundingSphere();
 
@@ -643,6 +788,7 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
       bodyGeo.setAttribute('position', new THREE.Float32BufferAttribute(geo.pos.slice(), 3));
       bodyGeo.setAttribute('normal', new THREE.Float32BufferAttribute(geo.nrm.slice(), 3));
       bodyGeo.setAttribute('uv', new THREE.Float32BufferAttribute(geo.uv.slice(), 2));
+      bodyGeo.setAttribute(THICK_ATTR, new THREE.Float32BufferAttribute(thick, 1));
       bodyGeo.setIndex(new THREE.BufferAttribute(split.bodyIdx, 1));
       bodyGeo.computeBoundingBox(); bodyGeo.computeBoundingSphere();
 
@@ -658,9 +804,10 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
       // The crystal is a transparent object: on the Roku it is baked into the backdrop (behind the
       // fish sprites), not the transparent foreground layer, where its transmission would bake black.
       group.userData['backdropOnly'] = true;
-      const faceMat = makeFaceMaterial(etch, split.info);
+      const depth = Math.max(0.02, maxN - minN);
+      const faceMat = makeFaceMaterial(depth, etch, split.info);
       faceMaterial = faceMat;
-      const body = new THREE.Mesh(bodyGeo, bodyMaterial(Math.max(0.02, maxN - minN), etch, split.info));
+      const body = new THREE.Mesh(bodyGeo, bodyMaterial(depth, etch, split.info));
       body.name = 'crystal-body';
       body.castShadow = body.receiveShadow = true;
       const face = new THREE.Mesh(faceGeo, faceMat);
@@ -677,7 +824,12 @@ export function makeCrystal(group: THREE.Group): THREE.Group {
       n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1], center: [0, 0, 0], extentU: 1, silU0: -0.5, silV0: -0.5, silExtentU: 1, silExtentV: 1,
     });
     for (const child of original) group.add(child);
-    group.traverse((o) => { if (isMesh(o)) o.material = fallback; });
+    group.traverse((o) => {
+      if (!isMesh(o)) return;
+      o.material = fallback;
+      const n = o.geometry.getAttribute('position')?.count ?? 0;
+      o.geometry.setAttribute(THICK_ATTR, new THREE.Float32BufferAttribute(new Float32Array(n).fill(0.5), 1));
+    });
   } else {
     for (const child of original) {
       child.traverse((o) => { if (isMesh(o)) o.geometry.dispose(); });
