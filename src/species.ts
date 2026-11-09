@@ -140,7 +140,8 @@ const DEFINITIONS: SpeciesDefinition[] = [
     anatomy: { bodyDepthSL: [0.28, 0.38], dorsalSoft: { spines: 0, rays: 11 }, anal: { spines: 3, rays: 7 }, pectoralRays: 14, pelvic: { spines: 1, rays: 5 } },
     albedoGain: [1.131, 0.8, 1.0],   // lab patch comparison (white-referenced, 4 patches), half strength
     // Proportions in SL (u runs over SL: len 0.765 TL, the caudal fin the other 0.235), from side-on photos
-    // and renders of lionfish models: eye 0.06 across, just behind a vertical from the end of the mouth
+    // and renders of lionfish models: eye about 0.08 across (snout tip to eye about three eye widths, as in
+    // side-on photos), just behind a vertical from the end of the mouth
     // slit (its centre 0.2 behind the snout), almost on the dorsal profile and set on a small raised mound
     // (eye.boss); gill margin about 0.38 (body.gillU, since the eye no longer sets it); supraocular tentacles about 0.2; the longest dorsal spines
     // 0.37-0.5 (1.1-1.7 body depths). mouth: the snout tip sits low; headW: a narrow, compressed face.
@@ -167,7 +168,7 @@ const DEFINITIONS: SpeciesDefinition[] = [
           [0.261, -0.16], [0.327, -0.14], [0.392, -0.13], [0.458, -0.2], [0.523, -0.23], [0.588, -0.23], [0.654, -0.22], [0.719, -0.18],
           [0.784, -0.15], [0.85, -0.12], [0.915, -0.1], [0.961, -0.1], [1, -0.11]],
       } },
-    eye: { u: 0.2, v: -0.75, r: 0.024, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8, boss: 1.4 },
+    eye: { u: 0.2, v: -0.75, r: 0.03, iris: '#8a3a22', irisR: 0.98, pupil: 0.45, fleck: '#3a140a', fleckR: 0.8, boss: 1.4 },
     mouth: { u: 0.16, v: 0.85, v0: -0.3, lining: 0.018 },   // oblique, along the jaw edge, the corner just ahead of the eye
     pattern: [
       { op: 'vgrad', stops: [[-1, '#f0e6dc'], [1, '#f8f2ea']] },
