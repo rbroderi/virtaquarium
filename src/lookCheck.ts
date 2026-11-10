@@ -7,7 +7,8 @@
 //   fanworm   the most open feather-duster worm
 //   <name>    a scenery piece by its object name (rock_a, coral_table, ...)
 // URL options: &at=5,30 (seconds), &close=station,cleanerwrasse, &tag=name, &night=1 (lights off),
-// &light=0.35 (fixed level), &hour=18 (jump the clock to an hour, for dawn/dusk/night colour).
+// &light=0.35 (fixed level), &hour=18 (jump the clock to an hour, for dawn/dusk/night colour),
+// &ride=<species id or index> (open reef: from that fish's eye; pair with &close= to skip close-ups).
 // Reports { files, stats } to /__done, stats per frame: mean luminance and saturation, so looks can be
 // compared over time without opening the pictures.
 import * as THREE from 'three';
@@ -78,7 +79,7 @@ export async function main(aq: AquariumHandle): Promise<void> {
   // The CDP screenshot is of the whole page; the WebGL path reads the canvas only. Hide the overlays so
   // both capture the canvas alone (the glass vignette and the fading hint would otherwise darken/smear
   // the WebGPU frame).
-  for (const id of ['glass', 'hint']) {
+  for (const id of ['glass', 'hint', 'sound-btn', 'ride']) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
@@ -101,6 +102,14 @@ export async function main(aq: AquariumHandle): Promise<void> {
   if (hide.includes('fish')) for (const f of world.fish) f.model.visible = false;
   if (hide.length) aq.scene.traverse((o) => { if (hide.includes(o.name)) o.visible = false; });
   aq.fitCanvas();
+  // &ride=<species id or fish index> (open reef): frames from that fish's eye instead of the tank camera.
+  const rideOn = q.get('ride');
+  if (rideOn !== null) {
+    const i = Number(rideOn);
+    const fish = Number.isInteger(i) ? world.fish[i] : world.fish.find((f) => f.sp.id === rideOn);
+    if (aq.ride && fish) aq.ride.enter(fish);
+    else console.warn(`look check: cannot ride "${rideOn}"`, aq.ride ? 'no such fish' : 'not the open reef');
+  }
   {
     // A look check builds one pinned frame size on both backends (stage.ts CHECK_VIEW); log the geometry
     // so a run can prove two captures came from the same scene, not just the same seed.

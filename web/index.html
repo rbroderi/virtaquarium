@@ -81,6 +81,14 @@
   #sound-btn[aria-pressed="false"] .on { display: none; }
   #sound-btn[aria-pressed="false"] .off { display: inline; }
   body.touch #tanks { display: none; }
+  /* The open reef's fish's-eye bar, bottom left beside the sound button (ui.ts showRideBar). */
+  #ride { position: fixed; left: 68px; bottom: 16px; display: none; align-items: center; gap: 4px; padding: 4px 4px 4px 14px; border-radius: 20px; background: rgba(0, 20, 30, 0.55); color: #cfe6f2; font-size: 13px; transition: opacity 0.6s; }
+  #ride.show { display: flex; }
+  body.idle:not(.fresh) #ride { opacity: 0; }
+  #ride .who { margin-right: 6px; }
+  #ride button { font: inherit; color: #cfe6f2; background: none; border: 0; border-radius: 14px; padding: 6px 12px; cursor: pointer; }
+  #ride button:hover { background: rgba(255, 255, 255, 0.1); }
+  #ride button[hidden] { display: none; }
   body.touch #brain { max-height: calc(100vh - 104px); }
   #menu { position: fixed; right: 16px; bottom: 72px; min-width: 190px; padding: 6px; border-radius: 14px; background: rgba(4, 24, 34, 0.8); backdrop-filter: blur(6px); display: none; flex-direction: column; }
   #menu.open { display: flex; }
@@ -108,8 +116,10 @@
 <div id="clock"></div>
 <div id="tanks" role="group" aria-label="Tank">
   <button type="button" data-scenery="reef">Reef</button>
+  <button type="button" data-scenery="openreef">Open reef</button>
   <button type="button" data-scenery="jelly">Moon jellies</button>
 </div>
+<div id="ride"><span class="who"></span><button type="button" data-ride="next">Pick one</button><button type="button" data-ride="leave" hidden>Leave</button></div>
 <div id="help">
   <div><kbd>click</kbd>drop food (or select a fish or critter; click the water to close its panel)</div>
   <div><kbd>drag</kbd>look along the tank</div>
@@ -121,7 +131,8 @@
   <div><kbd>N</kbd>jump between noon and midnight</div>
   <div><kbd>&lt;</kbd><kbd>&gt;</kbd>slow down / speed up the day-night clock</div>
   <div><kbd>R</kbd>back to the real-time clock</div>
-  <div><kbd>T</kbd>switch between the reef and the moon jelly tank</div>
+  <div><kbd>T</kbd>switch tank: reef, open reef, moon jellies</div>
+  <div>Open reef: <kbd>click</kbd>a fish to see through its eyes, <kbd>Tab</kbd>next fish, <kbd>Esc</kbd>back</div>
   <div><kbd>Space</kbd>pause</div>
   <div><kbd>M</kbd>ambient sound on / off</div>
   <div><kbd>Esc</kbd>close the inspect panel</div>

@@ -9,7 +9,8 @@ const ENVIRONMENT_SEGMENTS: readonly [number, number] = [64, 32];
 const ENVIRONMENT_BLUR_SIGMA = 0.02;
 const DRAW_FIRST = -1;
 
-export interface BackdropUniforms { uBase: THREE.IUniform<THREE.Color> }
+/** uFlat 1 drops the darker-below grade (the open reef: a fully fogged object is then the backdrop colour). */
+export interface BackdropUniforms { uBase: THREE.IUniform<THREE.Color>; uFlat: THREE.IUniform<number> }
 export type WaterBackdrop = THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> & { readonly backdropUniforms: BackdropUniforms };
 
 /**
@@ -18,13 +19,13 @@ export type WaterBackdrop = THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMateria
  * (the same objects as material.uniforms).
  */
 export function makeWaterBackdrop(): WaterBackdrop {
-  const uniforms: BackdropUniforms = { uBase: { value: INSCATTER_DAY.clone() } };
+  const uniforms: BackdropUniforms = { uBase: { value: INSCATTER_DAY.clone() }, uFlat: { value: 0 } };
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: { ...uniforms },
     vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; gl_Position.z = gl_Position.w; }',
     fragmentShader: UW_GLSL + `
-      uniform vec3 uBase; varying vec3 vW;
+      uniform vec3 uBase; uniform float uFlat; varying vec3 vW;
       void main(){
         vec3 dir = normalize(vW - cameraPosition);
         // Start the infinite path at the glass, at the height the ray crosses it.
@@ -34,7 +35,7 @@ export function makeWaterBackdrop(): WaterBackdrop {
         // times brighter than looking level, and downward light is dimmer still (the radiance
         // distribution of the water column). Across the window this reads as open water fading darker
         // towards the bottom of the frame instead of a flat teal.
-        float grade = mix(0.55, 1.3, smoothstep(-0.3, 0.35, dir.y));
+        float grade = mix(mix(0.55, 1.3, smoothstep(-0.3, 0.35, dir.y)), 1.0, uFlat);
         gl_FragColor = vec4(uwInscatter(uBase, dir, y) * UW_WB * grade, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

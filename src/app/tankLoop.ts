@@ -52,6 +52,8 @@ export interface TankParts {
   readonly motionBlur: boolean;
   /** Called at the end of each step (the UI's tags and panel). */
   readonly afterStep: (dt: number) => void;
+  /** The open reef's fish's-eye view: while it rides a fish it drives the camera instead of the drift and pan. */
+  readonly fishView?: { readonly rider: unknown; update(dt: number): void } | null;
 }
 
 export class TankLoop {
@@ -97,7 +99,7 @@ export class TankLoop {
     this.fitCanvas();
     const dt = Math.min(this.timer.update().getDelta(), MAX_STEP);
     if (!this.paused) this.step(dt);
-    else this.parts.stage.frameView();   // the view can still be dragged while paused
+    else if (!this.riding) this.parts.stage.frameView();   // the view can still be dragged while paused
     this.present();
   }
 
@@ -125,9 +127,12 @@ export class TankLoop {
     if (!this.parts.isJellyTank && stage.caustics) stage.caustics.update();   // no surface in view in the jelly tank
     snow.update(dt, this.time, this.flow);
     bubbles?.update(dt, this.time, this.flow, world.light);
-    if (this.parts.drift) this.driftCamera();
-    stage.pan.advance(dt);
-    stage.frameView();
+    if (this.riding) this.parts.fishView?.update(dt);
+    else {
+      if (this.parts.drift) this.driftCamera();
+      stage.pan.advance(dt);
+      stage.frameView();
+    }
     this.parts.afterStep(dt);
     if (stage.photo ?? stage.post?.photo) this.autofocus(dt);
   }
@@ -171,7 +176,12 @@ export class TankLoop {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    this.parts.stage.frameView();
+    if (!this.riding) this.parts.stage.frameView();
+  }
+
+  /** Whether the camera is riding a fish (the open reef's fish's-eye view). */
+  private get riding(): boolean {
+    return !!this.parts.fishView?.rider;
   }
 
   private updateLight(dt: number): void {

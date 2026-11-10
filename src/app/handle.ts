@@ -3,6 +3,7 @@
 // as a parameter instead of reaching for a global.
 import type * as THREE from 'three';
 import type { World } from '../world.js';
+import type { Fish } from '../fish.js';
 import type { TankScene } from '../reef/types.js';
 import type { Jelly } from '../jelly.js';
 import type { Critter } from '../critters.js';
@@ -36,6 +37,10 @@ export interface AquariumHandle {
   present(): void | Promise<void>;
   /** Match the canvas to its CSS size. */
   fitCanvas(): void;
+  /** The open reef's fish's-eye view (null in the other tanks). */
+  readonly ride: { readonly rider: Fish | null; enter(fish: Fish): void; exit(): void } | null;
+  /** The open reef's scenery beyond the tank (the perf check hides it to measure its cost). */
+  readonly openReef: THREE.Object3D | null;
 }
 
 /** Each check module exports `main(aq)`; the page loads the one ?check= names on demand. */

@@ -15,6 +15,10 @@ const BEAM_ATTENUATION_PER_M = [0.60, 0.17, 0.12] as const;
 const DOWNWELLING_ATTENUATION_PER_M = [0.45, 0.07, 0.05] as const;
 export const SURFACE_Y = 9.4;
 export const GLASS_Z = 3.3;
+/** Path length (units) past which fog.density's extra turbidity applies (see FOG_FRAGMENT). */
+export const FAR_WATER = 16;
+/** The extra turbidity eases in over about this distance past FAR_WATER (x^2 / (x + ramp)). */
+export const FAR_WATER_RAMP = 20;
 
 /** Shared time and caustic-strength uniforms (every water-lit material reads them). */
 export const waterUniforms: { uTime: THREE.IUniform<number>; uCaustic: THREE.IUniform<number> } = {
@@ -30,6 +34,8 @@ const vec3 UW_C = ${perUnitVec3(BEAM_ATTENUATION_PER_M)};
 const vec3 UW_KD = ${perUnitVec3(DOWNWELLING_ATTENUATION_PER_M)};
 const float UW_SURFACE = ${SURFACE_Y.toFixed(2)};
 const float UW_GLASS = ${GLASS_Z.toFixed(2)};
+const float UW_FAR = ${FAR_WATER.toFixed(2)};
+const float UW_FAR_RAMP = ${FAR_WATER_RAMP.toFixed(2)};
 // Camera white balance: undo the downwelling attenuation at reef depth, like an
 // underwater photographer's custom white balance (the eye adapts the same way).
 const vec3 UW_WB = exp(UW_KD * 7.0);   // balanced for the reef zone (~0.3 m above the sand)
@@ -79,7 +85,13 @@ const FOG_FRAGMENT = `#ifdef USE_FOG
       #else
         float uwK = 1.0;
       #endif
-      vec3 T = exp(-UW_C * uwPath(vUWWorld, cameraPosition) * uwK);
+      // uwK is extra turbidity beyond UW_FAR: the tank (1) is the nominal water; the open reef raises it
+      // so the endless reef fades out within the backdrop's radius while the near reef keeps its colour.
+      float uwD = uwPath(vUWWorld, cameraPosition);
+      // Eased in over UW_FAR_RAMP, so the change of rate leaves no crease across the seabed.
+      float uwX = max(0.0, uwD - UW_FAR);
+      uwD += uwX * uwX / (uwX + UW_FAR_RAMP) * (uwK - 1.0);
+      vec3 T = exp(-UW_C * uwD);
       vec3 Td = exp(-UW_KD * max(0.0, UW_SURFACE - vUWWorld.y));
       float yMid = mix(vUWWorld.y, min(cameraPosition.y, UW_SURFACE), 0.5);
       gl_FragColor.rgb = (gl_FragColor.rgb * Td * T + uwInscatter(fogColor, uwDir, yMid) * (1.0 - T)) * UW_WB;
@@ -90,7 +102,7 @@ const isUnderwaterMediumInstalled = (): boolean => THREE.ShaderChunk.fog_fragmen
 
 /**
  * Patches the fog chunks once, before any material compiles. fogColor = inscatter base radiance,
- * fogDensity = turbidity multiplier (1 = nominal). Idempotent.
+ * fogDensity = turbidity multiplier on the path beyond FAR_WATER (1 = nominal water throughout). Idempotent.
  */
 export function installUnderwaterMedium(): void {
   if (isUnderwaterMediumInstalled()) return;

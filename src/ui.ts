@@ -45,6 +45,8 @@ export interface UIOptions {
   readonly crystal: CrystalSign | null;
   /** The view's pan, which a drag across the tank moves (view.ts). */
   readonly pan: { readonly canDrag: boolean; drag(dx: number, w: number): void };
+  /** The open reef's fish's-eye view: clicking a fish rides it (null in the other tanks). */
+  readonly ride?: RideControl | null;
 }
 
 /** A touch-menu entry; `on` (when given) shows it as a toggle that is currently on. */
@@ -54,14 +56,26 @@ export interface MenuItem {
   readonly on?: () => boolean;
 }
 
-/** The tanks the switcher offers. */
-export type TankKind = 'reef' | 'jelly';
+/** The tanks the switcher offers, in the order T steps through them. */
+const TANKS = ['reef', 'openreef', 'jelly'] as const;
+export type TankKind = (typeof TANKS)[number];
+const TANK_LABEL: Readonly<Record<TankKind, string>> = { reef: 'Reef tank', openreef: 'Open reef', jelly: 'Moon jelly tank' };
+const isTankKind = (v: unknown): v is TankKind => (TANKS as readonly unknown[]).includes(v);
+const nextTank = (k: TankKind): TankKind => TANKS[(TANKS.indexOf(k) + 1) % TANKS.length] ?? 'reef';
 
 /** Reloads the page as the given tank, keeping the rest of the URL. */
 function switchTank(to: TankKind): void {
   const url = new URL(location.href);
   if (to === 'reef') url.searchParams.delete('scenery'); else url.searchParams.set('scenery', to);
   location.assign(url.href);
+}
+
+/** The open reef's fish's-eye view (app/fishView.ts) as the overlay drives it. */
+export interface RideControl {
+  readonly rider: Fish | null;
+  enter(fish: Fish): void;
+  exit(): void;
+  onChange(listener: (fish: Fish | null) => void): void;
 }
 
 export class UI {
@@ -95,9 +109,11 @@ export class UI {
   private readonly cardHost: HTMLDivElement;
   private readonly cardGo: HTMLButtonElement;
   private readonly cardDisclosure: HTMLDivElement;
+  private readonly ride: RideControl | null;
 
-  constructor({ world, camera, renderer, onFeed, scenery, switcher, crystal, pan }: UIOptions) {
+  constructor({ world, camera, renderer, onFeed, scenery, switcher, crystal, pan, ride = null }: UIOptions) {
     this.pan = pan;
+    this.ride = ride;
     this.scenery = scenery;
     this.switcher = switcher;
     this.world = world;
@@ -135,7 +151,37 @@ export class UI {
     requireElement('brain-close', HTMLButtonElement).addEventListener('click', () => this.select(null));
     this.hideIdleCursor();
     if (switcher) this.showSwitcher();
+    if (ride) this.showRideBar(ride);
     this.setUpMenu();
+  }
+
+  /** The open reef's bar, bottom left: who you're riding, the next fish, and the way back. */
+  private showRideBar(ride: RideControl): void {
+    const bar = requireElement('ride', HTMLDivElement);
+    const who = bar.querySelector<HTMLElement>('.who'), next = bar.querySelector<HTMLButtonElement>('[data-ride="next"]');
+    const leave = bar.querySelector<HTMLButtonElement>('[data-ride="leave"]');
+    const show = (fish: Fish | null): void => {
+      if (who) who.textContent = fish ? `${fish.name} · ${fish.sp.name}` : 'Click a fish to swim with it';
+      if (next) next.textContent = fish ? 'Next fish' : 'Pick one';
+      if (leave) leave.hidden = !fish;
+    };
+    next?.addEventListener('click', () => this.rideNext());
+    leave?.addEventListener('click', () => ride.exit());
+    ride.onChange(show);
+    show(ride.rider);
+    bar.classList.add('show');
+    this.hint.textContent = window.matchMedia('(pointer: coarse)').matches
+      ? 'Tap a fish to see the reef through its eyes'
+      : 'Click a fish to see the reef through its eyes · Tab next fish · Esc back · H for help';
+  }
+
+  /** Ride the fish after the current one (the first when not riding). */
+  private rideNext(): void {
+    const ride = this.ride, fish = this.world.fish.filter((f) => f.pickable || f === ride?.rider);
+    if (!ride || !fish.length) return;
+    const i = ride.rider ? fish.indexOf(ride.rider) : -1;
+    const to = fish[(i + 1) % fish.length];
+    if (to) ride.enter(to);
   }
 
   /**
@@ -176,13 +222,17 @@ export class UI {
   private setUpMenu(): void {
     if (!window.matchMedia('(pointer: coarse)').matches) return;
     document.body.classList.add('touch');
-    this.hint.textContent = 'Tap to feed · tap a fish or critter to inspect it · drag to look along the tank';
+    if (!this.ride) this.hint.textContent = 'Tap to feed · tap a fish or critter to inspect it · drag to look along the tank';
+    const ride = this.ride;
     this.menuItems.push(
       { label: 'Feed', run: () => this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD) },
-      { label: 'Next fish', run: () => this.cycle() },
+      { label: 'Next fish', run: () => (ride ? this.rideNext() : this.cycle()) },
+      ...(ride ? [{ label: 'Leave the fish', run: () => ride.exit() }] : []),
       { label: 'Show thoughts', run: () => this.toggleTags(), on: () => this.showTags },
     );
-    if (this.switcher) this.menuItems.push({ label: this.scenery === 'jelly' ? 'Reef tank' : 'Moon jelly tank', run: () => switchTank(this.scenery === 'jelly' ? 'reef' : 'jelly') });
+    if (this.switcher) {
+      for (const k of TANKS) if (k !== this.scenery) this.menuItems.push({ label: TANK_LABEL[k], run: () => switchTank(k) });
+    }
     if (document.fullscreenEnabled) {
       this.menuItems.push({ label: 'Full screen', run: () => { void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()); }, on: () => !!document.fullscreenElement });
     }
@@ -230,7 +280,7 @@ export class UI {
   private showSwitcher(): void {
     const box = requireElement('tanks', HTMLDivElement);
     for (const b of box.querySelectorAll<HTMLButtonElement>('button[data-scenery]')) {
-      const to = b.dataset['scenery'] === 'jelly' ? 'jelly' : 'reef';
+      const to = isTankKind(b.dataset['scenery']) ? b.dataset['scenery'] : 'reef';
       b.setAttribute('aria-pressed', String(to === this.scenery));
       b.addEventListener('click', () => { if (to !== this.scenery) switchTank(to); });
     }
@@ -245,11 +295,11 @@ export class UI {
     if (k === 'b') this.toggleTags();
     if (k === 'h' || k === '?') this.help.classList.toggle('show');
     if (k === 'f') this.onFeed((Math.random() - 0.5) * KEY_FEED_SPREAD);
-    if (k === 'escape') { this.select(null); this.closeCard(); }
-    if (k === 't' && this.switcher) switchTank(this.scenery === 'jelly' ? 'reef' : 'jelly');
+    if (k === 'escape') { this.select(null); this.closeCard(); this.ride?.exit(); }
+    if (k === 't' && this.switcher) switchTank(nextTank(this.scenery));
     if (k === 'tab') {
       e.preventDefault();
-      this.cycle();
+      if (this.ride) this.rideNext(); else this.cycle();
     }
   }
 
@@ -292,8 +342,22 @@ export class UI {
       const d = this.ray.ray.distanceToPoint(c.pos) / c.pickRadius;
       if (d < bestD) { bestD = d; best = c; }
     }
+    // In the open reef a fish is ridden rather than inspected.
+    const fish = this.ride && best ? this.world.fish.find((f) => f === best) : undefined;
+    if (this.ride && fish) {
+      this.select(null);
+      this.closeCard();
+      this.ride.enter(fish);
+      return;
+    }
     if (best) {
       this.select(best);
+      this.closeCard();
+      return;
+    }
+    // From a fish's eye a click on open water only closes what is open (there is no glass to feed at).
+    if (this.ride?.rider) {
+      this.select(null);
       this.closeCard();
       return;
     }

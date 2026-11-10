@@ -112,6 +112,14 @@ describe('URL overrides and loadTank', () => {
     expect(tank.fish).toEqual([{ species: 'moon', count: 6, names: [] }]);
   });
 
+  it('stocks the open reef as the reef tank', () => {
+    const reef = normalize(applyUrlOverrides(undefined, new URLSearchParams('scenery=reef'), CATALOGUE)).tank;
+    const { tank, warnings } = normalize(applyUrlOverrides(undefined, new URLSearchParams('scenery=openreef'), CATALOGUE));
+    expect(tank.scenery).toBe('openreef');
+    expect(tank.fish).toEqual(reef.fish);
+    expect(warnings).toEqual([]);
+  });
+
   it('loads ?tank= through the injected fetcher', async () => {
     const urls: string[] = [];
     const tank = await loadTank(new URLSearchParams('tank=tanks/a.json'), CATALOGUE, async (url) => {

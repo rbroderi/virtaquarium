@@ -89,11 +89,13 @@ function isBot(req: http.IncomingMessage): boolean {
 }
 
 /**
- * The only page a public deploy shows is the tank: the reef, or the moon jelly tank (?scenery=jelly).
- * Any other query (checks, tank documents, debug flags) is dropped by redirecting to the clean URL.
+ * The only page a public deploy shows is the tank: the reef, the open reef (?scenery=openreef) or the
+ * moon jelly tank (?scenery=jelly). Any other query (checks, tank documents, debug flags) is dropped by
+ * redirecting to the clean URL.
  */
 function publicPageQuery(q: URLSearchParams): string {
-  return q.get('scenery') === 'jelly' ? '?scenery=jelly' : '';
+  const scenery = q.get('scenery');
+  return scenery === 'jelly' || scenery === 'openreef' ? `?scenery=${scenery}` : '';
 }
 
 let retiredScenery: ReadonlySet<string> | null = null;

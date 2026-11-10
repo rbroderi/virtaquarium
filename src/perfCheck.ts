@@ -5,6 +5,8 @@
 //   reef       with and without the reef (what its triangles and materials cost)
 //   fishLod    the fish bodies' levels of detail on and off (lod.ts)
 //   res        full and half the pixels (fill-rate and post-processing share)
+//   openReef   the open reef's scenery beyond the tank shown and hidden (?scenery=openreef only;
+//              &ride=<species id> measures from that fish's eye)
 // and the triangles drawn per frame in each case.
 import { setLodEnabled } from './lod.js';
 import { pendingSkinSave, pendingVariantCount, startIdleVariantPainting } from './fishModel.js';
@@ -39,6 +41,10 @@ export async function main(aq: AquariumHandle): Promise<void> {
   };
   const draw = async (): Promise<void> => { await present(); };
   aq.fitCanvas();
+  // Open reef: &ride=<species id> times the fish's-eye view (the endless reef fills more of it).
+  const openReef = aq.openReef, rideOn = q.get('ride');
+  const rideFish = rideOn === null ? undefined : aq.world.fish.find((f) => f.sp.id === rideOn);
+  if (aq.ride && rideFish) aq.ride.enter(rideFish);
   for (let i = 0; i < WARM_UP_FRAMES; i++) { step(STEP); await draw(); }   // compile and settle
   await finish();
 
@@ -75,6 +81,8 @@ export async function main(aq: AquariumHandle): Promise<void> {
     fishLod: await compare(() => setLodEnabled(true), () => setLodEnabled(false)),
     reef: await compare(() => { reef.group.visible = true; }, () => { reef.group.visible = false; }),
     res: await compare(resolution(1), resolution(Math.SQRT1_2)),
+    ...(openReef ? { openReef: await compare(() => { openReef.visible = true; }, () => { openReef.visible = false; }) } : {}),
+    riding: aq.ride?.rider?.sp.id ?? null,
     gpu: isGpu ? 'WebGPU' : gpuName(gl as WebGLRenderingContext),
   };
   resolution(1)();

@@ -33,6 +33,9 @@ import { Feeder, type TankEvents } from './app/feeder.js';
 import { stockTank } from './app/stocking.js';
 import { trackViewer } from './app/viewer.js';
 import { TankLoop } from './app/tankLoop.js';
+import { FishView } from './app/fishView.js';
+import { buildOpenReef, openTheWater, type OpenReef } from './openReef.js';
+import type { Fish } from './fish.js';
 import { Ambience } from './app/ambience.js';
 import { loadReefLightFingerprint } from './app/sourceFingerprint.js';
 import type { AquariumHandle, CheckModule } from './app/handle.js';
@@ -62,6 +65,9 @@ const loading = LoadingScreen.fromPage();
 /** Let the bar paint before a long synchronous step (the page can't repaint during one). */
 const paintLoading = (): Promise<void> => loading?.paint() ?? Promise.resolve();
 
+/** The open reef's scenery beyond the tank (buildScenery sets it in that tank only). */
+let openReef: OpenReef | null = null;
+
 async function buildScenery(stage: Stage, tank: Tank, options: AppOptions, timer: StartupTimer): Promise<TankScene> {
   if (tank.scenery === 'jelly') {
     // The jelly tank is a backlit blue void with only jellies in it: no reef, sand or surface.
@@ -76,6 +82,8 @@ async function buildScenery(stage: Stage, tank: Tank, options: AppOptions, timer
   await paintLoading();
   const reef = buildReef(stage.scene, stage.tankWidth, tank.seed, scenery, CAMERA_BASE);
   console.info('Planted:', JSON.stringify(reef.planted), 'plants loaded:', Object.keys(scenery.plants).join(', '));
+  // The open reef: the same tank with no glass, and an endless, cheap reef beyond its bounds.
+  if (tank.scenery === 'openreef') openReef = buildOpenReef({ scene: stage.scene, reef, scenery, tankWidth: stage.tankWidth, seed: tank.seed });
   return reef;
 }
 
@@ -304,6 +312,7 @@ async function main(): Promise<void> {
   const bubbles = reef.bubbler ? new Bubbles(stage.scene, reef.bubbler, rng) : null;
   const surface = stage.gpu ? makeGpuSurface(stage.tankWidth) : makeSurface(stage.tankWidth);
   if (!isJellyTank && surface) stage.scene.add(surface);
+  if (openReef) openTheWater({ gpu: stage.gpu, fog: stage.fog, backdrop: stage.backdrop, surface });
 
   const bounds = swimBox(stage);
   await skinsPainted;
@@ -325,7 +334,11 @@ async function main(): Promise<void> {
   // Feeding is an event: the auto-feeder, a click and the F key all publish it; the world drops food.
   const bus = new EventBus<TankEvents>();
   bus.on('feed', ({ x }) => world.dropFood(x));
-  const ui = new UI({ world, camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }), scenery: isJellyTank ? 'jelly' : 'reef', switcher: options.check === null, crystal, pan: stage.pan });
+  const fishView = openReef ? new FishView<Fish>(stage.camera, () => stage.frameView(), stage.gpu) : null;
+  const ui = new UI({
+    world, camera: stage.camera, renderer: stage.renderer, onFeed: (x) => bus.emit('feed', { x, automatic: false }),
+    scenery: isJellyTank ? 'jelly' : openReef ? 'openreef' : 'reef', switcher: options.check === null, crystal, pan: stage.pan, ride: fishView,
+  });
   trackViewer(stage.canvas, stage.camera, world, bounds);
 
   const lighting = new LightingController({ stage, surface, reef, toneGain: options.tone.gain });
@@ -337,7 +350,7 @@ async function main(): Promise<void> {
   const daylight = Number.isFinite(lookHour) ? wallClockDaylight() : daylightFor(followClock);
   const loop = new TankLoop({
     stage, world, reef, snow, bubbles, surface, lighting,
-    daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur,
+    daylight, feeder, ao, isJellyTank, drift: tank.drift, motionBlur: options.motionBlur, fishView,
     afterStep: (dt) => { ui.update(); crystal?.update(dt); },
   });
   bindKeys(loop, daylight, ui, () => toggleReefLight(reef));
@@ -348,6 +361,7 @@ async function main(): Promise<void> {
     THREE, scene: stage.scene, camera: stage.camera, renderer: stage.renderer as THREE.WebGLRenderer, world, reef, jellies: world.jellies, critters: world.critters, SPECIES,
     caustics: stage.caustics as unknown as AquariumHandle['caustics'], water: stage.water as NonNullable<Stage['water']>, snow, bubbles, surface: surface as unknown as AquariumHandle['surface'], daylight,
     setLight: (l) => loop.setLight(l), step: (dt) => loop.step(dt), present: () => loop.present(), fitCanvas: () => loop.fitCanvas(),
+    ride: fishView, openReef: openReef?.group ?? null,
   };
   debugHooks.aquarium = aquarium;   // exposed for the Roku exporter and debugging
 

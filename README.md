@@ -34,7 +34,8 @@ opens the browser for you.
 | < / > | slow down / speed up the day-night clock |
 | R | back to the real-time clock |
 | L | toggle the baked reef light |
-| T | switch between the reef and the moon jelly tank (also the buttons bottom right) |
+| T | switch tank: reef, open reef, moon jellies (also the buttons bottom right) |
+| click, Tab, Esc | open reef: swim with a fish and see through its eyes, ride the next one, back to the tank view |
 | Space | pause |
 | H | help |
 
@@ -48,6 +49,7 @@ opens the browser for you.
 | `?drift=0` | no camera parallax |
 | `?zoom=1` | show the whole tank (default is a 1/1.6 window near the sand) |
 | `?pan=0` | hold the camera still (by default it pans slowly across the tank and back, once every 2 minutes; the Roku bake pans only with `?pan=1`) |
+| `?scenery=openreef` | the open reef: the reef tank's fish and reef with no glass, an endless reef fading into the blue beyond, and a fish's-eye view of any fish you click |
 | `?scenery=jelly` | the jelly tank: moon jellies in a backlit deep-blue kreisel |
 | `?tank=tanks/example.json` | stock the tank from a tank document (see `schema/`) |
 | `?rig=led` | light the tank with an aquarium LED bar instead of the sun |
@@ -279,7 +281,7 @@ tank.
 `railway.json` deploys the site on [Railway](https://railway.com): it builds with `bun run build` and runs
 `bun tools/serve.ts --public` on the port Railway gives it. In public mode the server is read-only. It
 serves only what the tank page loads (no lab, bake or Roku pages, reference photos, source maps or check
-output), and the page URL takes only `?scenery=jelly`. Responses are brotli- or gzip-encoded when the
+output), and the page URL takes only `?scenery=jelly` or `?scenery=openreef`. Responses are brotli- or gzip-encoded when the
 browser accepts it and the file shrinks; compressed copies are cached in memory until the file changes. Crawlers, scripted clients and automated browsers
 (recognised by user agent, or by `navigator.webdriver` in the page) get a static about page with a
 poster image instead of the tank, and a 403 for the scripts and models; `robots.txt` asks them to stay

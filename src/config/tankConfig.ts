@@ -11,8 +11,9 @@ export const TANK_VERSION = 1;
 
 /** Reef layouts buildReef() knows (bake.ts bakes each). */
 export const REEF_SCENERY = ['reef'] as const;
-/** Every tank kind: the reef layouts, and the jelly tank (a backlit blue kreisel, no scenery). */
-export const TANK_SCENERY = [...REEF_SCENERY, 'jelly'] as const;
+/** Every tank kind: the reef layouts, the open reef (the reef layout with no glass, in an endless reef,
+ *  seen from a fish), and the jelly tank (a backlit blue kreisel, no scenery). */
+export const TANK_SCENERY = [...REEF_SCENERY, 'openreef', 'jelly'] as const;
 export type Scenery = (typeof TANK_SCENERY)[number];
 export type Habitat = 'reef' | 'jelly';
 
