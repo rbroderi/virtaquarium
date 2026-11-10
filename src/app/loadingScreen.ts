@@ -20,6 +20,7 @@ const PLAN: readonly StagePlan[] = [
   { name: 'load scenery', label: 'Loading rocks and corals', weight: 10 },
   { name: 'build reef', label: 'Building the reef', weight: 12 },
   { name: 'reef light bake', label: 'Lighting the reef', weight: 40 },
+  { name: 'wait for skin painters', label: 'Painting the fish', weight: 1 },   // skins the cache lacked, painted in workers since the skin-cache stage
   { name: 'fish and critters', label: 'Releasing the fish', weight: 12 },
   { name: 'compile shaders', label: 'Preparing shaders', weight: 6 },
   { name: 'first frame (shader compile)', label: 'Almost there', weight: 8 },

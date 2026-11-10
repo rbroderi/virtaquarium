@@ -14,7 +14,7 @@ import { bodyGeometry } from './bodyGeometry.js';
 import { detailFor, type SkinDetail } from './detail.js';
 import { skinCache, skinKey } from './skinCache.js';
 import { variantSpecies } from './variant.js';
-import { paintVariantMaps } from './variantPaint.js';
+import { paintBaseMaps, paintVariantMaps } from './variantPaint.js';
 
 /** The painted canvases a species' textures were made from (the Roku bake and lab read them). */
 export interface SpeciesCanvases { skin: TexImage; fins: HTMLCanvasElement; pect: HTMLCanvasElement }
@@ -106,7 +106,7 @@ export function speciesAssets(sp: Species, variant = 0): SpeciesAssets {
   }
   const finNormal = fins.normal, finData = fins.data;
   if (!finNormal || !finData) throw new Error(`${sp.id}: fin relief maps missing`);
-  const avg = meanColour(skin.map);
+  const avg = hit?.avg ? new THREE.Color().setRGB(hit.avg[0], hit.avg[1], hit.avg[2], THREE.SRGBColorSpace) : meanColour(skin.map);
   const pect = vsp.pectoral ? paintPectoral(vsp) : makeCanvas(4, 4);
   const eye = paintEye(vsp);
   const finGeo = mergeGeometries(fins.meshes.flatMap((m) => {
@@ -126,6 +126,26 @@ export function speciesAssets(sp: Species, variant = 0): SpeciesAssets {
   };
   cache.set(cacheKey, assets);
   return assets;
+}
+
+/**
+ * Paints, in the painter workers, the variant-0 skin and fin relief maps of every species the skin cache
+ * doesn't have (about a second each, which used to block stocking), and records each as a cache hit so
+ * stocking builds from it as from a saved skin; the PNGs are saved back as a live paint's would be.
+ * Started before the scenery loads, so the painting overlaps it; a species whose worker paint fails is
+ * left to stocking, which paints it on the main thread as before.
+ */
+export function paintMissingSkins(species: readonly Species[]): Promise<void> {
+  return Promise.all(skinCache.missing(species).map(async (sp) => {
+    try {
+      const key = skinKey(sp);
+      const base = await paintBaseMaps(sp);
+      skinCache.add(sp.id, { key, img: base.img, avg: base.skinAvg });
+      skinCache.savePngs(sp, key, base.png, base.skinAvg);
+    } catch (err) {
+      console.warn(`${sp.id}: skin not painted in a worker (${err instanceof Error ? err.message : String(err)}); painting it on the main thread`);
+    }
+  })).then(() => undefined);
 }
 
 /** A variant's colour maps, ready to swap onto fish built from variant 0. */

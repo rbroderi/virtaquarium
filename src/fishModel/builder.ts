@@ -253,6 +253,5 @@ export function applyVariantPart(model: FishModel, part: 'body' | 'fin' | 'pect'
     } else {
       mat.map = part === 'fin' ? maps.finTex : maps.pectTex;
     }
-    mat.needsUpdate = true;
   });
 }

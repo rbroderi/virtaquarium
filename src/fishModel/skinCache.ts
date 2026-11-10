@@ -18,8 +18,10 @@ export const SKIN_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'
 export type SkinMapName = (typeof SKIN_MAPS)[number];
 export type SkinImages = Record<SkinMapName, TexImage>;
 
-/** A cache hit: the key it was saved under and its decoded maps. */
-export interface SkinCacheHit { key: string; img: SkinImages }
+/** A cache hit: the key it was saved under, its decoded maps and (when saved) the skin's mean colour. */
+export interface SkinCacheHit { key: string; img: SkinImages; avg?: readonly [number, number, number] }
+
+const isAvg = (m: unknown): m is [number, number, number] => Array.isArray(m) && m.length === 3 && m.every((v) => typeof v === 'number');
 
 const IMAGE_TIMEOUT_MS = 20000;
 const FNV_OFFSET = 0x811c9dc5, FNV_PRIME = 0x01000193;
@@ -107,20 +109,37 @@ class SkinCache {
           const url = `${base}${sp.id}-${n}.png?${key}`;
           return [n, bitmaps ? await loadBitmap(url) : await loadImage(url)];
         }));
-        this.hits.set(sp.id, { key, img: Object.fromEntries(entries) as SkinImages });
+        const avg = meta['avg'];
+        this.hits.set(sp.id, { key, img: Object.fromEntries(entries) as SkinImages, ...(isAvg(avg) ? { avg } : {}) });
         hits++;
       } catch { /* not cached (or unreadable): paint it live */ }
     }));
     console.log(`Skin cache: ${hits}/${species.length} species`);
   }
 
+  /** The species ids the cache has no maps for. */
+  missing(species: readonly Species[]): Species[] {
+    return species.filter((sp) => !this.hits.has(sp.id));
+  }
+
+  /** Records maps painted elsewhere (the painter worker) as this species' hit, for stocking to build from. */
+  add(id: string, hit: SkinCacheHit): void {
+    this.hits.set(id, hit);
+  }
+
   save(sp: Species, key: string, canvases: Record<SkinMapName, HTMLCanvasElement>): void {
+    if (!this.saveBase) return;   // before encoding: no local cache, no PNGs to make
+    this.savePngs(sp, key, Object.fromEntries(SKIN_MAPS.map((n) => [n, new Promise<Blob | null>((ok) => canvases[n].toBlob(ok, 'image/png'))])) as Record<SkinMapName, Promise<Blob | null>>);
+  }
+
+  /** Saves a species' encoded maps; `avg` (the skin's mean colour) spares the next load a readback. */
+  savePngs(sp: Species, key: string, pngs: Record<SkinMapName, Blob | null | Promise<Blob | null>>, avg?: readonly [number, number, number]): void {
     const base = this.saveBase;
     if (!base) return;
     const post = (path: string, body: Blob | string | null): Promise<unknown> =>
       body === null ? Promise.resolve() : saveCached(base + path, body).catch(() => undefined);
-    const done = Promise.all(SKIN_MAPS.map((n) => new Promise<Blob | null>((ok) => canvases[n].toBlob(ok, 'image/png')).then((b) => post(`${sp.id}-${n}.png`, b))))
-      .then(() => post(`${sp.id}.json`, JSON.stringify({ key })))   // last, so a half-written set never matches
+    const done = Promise.all(SKIN_MAPS.map(async (n) => post(`${sp.id}-${n}.png`, await pngs[n])))
+      .then(() => post(`${sp.id}.json`, JSON.stringify(avg ? { key, avg } : { key })))   // last, so a half-written set never matches
       .then(() => undefined);
     this.current = this.current.then(() => done);
   }

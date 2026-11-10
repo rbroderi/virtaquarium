@@ -27,3 +27,5 @@ export { requestVariant, startIdleVariantPainting, paintPendingVariants, pending
 export { mountPectoral, spineH } from './fishModel/swimWave.js';
 export { FishModel, PectoralPivot } from './fishModel/model.js';
 export type { SpeciesCanvases } from './fishModel/assets.js';
+export { paintMissingSkins } from './fishModel/assets.js';
+export { customModelFor } from './fishModel/customModels.js';

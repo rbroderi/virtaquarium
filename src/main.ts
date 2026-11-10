@@ -8,7 +8,7 @@ import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } f
 import { World, type TankBounds } from './world.js';
 import { crystalSign, bindCrystalSign, JsonCrystalAdSource } from './reef/crystalText.js';
 import { renderCrystalBgScene, type CrystalBgRenderer } from './reef/crystalBg.js';
-import { loadCustomModels, loadSkinCache, fishRender, startIdleVariantPainting, pendingSkinSave } from './fishModel.js';
+import { loadCustomModels, loadSkinCache, fishRender, startIdleVariantPainting, pendingSkinSave, paintMissingSkins, customModelFor } from './fishModel.js';
 import { MarineSnow, Bubbles, makeSurface } from './water.js';
 import { makeGpuSurface } from './water/webgpuSurface.js';
 import { bakeReefLightCached, bakeReefLightCachedGpu, pendingReefLightSave, reefLightUniforms, ScreenAO } from './reefLight.js';
@@ -247,6 +247,10 @@ async function main(): Promise<void> {
   // Optional Tripo3D / GLB models replace procedural fish species by species.
   const [customModels] = await Promise.all([loadCustomModels(SPECIES), loadSkinCache(SPECIES)]);
   if (customModels.length) console.info('Using GLB models for:', customModels.join(', '));
+  // Skins the cache lacks are painted in workers while the scenery, reef and light bake load; stocking
+  // waits for them below, then builds those species as from saved skins.
+  const stocked = new Set(tank.fish.map((e) => e.species));
+  const skinsPainted = paintMissingSkins(SPECIES.filter((sp) => stocked.has(sp.id) && !customModelFor(sp.id)));
   timer.stage('fish models + skin cache');
 
   const isJellyTank = tank.scenery === 'jelly';
@@ -302,7 +306,9 @@ async function main(): Promise<void> {
   if (!isJellyTank && surface) stage.scene.add(surface);
 
   const bounds = swimBox(stage);
-  await paintLoading();   // stocking paints any fish skins the cache didn't have (about a second each)
+  await skinsPainted;
+  timer.stage('wait for skin painters');
+  await paintLoading();
   const world = new World(stage.scene, reef, bounds, rng);
   stockTank({
     world, reef, bounds, rng, tank,

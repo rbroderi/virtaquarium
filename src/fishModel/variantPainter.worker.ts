@@ -20,7 +20,12 @@ const canvasShim = {
 (globalThis as { document?: unknown }).document = canvasShim;
 
 interface VariantCache { readonly metaUrl: string; readonly skinUrl: string; readonly key: string }
-interface PaintRequest { readonly id: number; readonly sp: Species; readonly cache: VariantCache | null }
+type PaintRequest =
+  | { readonly id: number; readonly kind: 'variant'; readonly sp: Species; readonly cache: VariantCache | null }
+  | { readonly id: number; readonly kind: 'base'; readonly sp: Species };
+/** The skin cache's maps, in skinCache.ts's SKIN_MAPS order (not imported: that module pulls in more painters). */
+const BASE_MAPS = ['skin', 'normal', 'irid', 'cr', 'finNormal', 'finData'] as const;
+type BaseMapName = (typeof BASE_MAPS)[number];
 interface PaintReply {
   readonly id: number;
   readonly skin?: ImageBitmap;
@@ -28,6 +33,8 @@ interface PaintReply {
   readonly avg?: readonly [number, number, number];
   readonly fins?: ImageBitmap;
   readonly pect?: ImageBitmap;
+  readonly img?: Record<BaseMapName, ImageBitmap>;
+  readonly png?: Record<BaseMapName, Blob>;
   readonly error?: string;
 }
 
@@ -110,17 +117,44 @@ async function paint(sp: Species, cache: VariantCache | null): Promise<{ skin?: 
   return result;
 }
 
+// A species' variant-0 skin and fin relief maps, as the skin cache stores them: PNGs (saved back by the
+// main thread) and bitmaps decoded from those PNGs with the cache's own decode options (skinCache.ts
+// loadBitmap), so a fish built from them matches one built from a cache hit texel for texel.
+async function paintBase(sp: Species): Promise<{ img: Record<BaseMapName, ImageBitmap>; png: Record<BaseMapName, Blob>; avg: [number, number, number] }> {
+  const prof = makeProfile(sp.body);
+  const fins = paintFins(sp, prof, false);
+  const skin = paintSkin(sp, prof);
+  if (!fins.normal || !fins.data) throw new Error(`${sp.id}: fin relief maps missing`);
+  const canvases: Record<BaseMapName, unknown> = { skin: skin.map, normal: skin.normal, irid: skin.irid, cr: skin.cr, finNormal: fins.normal, finData: fins.data };
+  const avg = skinMean(skin.map as unknown as OffscreenCanvas);
+  const blobs = await Promise.all(BASE_MAPS.map((n) => (canvases[n] as OffscreenCanvas).convertToBlob({ type: 'image/png' })));
+  const bitmaps = await Promise.all(blobs.map((b) => createImageBitmap(b, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' })));
+  const png = {} as Record<BaseMapName, Blob>, img = {} as Record<BaseMapName, ImageBitmap>;
+  BASE_MAPS.forEach((n, i) => { png[n] = blobs[i] as Blob; img[n] = bitmaps[i] as ImageBitmap; });
+  return { img, png, avg };
+}
+
+const fail = (id: number) => (err: unknown): void => {
+  (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) } satisfies PaintReply);
+};
+
 self.onmessage = (e: MessageEvent<PaintRequest>): void => {
-  const { id, sp, cache } = e.data;
-  paint(sp, cache).then(
+  const req = e.data;
+  const { id, sp } = req;
+  if (req.kind === 'base') {
+    paintBase(sp).then(
+      ({ img, png, avg }) => (self as unknown as Worker).postMessage({ id, img, png, avg } satisfies PaintReply, Object.values(img)),
+      fail(id),
+    );
+    return;
+  }
+  paint(sp, req.cache).then(
     (maps) => {
       const transfer: Transferable[] = [maps.fins, maps.pect];
       if (maps.skin) transfer.push(maps.skin);
       const reply: PaintReply = { id, fins: maps.fins, pect: maps.pect, ...(maps.skin ? { skin: maps.skin } : {}), ...(maps.skinPng ? { skinPng: maps.skinPng } : {}), ...(maps.avg ? { avg: maps.avg } : {}) };
       (self as unknown as Worker).postMessage(reply, transfer);
     },
-    (err: unknown) => {
-      (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) } satisfies PaintReply);
-    },
+    fail(id),
   );
 };
