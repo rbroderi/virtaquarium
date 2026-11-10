@@ -43,6 +43,7 @@ export class ArmUntangler {
   private stale = new Uint8Array(0);
   private moved = new Float64Array(0);   // how far, at most, any point of each arm has moved since its bound was taken
   private near = new Uint8Array(0);
+  private armOf = new Int32Array(0);   // the arm each point belongs to
 
   /** Untangle `arms` (in the model's frame) against the obstacles and the oral disc stand-in. */
   solve(arms: readonly ArmTube[], obstacles: readonly ArmObstacle[], disc: THREE.Object3D, mantleScale: number): void {
@@ -52,6 +53,7 @@ export class ArmUntangler {
     this.ensureCapacity(N);
     this.ensureArms(NA);
     this.n = n;
+    for (let k = 0; k < N; k++) this.armOf[k] = Math.floor(k / n);
     this.load(arms, n);
     const gap = GAP_PER_MANTLE * mantleScale;
     const OB = obstacles.map(({ object: o, radius: r }) => {
@@ -82,6 +84,7 @@ export class ArmUntangler {
     if (this.R.length === N) return;
     this.X = new Float64Array(N * 3); this.R = new Float64Array(N); this.L = new Float64Array(N);
     this.root = new Uint8Array(N); this.next = new Int32Array(N);
+    this.armOf = new Int32Array(N);
   }
 
   private ensureArms(NA: number): void {
@@ -138,53 +141,54 @@ export class ArmUntangler {
     }
   }
 
-  private near2(k: number, j: number, l: number, reach: number): boolean {
-    const X = this.X;
-    const dx = val(X, 3 * k) - val(X, 3 * j), dy = val(X, 3 * k + 1) - val(X, 3 * j + 1), dz = val(X, 3 * k + 2) - val(X, 3 * j + 2);
-    return dx * dx + dy * dy + dz * dz < (reach + l) ** 2;
-  }
-
   private pushApartArms(N: number, n: number, cs: number, reach: number, gap: number): void {
     const X = this.X, root = this.root, L = this.L, head = this.head, next = this.next, { bound, moved, near } = this;
     const NA = N / n;
-    let wide = 0;
-    for (let k = 0; k < N; k++) wide = Math.max(wide, val(this.R, k));
-    const needMax = 2 * wide + gap;
+    const R = this.R;
     for (let B = 0; B < NA; B++) { this.boundArm(B, n); moved[B] = 0; }
+    const armOf = this.armOf;
     for (let k = 0; k < N; k++) {
-      if (k % n < 1) continue;
-      const A = Math.floor(k / n);
+      const kn = k % n;
+      if (kn < 1) continue;
+      const A = armOf[k], k3 = 3 * k, last = kn === n - 1, rootK = root[k] === 1, rootK1 = !last && root[k + 1] === 1;
       // Only arms that could hold a segment within reach of this point are scanned: the test
       // below needs a start point within cs (the cell size) of it, and every point of an arm lies
       // in its bounding sphere (grown by how far the arm's points have been pushed since).
       let any = false;
       for (let B = 0; B < NA; B++) {
-        const lim = cs + val(bound, 4 * B + 3) + val(moved, B), bx = val(X, 3 * k) - val(bound, 4 * B), by = val(X, 3 * k + 1) - val(bound, 4 * B + 1), bz = val(X, 3 * k + 2) - val(bound, 4 * B + 2);
+        const lim = cs + val(bound, 4 * B + 3) + val(moved, B), bx = val(X, k3) - val(bound, 4 * B), by = val(X, k3 + 1) - val(bound, 4 * B + 1), bz = val(X, k3 + 2) - val(bound, 4 * B + 2);
         const ok = B !== A && bx * bx + by * by + bz * bz < lim * lim;
         near[B] = ok ? 1 : 0;
         if (ok) any = true;
       }
       if (!any) continue;
-      const cx = this.cell(val(X, 3 * k), cs), cy = this.cell(val(X, 3 * k + 1), cs), cz = this.cell(val(X, 3 * k + 2), cs);
+      const lk = last ? 0 : val(L, k + 1) / 2, Rk = val(R, k), Rk1 = last ? Rk : Math.max(Rk, val(R, k + 1));
+      const cx = this.cell(val(X, k3), cs), cy = this.cell(val(X, k3 + 1), cs), cz = this.cell(val(X, k3 + 2), cs);
       for (let z = Math.max(0, cz - 1); z <= Math.min(GRID - 1, cz + 1); z++) for (let y = Math.max(0, cy - 1); y <= Math.min(GRID - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(GRID - 1, cx + 1); x++)
-        for (let j = val(head, x + GRID * (y + GRID * z)); j >= 0; j = val(next, j))
-          if (near[Math.floor(j / n)] && !(root[k] && (root[j] || root[j + 1])) && this.near2(k, j, val(L, j + 1) + (k % n < n - 1 ? val(L, k + 1) / 2 : 0), reach)) {
-            // A point is no nearer the segment j..j+1 than its distance to the segment's middle less
-            // the half-length, and a push needs the nearer than the widest two sections plus the
-            // gap: when both points (k, and the middle of k..k+1) are clear of that, neither moves.
-            const mx = (val(X, 3 * j) + val(X, 3 * j + 3)) / 2, my = (val(X, 3 * j + 1) + val(X, 3 * j + 4)) / 2, mz = (val(X, 3 * j + 2) + val(X, 3 * j + 5)) / 2;
-            const hx = val(X, 3 * j + 3) - val(X, 3 * j), hy = val(X, 3 * j + 4) - val(X, 3 * j + 1), hz = val(X, 3 * j + 5) - val(X, 3 * j + 2);
-            const lim = needMax + Math.sqrt(hx * hx + hy * hy + hz * hz) / 2 + 1e-9, lim2 = lim * lim;
-            const d0x = val(X, 3 * k) - mx, d0y = val(X, 3 * k + 1) - my, d0z = val(X, 3 * k + 2) - mz;
-            const mid = k % n < n - 1 && !(root[k + 1] && (root[j] || root[j + 1]));
-            if (d0x * d0x + d0y * d0y + d0z * d0z < lim2) this.push(k, j, 0, gap);
-            // and the middle of the segment it starts (two segments crossing middle to middle
-            // come nearer than either's ends do)
-            if (mid) {
-              const d1x = (val(X, 3 * k) + val(X, 3 * k + 3)) / 2 - mx, d1y = (val(X, 3 * k + 1) + val(X, 3 * k + 4)) / 2 - my, d1z = (val(X, 3 * k + 2) + val(X, 3 * k + 5)) / 2 - mz;
-              if (d1x * d1x + d1y * d1y + d1z * d1z < lim2) this.push(k, j, 0.5, gap);
-            }
+        for (let j = val(head, x + GRID * (y + GRID * z)); j >= 0; j = val(next, j)) {
+          if (!near[val(armOf, j)]) continue;
+          const j3 = 3 * j, rj = root[j] === 1 || root[j + 1] === 1;
+          if (rootK && rj) continue;
+          const dx = val(X, k3) - val(X, j3), dy = val(X, k3 + 1) - val(X, j3 + 1), dz = val(X, k3 + 2) - val(X, j3 + 2), rl = reach + (val(L, j + 1) + lk);
+          if (dx * dx + dy * dy + dz * dz >= rl * rl) continue;
+          // A point is no nearer the segment j..j+1 than its distance to the segment's middle less
+          // the half-length, and a push needs it nearer than the two sections' widths (the wider
+          // end of each segment bounds them) plus the gap: when both points (k, and the middle
+          // of k..k+1) are clear of that, neither moves.
+          const mx = (val(X, j3) + val(X, j3 + 3)) / 2, my = (val(X, j3 + 1) + val(X, j3 + 4)) / 2, mz = (val(X, j3 + 2) + val(X, j3 + 5)) / 2;
+          const hx = val(X, j3 + 3) - val(X, j3), hy = val(X, j3 + 4) - val(X, j3 + 1), hz = val(X, j3 + 5) - val(X, j3 + 2);
+          const base = Math.max(val(R, j), val(R, j + 1)) + gap + Math.sqrt(hx * hx + hy * hy + hz * hz) / 2 + 1e-9;
+          const lim0 = Rk + base;
+          const d0x = val(X, k3) - mx, d0y = val(X, k3 + 1) - my, d0z = val(X, k3 + 2) - mz;
+          if (d0x * d0x + d0y * d0y + d0z * d0z < lim0 * lim0) this.push(k, j, 0, gap);
+          // and the middle of the segment it starts (two segments crossing middle to middle
+          // come nearer than either's ends do)
+          if (!last && !(rootK1 && rj)) {
+            const lim1 = Rk1 + base;
+            const d1x = (val(X, k3) + val(X, k3 + 3)) / 2 - mx, d1y = (val(X, k3 + 1) + val(X, k3 + 4)) / 2 - my, d1z = (val(X, k3 + 2) + val(X, k3 + 5)) / 2 - mz;
+            if (d1x * d1x + d1y * d1y + d1z * d1z < lim1 * lim1) this.push(k, j, 0.5, gap);
           }
+        }
     }
   }
 
