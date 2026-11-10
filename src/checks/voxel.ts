@@ -1,6 +1,7 @@
 // Voxel grid helpers for the critter shape check: surface voxelisation of meshes and 6-connected
 // flood fills.
 import * as THREE from 'three';
+import { baseIndexCount } from '../lod.js';
 
 export interface VoxelGrid {
   /** World position of cell (0, 0, 0)'s corner. */
@@ -31,7 +32,7 @@ export const cellAt = (grid: VoxelGrid, p: THREE.Vector3): number =>
 export function surfaceCells(mesh: THREE.Mesh, grid: VoxelGrid): Uint32Array {
   const { o, h, nx, ny } = grid;
   const g = mesh.geometry, pos = g.getAttribute('position'), ix = g.index, M = mesh.matrixWorld;
-  const nt = (ix ? ix.count : pos.count) / 3, cells = new Set<number>();
+  const nt = baseIndexCount(g) / 3, cells = new Set<number>();
   const vi = (k: number): number => (ix ? ix.getX(k) : k);
   for (let t = 0; t < nt; t++) {
     _a.fromBufferAttribute(pos, vi(3 * t)).applyMatrix4(M);

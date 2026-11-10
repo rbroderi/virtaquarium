@@ -111,19 +111,25 @@ function simplifierInput(g: THREE.BufferGeometry, weights: LodWeights): Simplifi
   };
 }
 
-const errorForPixels = (px: number): number => LOD_ERR_PX / Math.max(px, 1);
+/** Size limits per level: the geometry's own (userData.lodPx, scenery's coarser ones) or the default. */
+function limitsOf(g: THREE.BufferGeometry): readonly number[] {
+  const own: unknown = g.userData['lodPx'];
+  return Array.isArray(own) ? (own as number[]) : LOD_PX;
+}
+
+const errorForPixels =(px: number, errorPx: number): number => errorPx / Math.max(px, 1);
 
 /** Add the levels to an indexed geometry. Returns each level's triangle count, or null if it can't. */
-export function addLods(g: THREE.BufferGeometry, weights: LodWeights = {}): number[] | null {
+export function addLods(g: THREE.BufferGeometry, weights: LodWeights = {}, errorPx = LOD_ERR_PX, limits: readonly number[] = LOD_PX): number[] | null {
   const existing = lodRanges(g);
   if (existing) return existing.map((l) => l[1] / 3);
   const s = simplifierInput(g, weights);
   if (!s) return null;
   const { base } = s, lists: Uint32Array[] = [base];
   let prev = base;
-  for (let k = 1; k < LOD_PX.length; k++) {
+  for (let k = 1; k < limits.length; k++) {
     // Each from the full mesh, so errors don't add up.
-    const ix = s.simplify(errorForPixels(LOD_PX[k] ?? 1));
+    const ix = s.simplify(errorForPixels(limits[k] ?? 1, errorPx));
     if (ix.length >= prev.length * MIN_REDUCTION) { lists.push(prev); continue; }   // little gained: reuse the last
     lists.push(ix);
     prev = ix;
@@ -135,6 +141,7 @@ export function addLods(g: THREE.BufferGeometry, weights: LodWeights = {}): numb
   for (const l of distinct) { all.set(l, offset); at.set(l, offset); offset += l.length; }
   g.setIndex(new THREE.BufferAttribute(all, 1));
   g.userData['lods'] = lists.map((l) => [at.get(l) ?? 0, l.length] as const);
+  if (limits !== LOD_PX) g.userData['lodPx'] = [...limits];
   g.setDrawRange(0, base.length);
   return lists.map((l) => l.length / 3);
 }
@@ -159,10 +166,39 @@ export function pickLod(renderer: THREE.WebGLRenderer, mesh: THREE.Object3D, cam
       const near = camera instanceof THREE.PerspectiveCamera ? camera.near : 0;
       px /= Math.max(z - r, near);   // its nearest side: never coarser than any part of it needs
     }
-    while (k + 1 < ranges.length && px <= (LOD_PX[k + 1] ?? 0)) k++;
+    while (k + 1 < ranges.length && px <= (limitsOf(geo)[k + 1] ?? 0)) k++;
   }
   const range = ranges[k];
   if (range) geo.setDrawRange(range[0], range[1]);
+}
+
+/** Index count of the full-detail level: all of the index for a plain mesh, level 0's range with levels. */
+export function baseIndexCount(g: THREE.BufferGeometry): number {
+  return lodRanges(g)?.[0]?.[1] ?? g.index?.count ?? g.getAttribute('position').count;
+}
+
+/**
+ * For a mesh whose geometry arrived with its levels precomputed (userData.lods, from the GLB; see
+ * tools/optimize-scenery.ts): draw only level 0 until pickLod says otherwise, and pick on every draw.
+ * Object3D.clone does not copy the render callbacks, so the mesh's clone() is overridden to hook each
+ * clone too (the clones share the geometry and its levels). Does nothing for a geometry without levels.
+ */
+export function useBakedLods(mesh: THREE.Mesh): boolean {
+  const ranges = lodRanges(mesh.geometry);
+  if (!ranges) return false;
+  mesh.geometry.setDrawRange(0, ranges[0]?.[1] ?? Infinity);
+  const own = mesh.onBeforeRender, clone = mesh.clone;
+  mesh.onBeforeRender = function onBeforeRender(r, s, cam, geo, mat, grp) {
+    pickLod(r, this as THREE.Mesh, cam, geo);
+    own.call(this, r, s, cam, geo, mat, grp);
+  };
+  mesh.onBeforeShadow = (r, o, _cam, shadowCam, geo) => pickLod(r, o, shadowCam, geo);
+  mesh.clone = function cloneWithLods(this: THREE.Mesh, recursive?: boolean): THREE.Mesh {
+    const copy = clone.call(this, recursive) as THREE.Mesh;
+    useBakedLods(copy);
+    return copy;
+  };
+  return true;
 }
 
 /** Give a mesh its levels and pick them on every draw (view and shadow passes). Meshes sharing a geometry share its levels. */

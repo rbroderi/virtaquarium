@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { isRecord } from '../util.js';
 import { addParallax } from '../parallax.js';
+import { useBakedLods } from '../lod.js';
 import { addSway, firstMaterial, stdMat } from './materials.js';
 import { hasPomHeight, isMesh, naturalSize, setNaturalSize } from './flags.js';
 import { makeCrystal } from './crystal.js';
@@ -158,6 +159,7 @@ function normaliseScenery(root: THREE.Object3D, uniform: boolean, grade: ColourG
     if (grade) applyGrade(mat, grade);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = mesh.receiveShadow = true;
+    useBakedLods(mesh);   // levels precomputed into the GLB (tools/optimize-scenery.ts)
     group.add(mesh);
   });
   group.name = root.name;

@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { MeshBVH, type HitPointInfo } from 'three-mesh-bvh';
 import { isInstancedMesh } from '../reef/flags.js';
+import { baseIndexCount } from '../lod.js';
 
 const SIGN_RAYS = [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0.62, 0.5, 0.6).normalize(), new THREE.Vector3(-0.7, 0.4, -0.59).normalize()] as const;
 
@@ -29,7 +30,7 @@ export class RockMesh {
       const g = o.geometry, pos = g.attributes['position'], idx = g.index;
       if (!pos) continue;
       const n = isInstancedMesh(o) ? o.count : 1;
-      const corners = idx ? idx.count : pos.count;
+      const corners = baseIndexCount(g);
       for (let inst = 0; inst < n; inst++) {
         if (isInstancedMesh(o)) { o.getMatrixAt(inst, m); m.premultiply(o.matrixWorld); } else m.copy(o.matrixWorld);
         // A mirroring transform flips the winding, and the sign test reads the winding.

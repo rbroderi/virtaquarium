@@ -9,6 +9,7 @@
 // transforms (Felzenszwalb & Huttenlocher) give the distance outside and inside the surface.
 import * as THREE from 'three';
 import { isInstancedMesh, isMesh } from './reef/flags.js';
+import { baseIndexCount } from './lod.js';
 
 const INF = 1e20;
 const DEFAULT_CELL = 0.08;
@@ -130,7 +131,7 @@ export class RockField implements SolidField {
           v.fromBufferAttribute(pos, i).applyMatrix4(im);
           world[3 * i] = v.x; world[3 * i + 1] = v.y; world[3 * i + 2] = v.z;
         }
-        const triangles = idx ? idx.count / 3 : pos.count / 3;
+        const triangles = baseIndexCount(g) / 3;
         for (let t = 0; t < triangles; t++) {
           const a = corner(3 * t), b = corner(3 * t + 1), c = corner(3 * t + 2);
           this.triangle(solid, w(a), w(a + 1), w(a + 2), w(b), w(b + 1), w(b + 2), w(c), w(c + 1), w(c + 2));
