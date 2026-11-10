@@ -13,6 +13,8 @@ import { Noise } from './core/noise.js';
 import { clamp, smooth, TAU } from './core/math.js';
 import { stdMat } from './reef/materials.js';
 import { pickLod } from './lod.js';
+import { bladeGeometry, grassInstanceAttrs, grassMaterial } from './reef/seagrass.js';
+import { gpuActive } from './webgpu/tsl.js';
 import { setGpuOpenWater } from './water/webgpuMedium.js';
 import type { Scenery, TankScene } from './reef/types.js';
 import type { WaterBackdrop } from './water/backdrop.js';
@@ -46,8 +48,14 @@ const REEF_CLEARANCE = 3;
 const REEF_BACK = -8;
 /** The default camera sits at z = 15 looking at the reef: nothing tall in its view in front. */
 const FRONT_CAMERA_Z = 15;
-/** Seed stream for the open reef (independent of the reef's streams). */
+/** Seed stream for the open reef (independent of the reef's streams), and the meadows' own. */
 const STREAM = 977;
+const MEADOW_STREAM = 1307;
+/**
+ * Seagrass meadows: a jittered grid (cell, fill) out to reach; each bed an ellipse with semi-axes from
+ * `radius`, so many shoots (2-5 blades each) per square unit, the blade strap in so many rows.
+ */
+const MEADOWS = { reach: 46, cell: 8, fill: 0.5, radius: [1.8, 3.6] as [number, number], shootsPerArea: 18, segments: 4 } as const;
 /** The far seabed's undulation: amplitude, scale and the distance over which it grows in. */
 const DUNES = { amp: 1.4, freq: 0.03, growIn: 25 } as const;
 /** The reef sand's front slope (builder.ts addSand), levelling out further out. */
@@ -425,6 +433,66 @@ function scatter(models: readonly Model[], shape: SeabedShape, reefHalfX: number
   }
 }
 
+/**
+ * Turtle-grass meadows on the open seabed: the tank's blades and grass material (seagrass.ts), in
+ * wider beds of shoots bunched into tufts, on a jittered grid out to MEADOWS.reach. A coarser strap
+ * than the tank's (they are only seen from some way off). No shadows: the sun's shadow map covers
+ * only the tank.
+ */
+function seagrassMeadows(shape: SeabedShape, reefHalfX: number, rng: Rng): THREE.InstancedMesh[] {
+  const blade = bladeGeometry(MEADOWS.segments), material = grassMaterial(), gpu = gpuActive();
+  const meadows: THREE.InstancedMesh[] = [];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  const e = new THREE.Euler(), tint = new THREE.Color();
+  const n = Math.ceil(MEADOWS.reach / MEADOWS.cell);
+  for (let i = -n; i <= n; i++) {
+    for (let j = -n; j <= n; j++) {
+      const cx = (i + range(rng, -0.45, 0.45)) * MEADOWS.cell, cz = (j + range(rng, -0.45, 0.45)) * MEADOWS.cell;
+      const rx = range(rng, ...MEADOWS.radius), rz = rx * range(rng, 0.55, 1.0), turn = rng() * TAU;
+      if (rng() > MEADOWS.fill || Math.hypot(cx, cz) >= MEADOWS.reach) continue;
+      // Every part of the bed off the tank's sand and clear of the view strip.
+      if (![[0, 0], [rx, 0], [-rx, 0], [0, rx], [0, -rx]].every(([dx = 0, dz = 0]) => outcropAllowed(cx + dx, cz + dz, reefHalfX))) continue;
+      const tufts = Array.from({ length: 3 + Math.floor(rng() * 4) }, () => {
+        const a = rng() * TAU, r = Math.sqrt(rng()) * 0.75;
+        return [Math.cos(a) * r, Math.sin(a) * r] as const;
+      });
+      const shoots = Math.round(rx * rz * MEADOWS.shootsPerArea);
+      const local: { x: number; y: number; z: number; yaw: number; lean: number; w: number; L: number }[] = [];
+      for (let sh = 0; sh < shoots; sh++) {
+        // A shoot near one of the tufts, now and then a stray between them; shorter towards the rim.
+        const [tx, tz] = pick(rng, tufts), spread = rng() < 0.2 ? 0.9 : 0.3;
+        const a = rng() * TAU, r = Math.sqrt(rng()) * spread;
+        const u = clamp(tx + Math.cos(a) * r, -1, 1), v = clamp(tz + Math.sin(a) * r, -1, 1);
+        if (u * u + v * v > 1) continue;
+        const lx = u * rx, lz = v * rz, x = cx + lx * Math.cos(turn) - lz * Math.sin(turn), z = cz + lx * Math.sin(turn) + lz * Math.cos(turn);
+        const rim = Math.hypot(u, v), yaw = rng() * TAU, L = range(rng, 0.8, 1.8) * (1 - rim * 0.45);
+        const y = shape.height(x, z) - 0.04;
+        for (let b = 0, nb = 2 + Math.floor(rng() * 4); b < nb; b++) {
+          const wu = rng(), lu = rng(), ku = rng();
+          local.push({ x: x - cx, y, z: z - cz, yaw: yaw + range(rng, -0.35, 0.35), lean: 0.05 + 0.5 * lu * lu + 0.1 * lu, w: 0.028 + 0.075 * wu * wu + 0.01 * wu, L: L * (0.5 + 0.6 * ku) });
+        }
+      }
+      if (!local.length) continue;
+      const mesh = new THREE.InstancedMesh(gpu ? blade.clone() : blade, material, local.length);
+      const tints = gpu ? new Float32Array(local.length * 3) : null;
+      local.forEach((b, k) => {
+        q.setFromEuler(e.set(b.lean, b.yaw, 0, 'YXZ'));
+        mesh.setMatrixAt(k, m.compose(p.set(b.x, b.y, b.z), q, s.set(b.w, b.L, b.L)));
+        tint.setHSL(0.2 + range(rng, -0.04, 0.05), 0.18, range(rng, 0.36, 0.5)).multiplyScalar(1.9);
+        if (tints) { tints[k * 3] = tint.r; tints[k * 3 + 1] = tint.g; tints[k * 3 + 2] = tint.b; }
+        else mesh.setColorAt(k, tint);
+      });
+      if (tints) grassInstanceAttrs(mesh, tints);
+      mesh.position.set(cx, 0, cz);
+      mesh.computeBoundingSphere();
+      mesh.castShadow = mesh.receiveShadow = false;
+      mesh.name = 'open-seagrass';
+      meadows.push(mesh);
+    }
+  }
+  return meadows;
+}
+
 function instanced(model: Model, near: boolean): THREE.InstancedMesh | null {
   const at = near ? model.nearAt : model.farAt, tints = near ? model.nearTint : model.farTint;
   if (!at.length) return null;
@@ -459,6 +527,10 @@ export function buildOpenReef({ scene, reef, scenery, tankWidth, seed }: OpenRee
   const fromScenery = sceneryModels(scenery);
   const models = fromScenery.length ? fromScenery : proceduralModels(rng);
   scatter(models, shape, tankWidth * 0.75, rng);
+  for (const meadow of seagrassMeadows(shape, tankWidth * 0.75, mulberry32(seed * 31 + MEADOW_STREAM))) {
+    group.add(meadow);
+    triangles += meadow.count * ((meadow.geometry.index?.count ?? 0) / 3);
+  }
   for (const model of models) {
     for (const near of [true, false]) {
       const mesh = instanced(model, near);

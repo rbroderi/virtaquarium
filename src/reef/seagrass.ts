@@ -15,9 +15,12 @@ import { waterTimeNode } from '../webgpu/timeUniform.js';
 
 const SEGMENTS = 10;
 
-/** The blade: a strap one unit long and wide, standing on y = 0, its vertices coloured by height. */
-export function bladeGeometry(): THREE.PlaneGeometry {
-  const blade = new THREE.PlaneGeometry(1, 1, 1, SEGMENTS);
+/**
+ * The blade: a strap one unit long and wide, standing on y = 0, its vertices coloured by height.
+ * segments: rows along it (fewer for grass only seen from afar, as on the open reef).
+ */
+export function bladeGeometry(segments = SEGMENTS): THREE.PlaneGeometry {
+  const blade = new THREE.PlaneGeometry(1, 1, 1, segments);
   blade.translate(0, 0.5, 0);
   const p = blade.getAttribute('position'), col = new Float32Array(p.count * 3), c = new THREE.Color();
   const base = color('#3b5a2a'), mid = color('#5a7a36'), tip = color('#8a8248');   // olive, as in field photos
