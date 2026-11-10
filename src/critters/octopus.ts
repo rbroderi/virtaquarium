@@ -11,7 +11,7 @@ import { range, clamp, lerp, wrapAngle, mulberry32, type Rng } from '../util.js'
 import { OCTO_SAC } from '../softBodies.js';
 import { skin, randomTarget, ceilingAt, floorAt, CEPH_SSS, UP, scalarNode, softBodyHook, AVOID_EASE, MIN_EASED, type ShaderHook, type NodeHook, type SoftBodyPatch } from './shared.js';
 import { boundMaterialColor, gpuActive } from '../webgpu/tsl.js';
-import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
+import { octoSkin, octoEyeTex, octoBump, suckerGeometry, ArmTube, ArmSpines, SUCKERS_PER_ARM, ARM_W } from './octopusParts.js';
 import { ArmUntangler, ROOT_POINTS, type ArmObstacle } from './armUntangle.js';
 import { ContactInbox, CHASE_HEED } from '../world/contactInbox.js';
 import { Cephalopod } from './base.js';
@@ -129,6 +129,8 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
   readonly disc = new THREE.Object3D();
   readonly suckers: THREE.InstancedMesh;
   readonly arms: ArmTube[] = [];
+  /** The arms' rings for the vertex shader. */
+  private readonly spines: ArmSpines;
   readonly web: THREE.Mesh;
   readonly buildMs: number;
   // Where parts are attached (and may run into each other): critterCheck.ts.
@@ -187,7 +189,11 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
     };
     const shadeHook = this.shadeNodeHook();
     const tex = octoSkin(mulberry32(SKIN_SEED)), armTex = octoSkin(mulberry32(SKIN_SEED), ARM_WHITE_SPOTS), bump = octoBump(rng);   // the same skin; the arms add bold white spots
-    const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-skin', hook, { ...CEPH_SSS, thin: 'attr' }, shadeHook);
+    // The arms' skin is built in the vertex shader from the rings the CPU lays out (ArmSpines).
+    const spines = this.spines = new ArmSpines(ARM_COUNT, ARM_POINTS);
+    const armHook: ShaderHook = (shader, renderer) => { hook(shader, renderer); spines.hook(shader, renderer); };
+    const armNodeHook: NodeHook = (t, m) => ({ ...shadeHook(t, m), positionNode: spines.positionNode(t) });
+    const mat = skin({ map: armTex, bumpMap: bump, bumpScale: 2.5, roughness: 0.55, vertexColors: true }, 'octo-arm', armHook, { ...CEPH_SSS, thin: 'attr' }, armNodeHook);
     // WebGL's bodyHook samples `map` triplanar in place of map_fragment; the WebGPU colorNode samples tex
     // itself, and a `map` there would make the shadow pass read its alpha at a uv this mesh does not have.
     const bodyMat = skin({ ...(gpuActive() ? {} : { map: tex }), roughness: 0.55 }, 'octo-body', softBodyHook(this.u, BODY_PATCH), CEPH_SSS, this.bodyNodeHook(tex));
@@ -308,7 +314,8 @@ export class Octopus extends Cephalopod<OctopusMode, OctopusDrive, OctopusTrait>
    */
   private addArms(M: number, mat: THREE.Material, rng: Rng): void {
     for (let i = 0; i < ARM_COUNT; i++) {
-      const tube = new ArmTube(ARM_POINTS, ARM_ROOT_RADIUS * M, ARM_TIP_RADIUS * M, mat, this.suckers, i * SUCKERS_PER_ARM);
+      const tube = new ArmTube(ARM_POINTS, ARM_ROOT_RADIUS * M, ARM_TIP_RADIUS * M, mat, this.suckers, i * SUCKERS_PER_ARM, this.spines, i);
+      if (!gpuActive()) tube.mesh.customDepthMaterial = this.spines.depthMaterial();   // (WebGPU's shadow pass reads the positionNode)
       tube.angle = ((i + 0.5) / ARM_COUNT) * Math.PI * 2;
       tube.len = ARM_LENGTH * M * range(rng, 0.85, 1.05);
       tube.curl = range(rng, 0.5, 1.5); tube.ph = rng() * 6;

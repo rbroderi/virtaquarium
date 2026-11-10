@@ -63,6 +63,9 @@ function partsOf(model: THREE.Object3D): Part[] {
   model.updateMatrixWorld(true);
   model.traverseVisible((o) => {
     if (!(o instanceof THREE.Mesh) || !o.geometry.getAttribute('position')) return;
+    // vertices the shader builds (the octopus's arms) are written out for the check
+    const sync: unknown = o.userData['syncGeometry'];
+    if (typeof sync === 'function') sync();
     o.geometry.computeBoundingBox();   // arms and skirts are rebuilt each frame: a cached box is stale
     parts.push({ mesh: o, name: o.name || 'unnamed', sheet: isSheet(o), surf: new Uint32Array(0), inside: new Uint32Array(0) });
   });

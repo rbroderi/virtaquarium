@@ -1,9 +1,11 @@
-// The octopus's textures and its arms: a tube along a chain of points, rebuilt in place each frame,
-// with two staggered rows of suckers.
+// The octopus's textures and its arms: a tube along a chain of points, with two staggered rows of
+// suckers. The CPU works out each ring's centre and frame every frame (a few texels per ring, in one
+// small float texture per octopus: ArmSpines); the vertex shader builds the tube's skin from them.
 import * as THREE from 'three';
 import { range, clamp, lerp, makeCanvas, context2d, Noise, mulberry32, type Rng } from '../util.js';
 import { organicPass, type OrganicOptions } from '../core/organic.js';
-import { canvasTexture } from './shared.js';
+import { canvasTexture, type ShaderHook } from './shared.js';
+import type { Node, NodeObject, Tsl } from '../webgpu/tsl.js';
 
 const FULL_CIRCLE = 7;   // > 2 PI: canvas arcs drawn as whole discs
 
@@ -123,6 +125,83 @@ function pointAt(pts: readonly THREE.Vector3[], i: number): THREE.Vector3 {
   return p;
 }
 
+/** Texel rows per arm in the spine texture (A, B, C below). */
+const SPINE_ROWS = 3;
+
+/**
+ * Every arm's rings for the vertex shader, one float texture per octopus: a column per ring (the
+ * chain's rings, the cap's, then the tip's point) and three rows per arm:
+ *   A = (centre, radius)          the ring's centre (moved ahead over the cap) and its scale;
+ *   B = (T, tilt)                 the tangent, and how far the normals lean along it;
+ *   C = (Nn, section weight)      towards the ground; the section normal's share (the cap's cosine).
+ * A vertex is A.xyz + (Nn y + Bn x) A.w, its normal normalize((Nn ny + Bn nx) C.w + T B.w), with
+ * (x, y, nx, ny) its place on the unit section (aSec) and Bn = T x Nn.
+ */
+export class ArmSpines {
+  readonly width: number;
+  readonly data: Float32Array;
+  readonly texture: THREE.DataTexture;
+  private depthMat: THREE.MeshDepthMaterial | null = null;
+
+  constructor(arms: number, n: number) {
+    this.width = (n - 1) * ARM_SUB + 1 + ARM_CAP.length + 1;
+    this.data = new Float32Array(this.width * arms * SPINE_ROWS * 4);
+    const tex = new THREE.DataTexture(this.data, this.width, arms * SPINE_ROWS, THREE.RGBAFormat, THREE.FloatType);
+    tex.minFilter = tex.magFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    this.texture = tex;
+  }
+
+  /** WebGL: the arms' patch (vertices built from the texture), for the skin and the shadow's depth material. */
+  readonly hook: ShaderHook = (shader) => {
+    shader.uniforms['uArmSpine'] = { value: this.texture };
+    shader.vertexShader = ARM_VERT_HEAD + shader.vertexShader
+      .replace('#include <beginnormal_vertex>', ARM_NORMAL_GLSL)
+      .replace('#include <begin_vertex>', ARM_POSITION_GLSL);
+  };
+
+  /** WebGL's shadow pass draws the stock depth material, which knows nothing of the texture: this one does. */
+  depthMaterial(): THREE.MeshDepthMaterial {
+    if (this.depthMat) return this.depthMat;
+    const m = new THREE.MeshDepthMaterial();
+    m.onBeforeCompile = this.hook;
+    m.customProgramCacheKey = (): string => 'octo-arm-depth';
+    this.depthMat = m;
+    return m;
+  }
+
+  /** TSL: the local position (and, as a side effect, normalLocal) from the texture. */
+  positionNode(t: Tsl): Node {
+    const tex = this.texture;
+    return t.Fn(() => {
+      const aSec = t.attribute('aSec', 'vec4') as NodeObject, aRing = t.attribute('aRing', 'vec2') as NodeObject;
+      const x = t.int(aRing.x.add(0.5)) as NodeObject, y = t.int(aRing.y.add(0.5)).mul(SPINE_ROWS) as NodeObject;
+      const A = t.textureLoad(tex, t.ivec2(x, y)) as NodeObject;
+      const B = t.textureLoad(tex, t.ivec2(x, y.add(1))) as NodeObject;
+      const C = t.textureLoad(tex, t.ivec2(x, y.add(2))) as NodeObject;
+      const Bn = t.cross(B.xyz, C.xyz) as NodeObject;
+      t.normalLocal.assign(C.xyz.mul(aSec.w).add(Bn.mul(aSec.z)).mul(C.w).add(B.xyz.mul(B.w)).normalize());
+      return A.xyz.add(C.xyz.mul(aSec.y).add(Bn.mul(aSec.x)).mul(A.w));
+    })();
+  }
+}
+
+const ARM_VERT_HEAD = `uniform highp sampler2D uArmSpine;
+attribute vec4 aSec;
+attribute vec2 aRing;
+void armRing(out vec4 A, out vec4 B, out vec4 C) {
+  ivec2 tc = ivec2(int(aRing.x + 0.5), int(aRing.y + 0.5) * ${SPINE_ROWS});
+  A = texelFetch(uArmSpine, tc, 0);
+  B = texelFetch(uArmSpine, tc + ivec2(0, 1), 0);
+  C = texelFetch(uArmSpine, tc + ivec2(0, 2), 0);
+}
+`;
+const ARM_NORMAL_GLSL = `vec4 anA, anB, anC; armRing(anA, anB, anC);
+  vec3 objectNormal = normalize((anC.xyz * aSec.w + cross(anB.xyz, anC.xyz) * aSec.z) * anC.w + anB.xyz * anB.w);`;
+const ARM_POSITION_GLSL = `vec4 apA, apB, apC; armRing(apA, apB, apC);
+  vec3 transformed = apA.xyz + (apC.xyz * aSec.y + cross(apB.xyz, apC.xyz) * aSec.x) * apA.w;`;
+
 /** A tube along a chain of points (the octopus's local frame), with its share of the sucker instances. */
 export class ArmTube {
   readonly n: number;
@@ -146,23 +225,33 @@ export class ArmTube {
   pull = 0;
   private readonly suckers: THREE.InstancedMesh;
   private readonly first: number;
+  private readonly spines: ArmSpines;
+  /** This arm's first texel (floats) in spines.data. */
+  private readonly base: number;
   private readonly nr: number;
   private readonly rings: number;
   private readonly centres: Float32Array;   // ring centres ...
   private readonly frames: Float32Array;    // ... and frames (T, Nn, Bn), for the suckers
+  private readonly lastNn = new THREE.Vector3();
 
-  constructor(n: number, r0: number, r1: number, mat: THREE.Material, suckers: THREE.InstancedMesh, first: number) {
+  constructor(n: number, r0: number, r1: number, mat: THREE.Material, suckers: THREE.InstancedMesh, first: number, spines: ArmSpines, row: number) {
     this.n = n; this.r0 = r0; this.r1 = r1;
     this.suckers = suckers; this.first = first;   // its instances: first .. first + SUCKERS_PER_ARM
+    this.spines = spines; this.base = row * SPINE_ROWS * spines.width * 4;
     const ring = ARM_RING, nr = (n - 1) * ARM_SUB + 1, rings = nr + ARM_CAP.length, count = rings * ring + 1, g = new THREE.BufferGeometry();
     this.nr = nr; this.rings = rings;
+    // position and normal are filled only on demand (syncVertices: the shape check reads them); the
+    // shader builds the drawn ones from aSec (the vertex's place on the unit section) and aRing.
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     const col = new Float32Array(count * 3), uv = new Float32Array(count * 2), thin = new Float32Array(count), idx: number[] = [];
+    const sec = new Float32Array(count * 4), ringOf = new Float32Array(count * 2);
     for (let i = 0; i < rings; i++) for (let j = 0; j < ring; j++) {
       const f = Math.min(1, i / (nr - 1)), k = i * ring + j, cs = Math.cos((j / ring) * Math.PI * 2);
       uv[2 * k] = j / ring * 0.25; uv[2 * k + 1] = f * 2;
       thin[k] = 0.1 + 0.9 * f ** 1.5;   // thin and translucent towards the tip
+      sec.set(ARM_SEC.subarray(4 * j, 4 * j + 4), 4 * k);
+      ringOf[2 * k] = i; ringOf[2 * k + 1] = row;
       // the oral face paler (no painted stripes: the suckers are real now)
       const pale = 0.45 * clamp(cs, 0, 1) ** 2;
       col[3 * k] = lerp(1, 2.0, pale); col[3 * k + 1] = lerp(1, 2.7, pale); col[3 * k + 2] = lerp(1, 3.0, pale);
@@ -171,14 +260,19 @@ export class ArmTube {
       else idx.push(k, i * ring + (j + 1) % ring, count - 1);   // the tip's last fan
     }
     col.fill(1, (count - 1) * 3); thin[count - 1] = 1;
+    ringOf[2 * (count - 1)] = rings; ringOf[2 * (count - 1) + 1] = row;   // the tip's point: its own column, on the axis
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.setAttribute('aThin', new THREE.BufferAttribute(thin, 1));
+    g.setAttribute('aSec', new THREE.BufferAttribute(sec, 4));
+    g.setAttribute('aRing', new THREE.BufferAttribute(ringOf, 2));
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), NEVER_CULL_RADIUS);
     this.mesh = new THREE.Mesh(g, mat);
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
+    // (critterCheck.ts calls this before it reads the vertices; JSON leaves functions out of the hashes)
+    this.mesh.userData['syncGeometry'] = (): void => this.syncVertices();
     this.pts = Array.from({ length: n }, () => new THREE.Vector3());
     this.centres = new Float32Array(nr * 3); this.frames = new Float32Array(nr * 9);
   }
@@ -186,14 +280,12 @@ export class ArmTube {
   /** Radius at f (0 root .. 1 tip). */
   rAt(f: number): number { return this.r1 + (this.r0 - this.r1) * (1 - f) ** TAPER_POWER; }
 
-  /** Rebuild the tube from pts; 'down' is the local direction of the ground. */
+  /** Lay out the rings from pts (for the shader and the suckers); 'down' is the local direction of the ground. */
   build(down: THREE.Vector3): void {
     this.computeCentres();
     const T = this.buildRings(down);
     this.buildTip(T);
-    const g = this.mesh.geometry;
-    g.getAttribute('position').needsUpdate = true;
-    g.getAttribute('normal').needsUpdate = true;
+    this.spines.texture.needsUpdate = true;
     this.placeSuckers();
   }
 
@@ -211,11 +303,18 @@ export class ArmTube {
     }
   }
 
-  /** The rings and the rounded cap over the tip; returns the last tangent. */
+  /** Writes one column of this arm's texels (ArmSpines: A, B, C). */
+  private texel(col: number, a: THREE.Vector3, aw: number, b: THREE.Vector3, bw: number, c: THREE.Vector3, cw: number): void {
+    const D = this.spines.data, row = this.spines.width * 4, k = this.base + col * 4;
+    D[k] = a.x; D[k + 1] = a.y; D[k + 2] = a.z; D[k + 3] = aw;
+    D[k + row] = b.x; D[k + row + 1] = b.y; D[k + row + 2] = b.z; D[k + row + 3] = bw;
+    D[k + 2 * row] = c.x; D[k + 2 * row + 1] = c.y; D[k + 2 * row + 2] = c.z; D[k + 2 * row + 3] = cw;
+  }
+
+  /** The rings and the rounded cap over the tip, as texels; returns the last tangent. */
   private buildRings(down: THREE.Vector3): THREE.Vector3 {
-    const g = this.mesh.geometry, P = g.getAttribute('position').array, N = g.getAttribute('normal').array;
-    const nr = this.nr, ring = ARM_RING, C = this.centres, F = this.frames, S = ARM_SEC;
-    const T = new THREE.Vector3(), Nn = new THREE.Vector3(), Bn = new THREE.Vector3(), c = new THREE.Vector3(), o = new THREE.Vector3(), q = new THREE.Vector3();
+    const nr = this.nr, C = this.centres, F = this.frames;
+    const T = new THREE.Vector3(), Nn = new THREE.Vector3(), Bn = new THREE.Vector3(), c = new THREE.Vector3();
     const L = this.seg / ARM_SUB || 1e-3;   // a ring's spacing, for the taper's slope
     for (let i = 0; i < this.rings; i++) {
       const ic = Math.min(i, nr - 1), cap = i - ic;   // cap: 1.. on the rings over the tip
@@ -232,29 +331,39 @@ export class ArmTube {
         F.set([T.x, T.y, T.z, Nn.x, Nn.y, Nn.z, Bn.x, Bn.y, Bn.z], 9 * ic);
       }
       const f = ic / (nr - 1), r = this.rAt(f), slope = (this.rAt(Math.min(1, f + 0.02)) - this.rAt(Math.max(0, f - 0.02))) / (0.04 * (nr - 1) * L);
-      // over the tip: a rounded cap, the section shrinking on a quarter circle
+      // over the tip: a rounded cap, the section shrinking on a quarter circle (its normals turning
+      // forward on it); along the arm the taper tilts the skin forward
       const ang = cap ? ARM_CAP[cap - 1] ?? 0 : 0, sc = Math.cos(ang), ahead = r * Math.sin(ang);
       c.set(val(C, 3 * ic), val(C, 3 * ic + 1), val(C, 3 * ic + 2)).addScaledVector(T, ahead);
-      for (let j = 0; j < ring; j++) {
-        const x = val(S, 4 * j), y = val(S, 4 * j + 1);
-        o.copy(Nn).multiplyScalar(y).addScaledVector(Bn, x);
-        q.copy(Nn).multiplyScalar(val(S, 4 * j + 3)).addScaledVector(Bn, val(S, 4 * j + 2));
-        if (cap) q.multiplyScalar(sc).addScaledVector(T, Math.sin(ang));
-        else q.addScaledVector(T, -slope).normalize();   // the taper tilts the skin forward
-        const k = (i * ring + j) * 3;
-        P[k] = c.x + o.x * r * sc; P[k + 1] = c.y + o.y * r * sc; P[k + 2] = c.z + o.z * r * sc;
-        N[k] = q.x; N[k + 1] = q.y; N[k + 2] = q.z;
-      }
+      this.texel(i, c, r * sc, T, cap ? Math.sin(ang) : -slope, Nn, cap ? sc : 1);
     }
+    this.lastNn.copy(Nn);
     return T;
   }
 
-  /** The tip's point. */
+  /** The tip's point: a zero section on the axis, its normal straight ahead. */
   private buildTip(T: THREE.Vector3): void {
-    const g = this.mesh.geometry, P = g.getAttribute('position').array, N = g.getAttribute('normal').array;
-    const C = this.centres, last = 3 * (this.nr - 1), k = (this.rings * ARM_RING) * 3, r1 = this.rAt(1);
-    P[k] = val(C, last) + T.x * r1; P[k + 1] = val(C, last + 1) + T.y * r1; P[k + 2] = val(C, last + 2) + T.z * r1;
-    N[k] = T.x; N[k + 1] = T.y; N[k + 2] = T.z;
+    const C = this.centres, last = 3 * (this.nr - 1);
+    _v.set(val(C, last), val(C, last + 1), val(C, last + 2)).addScaledVector(T, this.rAt(1));
+    this.texel(this.rings, _v, 0, T, 1, this.lastNn, 0);
+  }
+
+  /** The vertices as the shader builds them, into position and normal (for the checks that read them). */
+  syncVertices(): void {
+    const g = this.mesh.geometry, P = g.getAttribute('position'), N = g.getAttribute('normal');
+    const sec = g.getAttribute('aSec').array, ringOf = g.getAttribute('aRing').array, D = this.spines.data, row = this.spines.width * 4;
+    const pa = P.array, na = N.array;
+    for (let v = 0; v < P.count; v++) {
+      const k = this.base + val(ringOf, 2 * v) * 4, x = val(sec, 4 * v), y = val(sec, 4 * v + 1), nx = val(sec, 4 * v + 2), ny = val(sec, 4 * v + 3);
+      const tx = val(D, k + row), ty = val(D, k + row + 1), tz = val(D, k + row + 2), tilt = val(D, k + row + 3);
+      const gx = val(D, k + 2 * row), gy = val(D, k + 2 * row + 1), gz = val(D, k + 2 * row + 2), w = val(D, k + 2 * row + 3);
+      const bx = ty * gz - tz * gy, by = tz * gx - tx * gz, bz = tx * gy - ty * gx;   // Bn = T x Nn
+      const r = val(D, k + 3);
+      pa[3 * v] = val(D, k) + (gx * y + bx * x) * r; pa[3 * v + 1] = val(D, k + 1) + (gy * y + by * x) * r; pa[3 * v + 2] = val(D, k + 2) + (gz * y + bz * x) * r;
+      _v.set((gx * ny + bx * nx) * w + tx * tilt, (gy * ny + by * nx) * w + ty * tilt, (gz * ny + bz * nx) * w + tz * tilt).normalize();
+      na[3 * v] = _v.x; na[3 * v + 1] = _v.y; na[3 * v + 2] = _v.z;
+    }
+    P.needsUpdate = true; N.needsUpdate = true;
   }
 
   /**
