@@ -80,7 +80,9 @@ const options: esbuild.BuildOptions = {
   format: 'esm',
   target: 'es2022',         // top-level await in the entry modules
   sourcemap: true,
-  metafile: true,           // lists this build's outputs for removeStaleOutputs
+  minify: !process.argv.includes('--watch'),   // the sourcemaps keep stack traces readable
+  keepNames: true,          // the reef-light bake key hashes texture constructor names (reefLight/hash.ts)
+  metafile: true,          // lists this build's outputs for removeStaleOutputs
   logLevel: 'info',
   plugins: [fingerprintPlugin],
 };
