@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_ROOT = path.join(REPO_ROOT, 'web');
@@ -221,13 +222,14 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
       res.writeHead(HTTP_NOT_FOUND).end('not found');
       return;
     }
-    // no-cache still lets the browser keep its copy: it revalidates by date and gets a bodiless 304
-    // while the file is unchanged, so a return visit doesn't download the ~100 MB of models again.
     const modified = new Date(Math.floor(st.mtimeMs / 1000) * 1000);
-    const since = Date.parse(req.headers['if-modified-since'] ?? '');
+    const known = etagCache.get(file);
+    const etag = known && known.mtimeMs === st.mtimeMs && known.size === st.size ? known.etag : null;
     const headers: Record<string, string> = {
       'Content-Type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
-      'Cache-Control': 'no-cache',
+      // no-cache still lets the browser keep its copy: it revalidates and gets a bodiless 304 while the
+      // content is unchanged. Split chunks carry a content hash in their name, so they never change.
+      'Cache-Control': HASHED_NAME.test(rel) ? 'public, max-age=31536000, immutable' : 'no-cache',
       // The body may be brotli/gzip-encoded by what the client accepts (sendBody).
       // The page at / depends on the User-Agent in public mode (crawlers get about.html).
       'Vary': publicMode && rel.endsWith('.html') ? 'Accept-Encoding, User-Agent' : 'Accept-Encoding',
@@ -235,8 +237,23 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
       // js-profiling: lets a page sample itself (main ?profile=1, the JS Self-Profiling API).
       'Document-Policy': 'js-profiling',
     };
-    if (!Number.isNaN(since) && modified.getTime() <= since) {
-      res.writeHead(HTTP_NOT_MODIFIED, headers).end();
+    const reply = (tag: string, data: Buffer | null): void => {
+      headers['ETag'] = tag;
+      if (notModified(req, tag, modified)) {
+        res.writeHead(HTTP_NOT_MODIFIED, headers).end();
+        return;
+      }
+      if (data) {
+        sendBody(file, st.mtimeMs, data, req, res, headers);
+        return;
+      }
+      fs.readFile(file, (err, body) => {
+        if (err) res.writeHead(HTTP_NOT_FOUND).end('not found');
+        else sendBody(file, st.mtimeMs, body, req, res, headers);
+      });
+    };
+    if (etag) {
+      reply(etag, null);
       return;
     }
     fs.readFile(file, (err, data) => {
@@ -244,9 +261,33 @@ function handleStatic(url: URL, req: http.IncomingMessage, res: http.ServerRespo
         res.writeHead(HTTP_NOT_FOUND).end('not found');
         return;
       }
-      sendBody(file, st.mtimeMs, data, req, res, headers);
+      const tag = contentTag(data);
+      etagCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, etag: tag });
+      reply(tag, data);
     });
   });
+}
+
+/** esbuild's split chunks (name-HASH.js and their maps): the name changes whenever the content does. */
+const HASHED_NAME = /^build\/[\w-]+-[A-Z0-9]{8}\.js(\.map)?$/;
+
+/** Content ETags by file, valid while its mtime and size are unchanged. A redeploy touches every file's
+ *  mtime, but an unchanged file keeps its tag, so returning visitors get a 304 rather than the models again. */
+const etagCache = new Map<string, { readonly mtimeMs: number; readonly size: number; readonly etag: string }>();
+
+/** Weak, because the body may be sent brotli- or gzip-encoded. */
+const contentTag = (data: Buffer): string =>
+  `W/"${crypto.createHash('sha1').update(data).digest('base64url').slice(0, 22)}"`;
+
+/** If-None-Match wins over If-Modified-Since when both are sent (RFC 9110 13.2.2). */
+function notModified(req: http.IncomingMessage, etag: string, modified: Date): boolean {
+  const match = req.headers['if-none-match'];
+  if (match !== undefined) {
+    const strip = (t: string): string => t.trim().replace(/^W\//, '');
+    return match.split(',').some((t) => t.trim() === '*' || strip(t) === strip(etag));
+  }
+  const since = Date.parse(req.headers['if-modified-since'] ?? '');
+  return !Number.isNaN(since) && modified.getTime() <= since;
 }
 
 /** Already-compressed formats: brotli or gzip would only spend time on them. */
