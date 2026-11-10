@@ -182,6 +182,14 @@ Tick **reference** (or add `&ref=1`) to lay a real photo over the render and mea
    per patch, sampled at the same anatomical spot on the render.
 5. Click **save** to store the photo and `refs.json` in `web/ref/<species>/`.
 
+`web/ref/` is not on `main`. The reference photos and their `refs.json` files, which `tools/fit-anatomy.ts`
+reads, are kept on the `archive/reference-assets` branch, along with retired scenery models. To restore
+them locally:
+
+```sh
+git checkout archive/reference-assets -- web/ref && git restore --staged web/ref
+```
+
 ## Custom models
 
 Any species can use a GLB model instead of its procedural mesh. The swim shader bends static meshes, so
@@ -309,7 +317,8 @@ roku/                  the Roku channel
 
 ## Credits
 
-Reference photographs in `web/ref/` are credited in each species' `CREDITS.md`.
+Reference photographs (on the `archive/reference-assets` branch, in `web/ref/`) are credited in each
+species' `CREDITS.md`.
 
 ## License
 

@@ -5,6 +5,8 @@ web/models/scenery/src/
 web/models/fish/src/
 web/models/skins/
 web/models/cache/
+# Reference photos (lab page, tools/fit-anatomy.ts) live on the archive/reference-assets branch
+web/ref/
 out/
 .tools/
 
