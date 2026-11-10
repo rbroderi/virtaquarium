@@ -2,6 +2,7 @@
 // document, builds the stage, reef and stock, wires the event bus, and starts the loop. Every module
 // it wires receives its collaborators here; none reaches for a global.
 import * as THREE from 'three';
+import type { WebGPURenderer } from 'three/webgpu';
 import { SPECIES } from './species.js';
 import { buildReef, loadScenery, EMPTY_SCENERY, type Scenery, type TankScene } from './reef.js';
 import { World, type TankBounds } from './world.js';
@@ -143,14 +144,28 @@ function reefLightRequest(stage: Stage): ReefLightOptions {
   };
 }
 
-/** WebGPU precompile: one hidden warm-up render through the real post chain compiles every pipeline the
- *  first frame would otherwise build synchronously. The loading screen still covers the canvas, so the
- *  warm frame is never seen. It goes through the same path as TankLoop.present(): the crystal background,
- *  the velocity pass (the first live frame blurs) and the scene-pass + shaft composite. */
-function precompileGpu(stage: Stage, world: World): void {
+/** WebGPU precompile, part one: compileAsync over the scene pass's target, which creates the pipelines with
+ *  createRenderPipelineAsync (many in flight, the browser's GPU process compiling them while JavaScript
+ *  goes on). Started before the reef-light bake and stocking, so the compiles of what is already in the
+ *  scene overlap that work; the call after stocking only has the new objects (fish, critters) left. */
+function compileGpuScene(stage: Stage): Promise<void> {
+  const post = stage.post;
+  if (!post) return Promise.resolve();
+  return post.scenePass.compileAsync(stage.renderer as unknown as WebGPURenderer)
+    .catch((e: unknown) => console.warn('compileAsync:', e instanceof Error ? e.message : e));
+}
+
+/** WebGPU precompile, part two: one hidden warm-up render through the real post chain, for the pipelines
+ *  compileAsync cannot reach (the crystal background, the velocity pass, the shaft composite) and any it
+ *  missed. The loading screen still covers the canvas, so the warm frame is never seen. It goes through
+ *  the same path as TankLoop.present(): the crystal background, the velocity pass (the first live frame
+ *  blurs) and the scene-pass + shaft composite. */
+async function precompileGpu(stage: Stage, world: World, early: Promise<void>): Promise<void> {
   const post = stage.post;
   if (!post) return;
   const models = world.fish.map((f) => f.model);
+  await early;
+  await compileGpuScene(stage);
   renderCrystalBgScene(stage.renderer as unknown as CrystalBgRenderer, stage.scene, stage.camera, models);
   post.setSun(stage.sun);
   post.track(models, stage.camera);
@@ -274,7 +289,10 @@ async function main(): Promise<void> {
     if (stage.water) stage.renderer.setRenderTarget(null);
     return compiling.then(() => undefined, (e: unknown) => console.warn('compileAsync:', e instanceof Error ? e.message : e));
   };
-  if (options.precompile && !stage.gpu) void precompile();   // WebGL: compile in parallel during the bake; WebGPU warms up after stocking (see below)
+  if (options.precompile && !stage.gpu) void precompile();   // WebGL: compile in parallel during the bake
+  // WebGPU: the reef's pipelines compile in the GPU process during the bake and stocking; what stocking adds
+  // is compiled after it (precompileGpu, below).
+  const gpuCompile = options.precompile && stage.gpu ? compileGpuScene(stage) : Promise.resolve();
   if (useReefLight) await bakeReefLight(stage, reef);
   timer.stage('reef light bake');
 
@@ -294,7 +312,7 @@ async function main(): Promise<void> {
   if (options.precompile && !stage.gpu) await precompile();
   if (options.precompile && stage.gpu) {
     await paintLoading();   // show "Preparing shaders" before the synchronous warm-up render
-    precompileGpu(stage, world);
+    await precompileGpu(stage, world, gpuCompile);
   }
   timer.stage('compile shaders');
 

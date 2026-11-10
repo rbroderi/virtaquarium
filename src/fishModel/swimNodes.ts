@@ -9,18 +9,22 @@
 // read through iridescenceThicknessNode/aoNode.
 import * as THREE from 'three';
 import {
-  tsl, webgpu, boundMaterialColor,
+  tsl, webgpu,
   type LightingModelDirectInput, type Node, type NodeBuilder,
   type FloatUniformNode, type Vec2UniformNode, type Vec3UniformNode, type PathArrayNode, type NodeObject,
   type Tsl, type Webgpu,
 } from '../webgpu/tsl.js';
 import { installReefLight } from '../reefLight/webgpu.js';
-import { makeSwimMaterial, PATH_POINTS, type SwimUniforms, type Tissue } from './swimShader.js';
+import { makeSwimMaterial, swimUniforms, PATH_POINTS, type SwimUniforms, type Tissue } from './swimShader.js';
 
 /** Brightest linear radiance a fish fragment may write, as swimShader.ts's HDR_CLAMP. */
 const HDR_CLAMP = 4;
 
-/** TSL uniform nodes shared by every material of one fish (they all read the same SwimUniforms). */
+/** TSL uniform nodes shared by EVERY swim material. Each fish keeps its own SwimUniforms (fish.ts writes
+ *  `u.uPhase.value` and so on); a node reads the drawn object's material's uniforms in its object update,
+ *  so a node graph can be shared between fish. Sharing matters because three keys a node material's compiled
+ *  program on its node ids: a graph built per fish was built, and its program cache missed, once per fish
+ *  and per pass (about 40 ms of TSL building each). */
 interface SwimNodes {
   uPhase: FloatUniformNode;
   uAmp: FloatUniformNode;
@@ -36,43 +40,90 @@ interface SwimNodes {
   uFold: FloatUniformNode;
   uCup: FloatUniformNode;
   uPathOn: FloatUniformNode;
-  uNight: FloatUniformNode | undefined;
-  uGape: FloatUniformNode | undefined;
-  uErect: FloatUniformNode | undefined;
-  uHinge: Vec2UniformNode | undefined;
-  uPBend: Vec3UniformNode | undefined;
-  uPWave: Vec2UniformNode | undefined;
-  uPath: PathArrayNode;
-  uPathUp: PathArrayNode;
-  uGaze: Vec2UniformNode | undefined;
+  uNight: FloatUniformNode;
+  uGape: FloatUniformNode;
+  uErect: FloatUniformNode;
+  uHinge: Vec2UniformNode;
+  uPBend: Vec3UniformNode;
+  uPWave: Vec2UniformNode;
+  uGaze: Vec2UniformNode;
+  /** Per-material numbers (SwimConstants) that would otherwise be literals, splitting the shader per species. */
+  uSizeMM: FloatUniformNode;
+  uThickMM: FloatUniformNode;
+  uNormalScale: Vec2UniformNode;
+  uIridRange: Vec2UniformNode;
+  /** The drawn material's colour and iridescence (a node bound to one material would be wrong for the rest). */
+  uMatColor: NodeObject;
+  uMatIridescence: FloatUniformNode;
 }
 
-const nodesByUniforms = new WeakMap<SwimUniforms, SwimNodes>();
+/** The two moray path arrays: a uniform buffer is shared by every object using it, so these stay per fish. */
+interface PathNodes { uPath: PathArrayNode; uPathUp: PathArrayNode }
 
-/**
- * Bridges a scalar swim uniform to a TSL uniform node exactly once: fish.ts writes `u.uPhase.value`,
- * so the entry's `value` becomes an accessor over the node's own value. Object uniforms (Vector2/3,
- * Float32Array) need no bridge — they are mutated in place and read back by reference each frame.
- */
-function scalar(t: Tsl, entry: THREE.IUniform<number>): FloatUniformNode {
-  const node = t.uniform(entry.value);
-  Object.defineProperty(entry, 'value', {
-    get: (): number => node.value,
-    set: (v: number): void => { node.value = v; },
-    configurable: true,
-    enumerable: true,
-  });
+type ObjectFrame = { readonly object?: unknown };
+type ObjectUpdatable = { onObjectUpdate(callback: (frame: ObjectFrame) => void): unknown };
+
+/** The material of the object being drawn (the shadow pass swaps the material, not the object). */
+function drawnMaterial(frame: ObjectFrame): THREE.Material | undefined {
+  const m = (frame.object as THREE.Mesh | undefined)?.material;
+  return Array.isArray(m) ? m[0] : m;
+}
+
+interface SwimConstants {
+  readonly sizeMM: number;
+  readonly thickMM: number;
+  readonly normalScale: THREE.Vector2;
+  readonly iridLo: number;
+  readonly iridRange: number;
+}
+
+function swimConstantsOf(frame: ObjectFrame): SwimConstants | undefined {
+  return (drawnMaterial(frame)?.userData as { swimConstants?: SwimConstants } | undefined)?.swimConstants;
+}
+
+function swimUniformsOf(frame: ObjectFrame): SwimUniforms | undefined {
+  return (drawnMaterial(frame)?.userData as { swimUniforms?: SwimUniforms } | undefined)?.swimUniforms;
+}
+
+let swimNodeSet: SwimNodes | null = null;
+const pathNodesByUniforms = new WeakMap<SwimUniforms, PathNodes>();
+const fishIds = new WeakMap<SwimUniforms, number>();
+const sharedNodes = new Map<string, unknown>();
+
+/** One node per structure key: materials of the same structure share a graph (and so a compiled program). */
+function shared<T>(key: string, build: () => T): T {
+  let node = sharedNodes.get(key);
+  if (node === undefined) {
+    node = build();
+    sharedNodes.set(key, node);
+  }
+  return node as T;
+}
+
+type ScalarKey = 'uPhase' | 'uAmp' | 'uFlutter' | 'uFinH' | 'uBend' | 'uFinPhase' | 'uXPed' | 'uVent' | 'uAnguil' | 'uLift'
+  | 'uBendTail' | 'uFold' | 'uCup' | 'uPathOn' | 'uNight' | 'uGape' | 'uErect';
+const SCALAR_DEFAULTS = swimUniforms({ uNight: { value: 0 }, uGape: { value: 0 }, uErect: { value: 1 } });
+
+/** A float uniform refreshed from the drawn object's swim uniforms. */
+function scalar(t: Tsl, key: ScalarKey): FloatUniformNode {
+  const rest = SCALAR_DEFAULTS[key]!.value;
+  const node = t.uniform(rest);
+  (node as unknown as ObjectUpdatable).onObjectUpdate((frame) => { node.value = swimUniformsOf(frame)?.[key]?.value ?? rest; });
   return node;
 }
 
-/** A Vector2 uniform, read by reference (fish.ts mutates its .x/.y in place). */
-function vec2Uniform(t: Tsl, entry: THREE.IUniform<THREE.Vector2>): Vec2UniformNode {
-  return t.uniform(entry.value, 'vec2') as Vec2UniformNode;
+type VectorKey = 'uHinge' | 'uPWave' | 'uGaze';
+
+function vec2Uniform(t: Tsl, key: VectorKey, rest: THREE.Vector2): Vec2UniformNode {
+  const node = t.uniform(rest.clone(), 'vec2') as Vec2UniformNode;
+  (node as unknown as ObjectUpdatable).onObjectUpdate((frame) => { node.value.copy(swimUniformsOf(frame)?.[key]?.value ?? rest); });
+  return node;
 }
 
-/** A Vector3 uniform, read by reference (fish.ts mutates its .x/.y/.z in place). */
-function vec3Uniform(t: Tsl, entry: THREE.IUniform<THREE.Vector3>): Vec3UniformNode {
-  return t.uniform(entry.value, 'vec3') as Vec3UniformNode;
+function vec3Uniform(t: Tsl, rest: THREE.Vector3): Vec3UniformNode {
+  const node = t.uniform(rest.clone(), 'vec3') as Vec3UniformNode;
+  (node as unknown as ObjectUpdatable).onObjectUpdate((frame) => { node.value.copy(swimUniformsOf(frame)?.uPBend?.value ?? rest); });
+  return node;
 }
 
 /** The path stations/ups as a uniform array of vec3 (24 elements, indexed by the shader). */
@@ -85,38 +136,77 @@ function vec3Path(t: Tsl, entry: THREE.IUniform<Float32Array>): PathArrayNode {
   return t.uniformArray(arr as unknown as THREE.Vector3[], 'vec3');
 }
 
-function nodesFor(uniforms: SwimUniforms): SwimNodes {
-  const known = nodesByUniforms.get(uniforms);
+/** A uniform refreshed from the drawn material's SwimConstants. */
+function constant(t: Tsl, type: 'float', read: (c: SwimConstants) => number): FloatUniformNode;
+function constant(t: Tsl, type: 'vec2', read: (c: SwimConstants, v: THREE.Vector2) => void): Vec2UniformNode;
+function constant(t: Tsl, type: 'float' | 'vec2', read: (c: SwimConstants, v: THREE.Vector2) => unknown): FloatUniformNode | Vec2UniformNode {
+  if (type === 'float') {
+    const node = t.uniform(0);
+    (node as unknown as ObjectUpdatable).onObjectUpdate((frame) => {
+      const c = swimConstantsOf(frame);
+      if (c) node.value = read(c, node.value as never) as number;
+    });
+    return node;
+  }
+  const node = t.uniform(new THREE.Vector2(), 'vec2') as Vec2UniformNode;
+  (node as unknown as ObjectUpdatable).onObjectUpdate((frame) => {
+    const c = swimConstantsOf(frame);
+    if (c) read(c, node.value);
+  });
+  return node;
+}
+
+function swimNodes(): SwimNodes {
+  if (swimNodeSet) return swimNodeSet;
+  const t = tsl();
+  const matColor = t.uniform(new THREE.Color(1, 1, 1), 'color');
+  (matColor as unknown as ObjectUpdatable).onObjectUpdate((frame) => {
+    const m = drawnMaterial(frame) as (THREE.Material & { color?: THREE.Color }) | undefined;
+    if (m?.color) matColor.value.copy(m.color);
+  });
+  const matIrid = t.uniform(0);
+  (matIrid as unknown as ObjectUpdatable).onObjectUpdate((frame) => {
+    matIrid.value = (drawnMaterial(frame) as (THREE.Material & { iridescence?: number }) | undefined)?.iridescence ?? 0;
+  });
+  swimNodeSet = {
+    uPhase: scalar(t, 'uPhase'), uAmp: scalar(t, 'uAmp'), uFlutter: scalar(t, 'uFlutter'), uFinH: scalar(t, 'uFinH'),
+    uBend: scalar(t, 'uBend'), uFinPhase: scalar(t, 'uFinPhase'), uXPed: scalar(t, 'uXPed'), uVent: scalar(t, 'uVent'),
+    uAnguil: scalar(t, 'uAnguil'), uLift: scalar(t, 'uLift'), uBendTail: scalar(t, 'uBendTail'), uFold: scalar(t, 'uFold'),
+    uCup: scalar(t, 'uCup'), uPathOn: scalar(t, 'uPathOn'), uNight: scalar(t, 'uNight'), uGape: scalar(t, 'uGape'),
+    uErect: scalar(t, 'uErect'),
+    uHinge: vec2Uniform(t, 'uHinge', new THREE.Vector2(9, 9)),
+    uPBend: vec3Uniform(t, new THREE.Vector3(0, 0, 1)),
+    uPWave: vec2Uniform(t, 'uPWave', new THREE.Vector2()),
+    uGaze: vec2Uniform(t, 'uGaze', new THREE.Vector2()),
+    uSizeMM: constant(t, 'float', (c) => c.sizeMM),
+    uThickMM: constant(t, 'float', (c) => c.thickMM),
+    uNormalScale: constant(t, 'vec2', (c, v) => v.copy(c.normalScale)),
+    uIridRange: constant(t, 'vec2', (c, v) => v.set(c.iridLo, c.iridRange)),
+    uMatColor: matColor as unknown as NodeObject,
+    uMatIridescence: matIrid as unknown as FloatUniformNode,
+  };
+  return swimNodeSet;
+}
+
+function pathNodesFor(uniforms: SwimUniforms): PathNodes {
+  const known = pathNodesByUniforms.get(uniforms);
   if (known) return known;
   const t = tsl();
-  const nodes: SwimNodes = {
-    uPhase: scalar(t, uniforms.uPhase),
-    uAmp: scalar(t, uniforms.uAmp),
-    uFlutter: scalar(t, uniforms.uFlutter),
-    uFinH: scalar(t, uniforms.uFinH),
-    uBend: scalar(t, uniforms.uBend),
-    uFinPhase: scalar(t, uniforms.uFinPhase),
-    uXPed: scalar(t, uniforms.uXPed),
-    uVent: scalar(t, uniforms.uVent),
-    uAnguil: scalar(t, uniforms.uAnguil),
-    uLift: scalar(t, uniforms.uLift),
-    uBendTail: scalar(t, uniforms.uBendTail),
-    uFold: scalar(t, uniforms.uFold),
-    uCup: scalar(t, uniforms.uCup),
-    uPathOn: scalar(t, uniforms.uPathOn),
-    uNight: uniforms.uNight ? scalar(t, uniforms.uNight) : undefined,
-    uGape: uniforms.uGape ? scalar(t, uniforms.uGape) : undefined,
-    uErect: uniforms.uErect ? scalar(t, uniforms.uErect) : undefined,
-    uHinge: uniforms.uHinge ? vec2Uniform(t, uniforms.uHinge) : undefined,
-    uPBend: uniforms.uPBend ? vec3Uniform(t, uniforms.uPBend) : undefined,
-    uPWave: uniforms.uPWave ? vec2Uniform(t, uniforms.uPWave) : undefined,
-    uPath: vec3Path(t, uniforms.uPath),
-    uPathUp: vec3Path(t, uniforms.uPathUp),
-    uGaze: uniforms.uGaze ? vec2Uniform(t, uniforms.uGaze) : undefined,
-  };
-  nodesByUniforms.set(uniforms, nodes);
+  const nodes = { uPath: vec3Path(t, uniforms.uPath), uPathUp: vec3Path(t, uniforms.uPathUp) };
+  pathNodesByUniforms.set(uniforms, nodes);
   return nodes;
 }
+
+/** The eel's body is drawn along its path (uPathOn is 1 for its whole life); every other fish never is. */
+const drawsAlongPath = (u: SwimUniforms): boolean => u.uAnguil.value === 1;
+
+/** Tells fish apart in a structure key where they cannot share nodes (the eel's per-fish path buffers). */
+function fishId(u: SwimUniforms): number {
+  let id = fishIds.get(u);
+  if (id === undefined) fishIds.set(u, id = nextFishId++);
+  return id;
+}
+let nextFishId = 1;
 
 /** Node builders mirroring swimShader.ts's spineH / liftY / finFlutter / pect / pathFrame. */
 interface SwimCtx {
@@ -128,7 +218,7 @@ interface SwimCtx {
   pathFrame(x: NodeObject): { P: NodeObject; T: NodeObject; U: NodeObject };
 }
 
-function swimCtx(t: Tsl, u: SwimNodes): SwimCtx {
+function swimCtx(t: Tsl, u: SwimNodes, path: PathNodes | null): SwimCtx {
   const PECT_WAVE_K = 2.6;
   return {
     spineH: (x) => {
@@ -166,18 +256,18 @@ function swimCtx(t: Tsl, u: SwimNodes): SwimCtx {
       const f = t.clamp(t.float(0.5).sub(x).mul(23), 0, 22.999);
       const i = t.int(t.floor(f));
       const tt = f.sub(t.float(i));
-      const p1 = u.uPath.element(i) as unknown as NodeObject;
-      const p2 = u.uPath.element(i.add(1)) as unknown as NodeObject;
+      const p1 = path!.uPath.element(i) as unknown as NodeObject;
+      const p2 = path!.uPath.element(i.add(1)) as unknown as NodeObject;
       const iPrev = t.max(i.sub(1) as unknown as NodeObject, 0);
       const iNext = t.min(i.add(2) as unknown as NodeObject, PATH_POINTS - 1);
-      const p0 = t.select(t.greaterThan(i, t.int(0)), u.uPath.element(iPrev), p2.mul(2).sub(p1));
-      const p3 = t.select(t.lessThan(i, t.int(PATH_POINTS - 2)), u.uPath.element(iNext), p2.mul(2).sub(p1));
+      const p0 = t.select(t.greaterThan(i, t.int(0)), path!.uPath.element(iPrev), p2.mul(2).sub(p1));
+      const p3 = t.select(t.lessThan(i, t.int(PATH_POINTS - 2)), path!.uPath.element(iNext), p2.mul(2).sub(p1));
       const c1 = p2.sub(p0);
       const c2 = p0.mul(2).sub(p1.mul(5)).add(p2.mul(4)).sub(p3);
       const c3 = p1.sub(p2).mul(3).add(p3).sub(p0);
       const P = p1.add(t.float(0.5).mul(tt).mul(c1.add(tt.mul(c2.add(tt.mul(c3))))));
       const T = t.negate(t.normalize(c1.add(tt.mul(c2.mul(2).add(c3.mul(3).mul(tt)))).add(t.vec3(1e-6, 0, 0))));
-      const up = t.mix(u.uPathUp.element(i) as unknown as NodeObject, u.uPathUp.element(i.add(1)) as unknown as NodeObject, tt) as unknown as NodeObject;
+      const up = t.mix(path!.uPathUp.element(i) as unknown as NodeObject, path!.uPathUp.element(i.add(1)) as unknown as NodeObject, tt) as unknown as NodeObject;
       const U = t.normalize(up.sub(T.mul(t.dot(up, T))).add(t.vec3(0, 1e-6, 0)) as unknown as NodeObject);
       return { P, T, U };
     },
@@ -185,16 +275,17 @@ function swimCtx(t: Tsl, u: SwimNodes): SwimCtx {
 }
 
 /** The displaced local position for the swim wave (SWIM_GLSL's begin_vertex branch). */
-export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null = null): Node {
+function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null = null): Node {
   const t = tsl();
-  const u = nodesFor(uniforms);
-  const c = swimCtx(t, u);
+  const u = swimNodes();
+  const path = drawsAlongPath(uniforms) ? pathNodesFor(uniforms) : null;
+  const c = swimCtx(t, u, path);
 
   return t.Fn(() => {
     const p0 = t.positionLocal.toVar();
 
     // Lower jaw shear (FISH_JAW): the chin drops as if turned about the hinge at the mouth corner.
-    if (tissue?.jaw && u.uGape && u.uHinge) {
+    if (tissue?.jaw && uniforms.uGape && uniforms.uHinge) {
       const aJaw = t.attribute('aJaw', 'float');
       const a = t.negate(u.uGape.mul(aJaw));
       const dx = p0.x.sub(u.uHinge.x);
@@ -204,7 +295,7 @@ export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null =
 
     // Erectile spines (FISH_ERECT): each spine (and its web) turns about its base.
     let erSpine: NodeObject = t.float(0);
-    if (tissue?.erect && u.uErect) {
+    if (tissue?.erect && uniforms.uErect) {
       const aErect = t.attribute('aErect', 'vec4');
       const e = t.min(u.uErect, t.float(2).sub(t.float(1.8).mul(u.uFold)));
       const a = t.select(t.lessThan(e, 1) as unknown as NodeObject, aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
@@ -218,7 +309,7 @@ export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null =
     }
 
     // Pectoral bending along the rays, tips trailing the stroke, plus the fan ripple (FISH_PECT).
-    if (tissue?.pect && u.uPBend && u.uPWave) {
+    if (tissue?.pect && uniforms.uPBend && uniforms.uPWave) {
       const r = t.clamp(p0.x.div(u.uPBend.z), 0, 1);
       p0.z.addAssign(u.uPBend.x.mul(u.uPBend.z).mul(t.pow(r, 2)).mul(c.pectFlex(p0.y, u.uPBend)).add(c.pectWave(p0.xy, u.uPBend, u.uPWave)));
     }
@@ -242,6 +333,7 @@ export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null =
       ? t.float(1).add(u.uVent.mul(1.5).mul(t.attribute('aCover', 'float')))
       : t.float(1);
     const swZ = p0.z.mul(vent).add(c.finFlutter(p0));
+    if (!path) return t.vec3(p0.x.sub(swZ.mul(swS)), p0.y.add(c.liftY(p0.x)), swH.add(swZ.mul(swC)));
 
     // Straight body (and non-path fins) versus the moray drawn along its path (uPathOn).
     const straight = t.vec3(p0.x.sub(swZ.mul(swS)), p0.y.add(c.liftY(p0.x)), swH.add(swZ.mul(swC)));
@@ -260,12 +352,13 @@ export function swimPositionNode(uniforms: SwimUniforms, tissue: Tissue | null =
  *  tangent-space normal map perturbed about the bent normal (the same derivative method three uses, but
  *  around the bent geometric normal instead of the rest-pose one). The result is faceDirection-flipped by
  *  the material's transformedNormalView, matching how the stock normal node behaves. */
-export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, params: THREE.MeshPhysicalMaterialParameters): Node {
+function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, params: THREE.MeshPhysicalMaterialParameters): Node {
   const t = tsl();
-  const u = nodesFor(uniforms);
-  const c = swimCtx(t, u);
+  const u = swimNodes();
+  const path = drawsAlongPath(uniforms) ? pathNodesFor(uniforms) : null;
+  const c = swimCtx(t, u, path);
   const normalMapTex = params.normalMap ?? null;
-  const normalScale = params.normalScale ?? new THREE.Vector2(1, 1);
+  const normalScale = u.uNormalScale;
 
   // three's perturbNormal2Arb, but with a caller-supplied surface normal (the bent one).
   const perturbNormal2Arb = t.Fn(([eyePos, surfNorm, mapN]: [NodeObject, NodeObject, NodeObject]) => {
@@ -288,7 +381,7 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
     const n = t.normalLocal.toVar();
 
     // Lower jaw shear: the inverse transpose of the shear applied to the chin.
-    if (tissue?.jaw && u.uGape && u.uHinge) {
+    if (tissue?.jaw && uniforms.uGape && uniforms.uHinge) {
       const aJaw = t.attribute('aJaw', 'float');
       const aJawG = t.attribute('aJawG', 'float');
       const a = t.negate(u.uGape.mul(aJaw));
@@ -300,7 +393,7 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
     }
 
     // Erectile spines: the normal turns with its spine about the base.
-    if (tissue?.erect && u.uErect) {
+    if (tissue?.erect && uniforms.uErect) {
       const aErect = t.attribute('aErect', 'vec4');
       const e = t.min(u.uErect, t.float(2).sub(t.float(1.8).mul(u.uFold)));
       const a = t.select(t.lessThan(e, 1) as unknown as NodeObject, aErect.z.mul(t.float(1).sub(e)), aErect.w.mul(e.sub(1)));
@@ -312,7 +405,7 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
     }
 
     // Pectoral bending + ripple: tilt the normal by the derivatives of the z offset.
-    if (tissue?.pect && u.uPBend && u.uPWave) {
+    if (tissue?.pect && uniforms.uPBend && uniforms.uPWave) {
       const r = t.clamp(rest.x.div(u.uPBend.z), 0, 1);
       const dzdx = t.float(2).mul(u.uPBend.x).mul(r).mul(c.pectFlex(rest.y, u.uPBend));
       const dzdy = t.select(
@@ -335,11 +428,14 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
     const swH = c.spineH(rest.x);
     const swT = t.atan(c.spineH(rest.x.add(0.005)).sub(swH).div(0.005));
     const swC = t.cos(swT), swS = t.sin(swT);
-    const frame = c.pathFrame(rest.x);
-    const paS = t.cross(frame.T, frame.U);
     const straightN = t.vec3(n.x.mul(swC).sub(n.z.mul(swS)), n.y, n.x.mul(swS).add(n.z.mul(swC)));
-    const pathN = frame.T.mul(n.x).add(frame.U.mul(n.y)).add(paS.mul(n.z));
-    const bent = t.select(t.greaterThan(u.uPathOn, 0.5), pathN, straightN);
+    let bent: NodeObject = straightN;
+    if (path) {
+      const frame = c.pathFrame(rest.x);
+      const paS = t.cross(frame.T, frame.U);
+      const pathN = frame.T.mul(n.x).add(frame.U.mul(n.y)).add(paS.mul(n.z));
+      bent = t.select(t.greaterThan(u.uPathOn, 0.5), pathN, straightN);
+    }
 
     const viewN = t.transformNormalToView(bent).normalize();
 
@@ -361,20 +457,20 @@ export function swimNormalNode(uniforms: SwimUniforms, tissue: Tissue | null, pa
  *  wrapped diffusion are added to each directional light before the stock Lambert + GGX; specular
  *  anti-aliasing widens the roughness by the perturbed-normal variance (Tokuyoshi & Kaplanyan 2019),
  *  matching the GLSL patch after lights_physical_fragment. */
-function fishLightingModel(t: Tsl, wg: Webgpu, tissue: Tissue | null): InstanceType<Webgpu['PhysicalLightingModel']> {
+function fishLightingModel(t: Tsl, wg: Webgpu, tissue: Tissue | null, u: SwimNodes): InstanceType<Webgpu['PhysicalLightingModel']> {
   const body = tissue?.kind === 'body';
   const sigma = tissue ? (body ? t.vec3(0.38, 0.8, 1.05) : t.vec3(0.9, 1.4, 1.8)) : null;
   const wrap = tissue ? (body ? t.vec3(0.45, 0.22, 0.14) : t.vec3(0, 0, 0)) : null;
   let thick: NodeObject | null = null;
   if (tissue) {
     if (body) {
-      thick = t.attribute('aThick', 'float').mul(t.float(tissue.sizeMM ?? 100));
+      thick = t.attribute('aThick', 'float').mul(u.uSizeMM);
     } else if (tissue.thickMap) {
       // The fin's data map: R holds ray thickness, so the rays read ~4x the membrane (read through the
       // roughness map's sampler, not a unit of its own).
-      thick = t.float(tissue.thickMM ?? 0.2).mul(t.mix(t.float(1), t.float(4), t.texture(tissue.thickMap).r));
+      thick = u.uThickMM.mul(t.mix(t.float(1), t.float(4), t.texture(tissue.thickMap).r));
     } else {
-      thick = t.float(tissue.thickMM ?? 0.2);
+      thick = u.uThickMM;
     }
   }
 
@@ -447,16 +543,38 @@ export function makeSwimNodeMaterial(
   const t = tsl();
   const wg = webgpu();
   const anisotropic = (params.anisotropy as number | undefined) !== 0;
+  const nodes = swimNodes();
+  // Everything that shapes this material's node graph or lighting model. Materials with the same key share
+  // their nodes (and so one compiled program); a texture a node samples is part of the key because that
+  // node is bound to it. Textures read through the material's own slots (map, roughnessMap...) are not.
+  const texId = (x: THREE.Texture | null | undefined): string => x?.uuid ?? '-';
+  const structure = [
+    tissue ? JSON.stringify({ k: tissue.kind, m: texId(tissue.thickMap), j: !!tissue.jaw, c: !!tissue.cover, n: tissue.night ?? null, p: !!tissue.packed, e: !!tissue.erect, f: !!tissue.pect }) : 'none',
+    gaze ? `gaze:${texId(params.map)}` : '-',
+    texId(params.normalMap),
+    params.iridescenceMap && (gaze || tissue?.packed) ? texId(params.iridescenceMap) : '-',
+    params.roughnessMap && tissue?.packed ? texId(params.roughnessMap) : '-',
+    [uniforms.uGape && uniforms.uHinge, uniforms.uErect, uniforms.uPBend && uniforms.uPWave, uniforms.uNight, uniforms.uGaze].map((o) => (o ? 1 : 0)).join(''),
+    anisotropic ? 'aniso' : '-',
+    drawsAlongPath(uniforms) ? `eel${fishId(uniforms)}` : '-',
+  ].join('|');
   class SwimNodeMaterial extends wg.MeshPhysicalNodeMaterial {
     constructor(p: object) {
       super(p);
     }
 
+    override customProgramCacheKey(): string {
+      return super.customProgramCacheKey() + '|swim' + structure;
+    }
+
     override setupLightingModel(): InstanceType<Webgpu['PhysicalLightingModel']> {
-      return fishLightingModel(t, wg, tissue);
+      return fishLightingModel(t, wg, tissue, nodes);
     }
 
     override setupVariants(builder: NodeBuilder): void {
+      // The night (and stress) colour patch acts on the standard diffuse colour (colour x map), so it
+      // needs no node bound to this material.
+      if (tissue?.night && uniforms.uNight) nightColourPatch(t, nodes.uNight, tissue.night);
       super.setupVariants(builder);
       // Specular anti-aliasing (swimShader.ts lights_physical_fragment patch): widen the lobe by the
       // pixel footprint's normal variance, plus a grazing variance that only grows below NdotV ~0.4,
@@ -479,18 +597,25 @@ export function makeSwimNodeMaterial(
   }
 
   const mat = new SwimNodeMaterial(params as object);
-  mat.positionNode = swimPositionNode(uniforms, tissue);
-  mat.normalNode = swimNormalNode(uniforms, tissue, params);
-  if (tissue?.night && uniforms.uNight) mat.colorNode = nightColourNode(t, mat, nodesFor(uniforms).uNight!, tissue.night);
+  mat.userData['swimUniforms'] = uniforms;   // the shared uniform nodes read these through the drawn mesh
+  const iridLo = params.iridescenceThicknessMinimum, iridHi = params.iridescenceThicknessMaximum;
+  mat.userData['swimConstants'] = {
+    sizeMM: tissue?.sizeMM ?? 100, thickMM: tissue?.thickMM ?? 0.2,
+    normalScale: params.normalScale ?? new THREE.Vector2(1, 1),
+    iridLo: iridLo ?? 0, iridRange: iridLo !== undefined && iridHi !== undefined ? iridHi - iridLo : 0,
+  } satisfies SwimConstants;   // per-species numbers that would otherwise be literals in the shader source
+  mat.positionNode = shared(`${structure}|pos`, () => swimPositionNode(uniforms, tissue));
+  mat.normalNode = shared(`${structure}|nrm`, () => swimNormalNode(uniforms, tissue, params));
   // Eye gaze (builder.ts addGaze on WebGL): the iris, pupil and iridophore ring slide across the cap.
   // The eyeSide attribute (+1 right, -1 left) turns the shared gaze vector into each eye's texture shift.
   if (gaze && params.map && uniforms.uGaze) {
-    const u = nodesFor(uniforms).uGaze!;
-    const gazeUv = t.uv().add(t.vec2(u.x.mul(t.attribute('eyeSide', 'float')), u.y.negate()));
-    mat.colorNode = (t.materialReference('color', 'color', mat) as unknown as NodeObject).mul(t.texture(params.map, gazeUv).rgb);
-    if (params.iridescenceMap) {
+    const u = nodes.uGaze;
+    const map = params.map, ring = params.iridescenceMap;
+    const gazeUv = shared(`${structure}|gazeUv`, () => t.uv().add(t.vec2(u.x.mul(t.attribute('eyeSide', 'float')), u.y.negate())));
+    mat.colorNode = shared(`${structure}|gazeColor`, () => nodes.uMatColor.mul(t.texture(map, gazeUv).rgb));
+    if (ring) {
       // The ring mask modulates iridescence strength (three's GLSL iridescenceMap, shifted by the same gaze).
-      mat.iridescenceNode = (t.materialReference('iridescence', 'float', mat) as unknown as NodeObject).mul(t.texture(params.iridescenceMap, gazeUv).r);
+      mat.iridescenceNode = shared(`${structure}|gazeIrid`, () => nodes.uMatIridescence.mul(t.texture(ring, gazeUv).r));
     }
   }
   // Packed body maps' second channels (swimShader.ts's `packed`): the film thickness is the iridescence
@@ -500,26 +625,29 @@ export function makeSwimNodeMaterial(
   if (tissue?.packed) {
     const lo = params.iridescenceThicknessMinimum as number | undefined;
     const hi = params.iridescenceThicknessMaximum as number | undefined;
-    if (params.iridescenceMap && lo !== undefined && hi !== undefined) {
-      mat.iridescenceThicknessNode = t.float(hi - lo)
-        .mul(t.texture(params.iridescenceMap).g).add(t.float(lo));
+    const iridMap = params.iridescenceMap, roughMap = params.roughnessMap;
+    if (iridMap && lo !== undefined && hi !== undefined) {
+      mat.iridescenceThicknessNode = shared(`${structure}|thick`, () => nodes.uIridRange.y
+        .mul(t.texture(iridMap).g).add(nodes.uIridRange.x));
     }
-    if (params.roughnessMap) mat.aoNode = t.texture(params.roughnessMap).r;
+    if (roughMap) mat.aoNode = shared(`${structure}|ao`, () => t.texture(roughMap).r);
   }
   return installReefLight(mat);
 }
 
 /** The night (and stress) colour patch from swimShader.ts, in TSL: chromatophores contract or expand
- *  over minutes at dusk, paling or darkening the fish. uNight 0..1 is written by fish.ts. */
-function nightColourNode(t: Tsl, mat: THREE.Material, uNight: FloatUniformNode, kind: 'pale' | 'dark'): NodeObject {
-  const c = boundMaterialColor(t, mat);   // the standard colour incl. map, before the patch
+ *  over minutes at dusk, paling or darkening the fish. uNight 0..1 is written by fish.ts. It rewrites the
+ *  diffuse colour the material has just set up (colour x map). */
+function nightColourPatch(t: Tsl, uNight: FloatUniformNode, kind: 'pale' | 'dark'): void {
+  const diffuse = t.diffuseColor as NodeObject;
+  const c = diffuse.rgb.toVar();
   const l = c.dot(t.vec3(0.2126, 0.7152, 0.0722));
   const night: NodeObject = kind === 'pale'
     ? t.mix(t.vec3(l), t.vec3(t.float(0.75).add(t.float(0.2).mul(
         t.float(0.5).add(t.float(0.5).mul(t.sin(t.uv().x.mul(23).add(t.sin(t.uv().y.mul(9)).mul(2))))),
       ))), 0.45)
     : t.vec3(l).mul(0.45).add(c.mul(0.12));
-  return t.mix(c, night, uNight.mul(0.8));
+  diffuse.rgb.assign(t.mix(c, night, uNight.mul(0.8)));
 }
 
 /**
