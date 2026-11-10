@@ -12,6 +12,7 @@ import { mulberry32, range, pick, type Rng } from './core/rng.js';
 import { Noise } from './core/noise.js';
 import { clamp, smooth, TAU } from './core/math.js';
 import { stdMat } from './reef/materials.js';
+import { pickLod } from './lod.js';
 import { setGpuOpenWater } from './water/webgpuMedium.js';
 import type { Scenery, TankScene } from './reef/types.js';
 import type { WaterBackdrop } from './water/backdrop.js';
@@ -259,6 +260,24 @@ function buildSeabed(sand: SandGrid, shape: SeabedShape): THREE.Mesh {
   return mesh;
 }
 
+/**
+ * The simplifier's error bound, relative to the model's extent: loose, so the triangle budget decides.
+ * (No 'Prune': it drops every connected piece smaller than this bound, which at 1 is all of the model.)
+ */
+const SIMPLIFY_ERROR = 1;
+
+/** The full-detail index: with baked levels (lod.ts, userData.lods) only level 0's range, not every level. */
+function fullDetailIndex(g: THREE.BufferGeometry, vertices: number): Uint32Array {
+  if (!g.index) return Uint32Array.from({ length: vertices }, (_, i) => i);
+  const lods: unknown = g.userData['lods'];
+  const first = Array.isArray(lods) ? (lods[0] as unknown) : null;
+  if (Array.isArray(first) && typeof first[0] === 'number' && typeof first[1] === 'number') {
+    return Uint32Array.from(g.index.array.subarray(first[0], first[0] + first[1]));
+  }
+  const draw = g.drawRange;
+  return Uint32Array.from(g.index.array.subarray(draw.start, Math.min(g.index.count, draw.start + draw.count)));
+}
+
 /** One model reduced to a triangle budget (its own vertices, a shorter index list). */
 function simplified(source: THREE.BufferGeometry, tris: number): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
@@ -267,15 +286,15 @@ function simplified(source: THREE.BufferGeometry, tris: number): THREE.BufferGeo
     if (a) g.setAttribute(name, a);
   }
   const p = source.getAttribute('position');
-  const index = source.index ? Uint32Array.from(source.index.array) : Uint32Array.from({ length: p.count }, (_, i) => i);
+  const index = fullDetailIndex(source, p.count);
   const target = Math.min(index.length, tris * 3);
   let ix: Uint32Array = index;
   if (target < index.length) {
     const positions = new Float32Array(p.count * 3);
     for (let i = 0; i < p.count; i++) { positions[i * 3] = p.getX(i); positions[i * 3 + 1] = p.getY(i); positions[i * 3 + 2] = p.getZ(i); }
-    ix = MeshoptSimplifier.simplify(index, positions, 3, target, 1, ['Prune'])[0];
+    ix = MeshoptSimplifier.simplify(index, positions, 3, target, SIMPLIFY_ERROR)[0];
     // UV seams stop the topology-preserving pass short: then collapse regardless of topology.
-    if (ix.length > target * 1.5) ix = MeshoptSimplifier.simplifySloppy(index, positions, 3, null, target, 1)[0];
+    if (ix.length > target * 1.5 || ix.length < target * 0.25) ix = MeshoptSimplifier.simplifySloppy(index, positions, 3, null, target, SIMPLIFY_ERROR)[0];
   }
   g.setIndex(new THREE.BufferAttribute(ix, 1));
   g.computeBoundingBox();
@@ -452,6 +471,91 @@ export function buildOpenReef({ scene, reef, scenery, tankWidth, seed }: OpenRee
   scene.add(group);
   console.info(`Open reef: ${instances} outcrop pieces, ${Math.round(triangles / 1000)}k triangles if all in view`);
   return { group, triangles, instances };
+}
+
+/**
+ * Shoals out on the open reef: each is the tank's own fish drawn again, turned about the tank's centre
+ * by `yaw` and moved by (x, y, z). Far enough out that a shoal's fish (within the tank's bounds before
+ * the move) stay clear of the tank and well inside the murk's reach.
+ */
+const ECHO_SHOALS = [
+  { x: -31, y: 0.4, z: -16, yaw: 2.1 },
+  { x: 29, y: 0.7, z: -22, yaw: -1.3 },
+  { x: -4, y: 0.5, z: -36, yaw: 0.8 },
+  { x: 35, y: 0.3, z: 12, yaw: 2.9 },
+  { x: -36, y: 0.6, z: 17, yaw: -2.4 },
+] as const;
+
+/**
+ * Copies of the tank's fish on the open reef, out beyond the tank. Each copy is a plain mesh sharing
+ * its fish's geometry and material (so it swims exactly as that fish does: the swim is in the
+ * material's uniforms) with its world matrix set from the fish's, moved to its shoal, just before
+ * each render (scene.onBeforeRender runs after the scene's matrices are updated, before culling).
+ * No shadows; level of detail picked from the copy's own distance.
+ */
+export class FishEchoes {
+  readonly group = new THREE.Group();
+  private readonly shoals: THREE.Matrix4[];
+  private readonly copies = new Map<THREE.Mesh, THREE.Mesh[]>();
+  private stamp = 0;
+  private readonly seen = new Map<THREE.Mesh, number>();
+
+  constructor(scene: THREE.Scene, private readonly fish: () => readonly THREE.Object3D[]) {
+    this.group.name = 'open-reef-fish';
+    this.group.matrixAutoUpdate = this.group.matrixWorldAutoUpdate = false;
+    this.shoals = ECHO_SHOALS.map((s) => new THREE.Matrix4().makeRotationY(s.yaw).setPosition(s.x, s.y, s.z));
+    scene.add(this.group);
+    const before = scene.onBeforeRender;
+    scene.onBeforeRender = (...args) => {
+      this.sync();
+      before.apply(scene, args);
+    };
+  }
+
+  /** Copies follow their fish; fish that have left the tank lose theirs, new ones gain them. */
+  private sync(): void {
+    const stamp = ++this.stamp;
+    for (const model of this.fish()) {
+      model.traverse((o) => {
+        if (!(o instanceof THREE.Mesh) || o instanceof THREE.InstancedMesh || o instanceof THREE.SkinnedMesh) return;
+        this.seen.set(o, stamp);
+        const copies = this.copies.get(o) ?? this.makeCopies(o);
+        const visible = worldVisible(o);
+        copies.forEach((c, i) => {
+          c.visible = visible;
+          if (visible) c.matrixWorld.multiplyMatrices(this.shoals[i] ?? c.matrixWorld, o.matrixWorld);
+        });
+      });
+    }
+    for (const [mesh, at] of this.seen) {
+      if (at === stamp) continue;
+      for (const c of this.copies.get(mesh) ?? []) this.group.remove(c);
+      this.copies.delete(mesh);
+      this.seen.delete(mesh);
+    }
+    if (stamp === 1) console.info(`Open reef: ${this.fish().length} fish copied into ${this.shoals.length} shoals (${this.copies.size * this.shoals.length} meshes)`);
+  }
+
+  private makeCopies(source: THREE.Mesh): THREE.Mesh[] {
+    const copies = this.shoals.map(() => {
+      const c = new THREE.Mesh(source.geometry, source.material);
+      c.matrixAutoUpdate = c.matrixWorldAutoUpdate = false;
+      c.castShadow = c.receiveShadow = false;
+      c.renderOrder = source.renderOrder;
+      c.frustumCulled = source.frustumCulled;
+      c.layers.mask = source.layers.mask;
+      c.onBeforeRender = (r, _s, cam, geo) => pickLod(r as THREE.WebGLRenderer, c, cam, geo);
+      this.group.add(c);
+      return c;
+    });
+    this.copies.set(source, copies);
+    return copies;
+  }
+}
+
+function worldVisible(o: THREE.Object3D): boolean {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (!p.visible) return false;
+  return true;
 }
 
 export interface OpenWaterParts {

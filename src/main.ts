@@ -34,7 +34,7 @@ import { stockTank } from './app/stocking.js';
 import { trackViewer } from './app/viewer.js';
 import { TankLoop } from './app/tankLoop.js';
 import { FishView } from './app/fishView.js';
-import { buildOpenReef, openTheWater, type OpenReef } from './openReef.js';
+import { buildOpenReef, openTheWater, FishEchoes, type OpenReef } from './openReef.js';
 import type { Fish } from './fish.js';
 import { Ambience } from './app/ambience.js';
 import { loadReefLightFingerprint } from './app/sourceFingerprint.js';
@@ -324,6 +324,7 @@ async function main(): Promise<void> {
     catalogue: { fish: SPECIES, critters: CRITTER_SPECIES, jellies: JELLY_SPECIES },
   });
   timer.stage('fish and critters');
+  if (openReef) new FishEchoes(stage.scene, () => world.fish.map((f) => f.model));   // shoals out on the open reef
   if (options.precompile && !stage.gpu) await precompile();
   if (options.precompile && stage.gpu) {
     await paintLoading();   // show "Preparing shaders" before the synchronous warm-up render
