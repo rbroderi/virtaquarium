@@ -23,7 +23,7 @@ const HARDWARE_GL = ['--use-angle=d3d11', '--ignore-gpu-blocklist'];
  *  leaves requestAdapter empty on Windows, so keep the default Dawn backend past the blocklist. */
 const WEBGPU_GL = ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'];
 const KILL_GRACE_MS = 500;
-const PROFILE_RM_RETRIES = 5, PROFILE_RM_DELAY_MS = 200;
+const PROFILE_RM_RETRIES = 40, PROFILE_RM_DELAY_MS = 250;
 const CONSOLE_LINE_LIMIT = 400;
 
 export function findBrowser(): string {
@@ -74,12 +74,21 @@ function killTree(child: ChildProcess | undefined, then: () => void): void {
   }
 }
 
-function removeProfile(dir: string): void {
-  // Chrome can hold profile files briefly after exit; a leftover temp dir is not worth failing over.
-  try {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: PROFILE_RM_RETRIES, retryDelay: PROFILE_RM_DELAY_MS });
-  } catch {
-    /* ignored */
+async function removeProfile(dir: string): Promise<void> {
+  // Chrome holds profile files for a moment after the kill (EBUSY on Windows). Retry here rather than
+  // through rmSync's maxRetries, which Bun ignores: the first failure used to leave the whole profile.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (attempt >= PROFILE_RM_RETRIES) {
+        // A leftover temp dir is not worth failing the run over, but say so: they are ~200 MB each.
+        console.warn(`could not remove browser profile ${dir}: ${String(err)}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, PROFILE_RM_DELAY_MS));
+    }
   }
 }
 
@@ -209,8 +218,7 @@ export async function runHeadless(run: HeadlessRun): Promise<HeadlessResult> {
     done = true;
     server.close();
     killTree(child, () => {
-      if (!run.keepProfile) removeProfile(profile);
-      settle({ ok, body });
+      void (run.keepProfile ? Promise.resolve() : removeProfile(profile)).then(() => settle({ ok, body }));
     });
   }
 
